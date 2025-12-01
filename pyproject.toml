@@ -1,0 +1,19 @@
+
+[project]
+name="hashmol3d"
+version="0.2.0"
+description="Deterministic 3D molecular geometry hashing standard"
+authors=[{name="Murat Keçeli"}]
+readme="README.md"
+requires-python=">=3.8"
+dependencies=["rdkit", "numpy"]
+
+[project.scripts]
+hashmol3d = "hashmol3d.cli:cli"
+
+[build-system]
+requires=["setuptools","wheel"]
+build-backend="setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {""="src"}
