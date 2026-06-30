@@ -1,19 +1,38 @@
-# HashMol3D Specification v0.4.0
+# HashMol3D Specification v0.5.0
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
-**Canonical output length:** 32 hex characters (128 bits)
-**Canonical version tag:** `3-INV-SHA256`
+**Canonical version tag:** `4-GEOM-SHA256`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
 computational-chemistry workflows and databases.
 
-## 1. Invariance contract
+## 1. Identifier format
 
-The HashMol3D identifier is invariant under exactly those operations
-that leave the eigenvalues of the non-relativistic molecular
-Hamiltonian unchanged:
+A HashMol3D identifier is a single ASCII string with three parts:
+
+    <Hill formula><state tag>-<geometry hash>
+
+For example: `H2Oq0m1-a1b28135d0c66ad0`.
+
+- **Hill formula** — carbon first if present, then hydrogen, then the
+  remaining elements alphabetically by symbol. A count of 1 is omitted.
+  Examples: `H2O`, `C6H6`, `CHBrClF`, `H3N`.
+- **State tag** — `q<sign><charge>m<multiplicity>`. Zero charge is
+  rendered as `q0`; non-zero charges always carry an explicit sign
+  (`q+1`, `q-2`). Multiplicity is a positive integer with no sign.
+- **`-`** — single hyphen separator, so the start of the geometry hash
+  is unambiguous even though the formula and state tag contain no
+  delimiters.
+- **Geometry hash** — lowercase hex truncation of the SHA-256 digest of
+  the geometry-only descriptor (see §3, §5, §6).
+
+## 2. Invariance contract
+
+The **geometry hash** is invariant under exactly those operations that
+leave the eigenvalues of the non-relativistic molecular Hamiltonian
+unchanged:
 
 - rigid translation of the coordinates
 - rigid rotation of the coordinates
@@ -24,17 +43,20 @@ Hamiltonian unchanged:
 It is **not** invariant under:
 
 - changes in any atomic number Z
-- changes in total charge
-- changes in spin multiplicity
 - changes in the descriptor version tag
 - geometric distortions larger than the chosen precision
+
+The **state tag** (and therefore the full identifier) additionally
+changes with charge or multiplicity. Two states of the same geometry
+share the same geometry hash but differ in their state tag, so they can
+be grouped by suffix matching on the part after `-`.
 
 > **Note on chirality.** Two enantiomers share the eigenvalues of the
 > non-relativistic Hamiltonian and therefore share the same HashMol3D
 > identifier. If you need to distinguish enantiomers, combine HashMol3D
 > with an external stereochemistry tag.
 
-## 2. Inputs
+## 3. Inputs
 
 The reference implementation takes:
 
@@ -44,7 +66,7 @@ The reference implementation takes:
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
 
-## 3. Pair signature
+## 4. Pair signature
 
 Permutation, translation, rotation, and reflection invariance are all
 achieved together by reducing the geometry to a multiset of pairwise
@@ -61,11 +83,10 @@ list is invariant under any relabeling of atoms (it is a multiset
 keyed only on Z and distance) and under any rigid motion or reflection
 of the geometry (it depends only on pairwise distances).
 
-The sorted list of atomic numbers is included as a separate
-component so that empty-distance corner cases (single atom) still
-distinguish elements.
+The sorted list of atomic numbers is included as a separate component
+so single-atom corner cases still distinguish elements.
 
-## 4. Multiplicity inference
+## 5. Multiplicity inference
 
 If `multiplicity` is not supplied:
 
@@ -76,58 +97,61 @@ This singlet/doublet default is appropriate when no other spin
 information is available. Callers that know better should pass
 `multiplicity` explicitly.
 
-## 5. Canonical descriptor string
+## 6. Canonical descriptor string
 
 The descriptor is a UTF-8 string with the following pipe-separated
 components, in this fixed order:
 
-    V:<version>|P:<precision>|Z:<z_sorted>|D:<pairs>|Q:<charge>|M:<multiplicity>
+    V:<version>|P:<precision>|Z:<z_sorted>|D:<pairs>
 
 Where:
 
-- `<version>` is a string, e.g. `3-INV-SHA256`.
+- `<version>` is a string, e.g. `4-GEOM-SHA256`.
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
 - `<z_sorted>` is the sorted list of atomic numbers, comma-separated.
 - `<pairs>` is the sorted list of triples, formatted as
   `Za-Zb:d.dddd`, comma-separated.
-- `<charge>` is the integer formal charge.
-- `<multiplicity>` is the integer spin multiplicity.
+
+Charge and multiplicity are **not** part of the descriptor; they are
+written into the readable prefix of the identifier instead.
 
 Example (water, `precision = 1e-4`):
 
-    V:3-INV-SHA256|P:1.0e-04|Z:1,1,8|D:1-1:1.5144,1-8:0.9579,1-8:0.9579|Q:0|M:1
+    V:4-GEOM-SHA256|P:1.0e-04|Z:1,1,8|D:1-1:1.5144,1-8:0.9579,1-8:0.9579
 
-## 6. Hashing
+## 7. Hashing
 
 1. Encode the descriptor as UTF-8 bytes.
 2. Compute the SHA-256 digest.
 3. Take the first `length` hex characters of the hex digest.
 
-`length ∈ [1, 64]`. The recommended canonical value is 32
-(128 bits). 16 (64 bits) is acceptable for small datasets; 64
-(full 256 bits) is appropriate for archival.
+`length ∈ [1, 64]`. The reference implementation auto-scales `length`
+as `clip(N, 16, 64)` when not explicitly supplied, where `N` is the
+number of atoms; this keeps birthday-collision risk roughly constant
+as molecules grow. Callers may pin a fixed value (e.g. 16, 32, 64).
 
-## 7. Determinism and portability
+## 8. Determinism and portability
 
-To guarantee identical hashes across machines:
+To guarantee identical identifiers across machines:
 
-- Use the same version tag.
+- Use the same descriptor version tag.
 - Use the same precision.
 - Format atomic numbers as decimal integers.
 - Format distances with exactly `decimals` fractional digits.
 - Encode the descriptor in UTF-8 before hashing.
 - Use SHA-256 as defined in FIPS 180-4.
+- Render the formula in Hill order and the state tag exactly as in §1.
 
 Any change to the descriptor format or semantics requires a new
 version tag.
 
-## 8. Dependencies
+## 9. Dependencies
 
 The reference implementation uses only NumPy and the Python standard
 library; in particular it does **not** depend on RDKit or any
 cheminformatics toolkit.
 
-## 9. Reference API
+## 10. Reference API
 
 ```python
 from hashmol3d import hash_molecule
@@ -138,9 +162,10 @@ result = hash_molecule(
     precision=1e-4,
     charge=0,
     multiplicity=None,   # inferred if None
-    length=32,
+    length=None,         # auto-scaled if None
 )
-print(result.hash_str)
+print(result.hash_str)        # H2Oq0m1-a1b28135d0c66ad0
+print(result.geometry_hash)   # a1b28135d0c66ad0
 ```
 
 A file-based convenience wrapper is also provided:

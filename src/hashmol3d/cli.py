@@ -51,8 +51,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "-l",
         "--length",
         type=int,
-        default=32,
-        help="Number of hex characters to retain, 1-64 (default: 32)",
+        default=None,
+        help="Number of hex characters in the geometry hash, 1-64 "
+        "(default: auto-scaled as clip(N, 16, 64))",
     )
     parser.add_argument(
         "-v",
@@ -90,12 +91,14 @@ def cli(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if args.verbose:
-        print(f"hash:         {result.hash_str}")
-        print(f"descriptor:   {result.descriptor}")
-        print(f"version:      {result.version}")
-        print(f"precision:    {result.precision}")
-        print(f"charge:       {result.charge}")
-        print(f"multiplicity: {result.multiplicity}")
+        print(f"identifier:    {result.hash_str}")
+        print(f"formula:       {result.formula}")
+        print(f"geometry_hash: {result.geometry_hash}")
+        print(f"descriptor:    {result.descriptor}")
+        print(f"version:       {result.version}")
+        print(f"precision:     {result.precision}")
+        print(f"charge:        {result.charge}")
+        print(f"multiplicity:  {result.multiplicity}")
     else:
         print(result.hash_str)
     return 0

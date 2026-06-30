@@ -133,6 +133,19 @@ PTABLE: Dict[str, int] = {
 }
 
 
+# Atomic number -> canonical symbol (inverse of PTABLE).
+SYMBOL_BY_Z: Dict[int, str] = {z: s for s, z in PTABLE.items()}
+
+
+def get_symbol(atomic_num: int) -> str:
+    """Get the canonical element symbol for an atomic number.
+
+    Raises:
+        KeyError: if ``atomic_num`` is not in ``[1, 118]``.
+    """
+    return SYMBOL_BY_Z[int(atomic_num)]
+
+
 def _canonicalize_symbol(symbol: str) -> str:
     """Normalize an element symbol to canonical capitalization."""
     s = symbol.strip()

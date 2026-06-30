@@ -7,9 +7,12 @@ import pytest
 
 from hashmol3d import generate_hashmol3d, hash_molecule
 from hashmol3d.core import (
+    _auto_length,
+    _hill_formula,
     _infer_multiplicity,
     _pair_signature,
     _precision_to_decimals,
+    _state_tag,
 )
 
 
@@ -52,12 +55,58 @@ class TestInferMultiplicity:
             _infer_multiplicity(np.array([1]), 0, 0)
 
 
+class TestHillFormula:
+    def test_water(self):
+        assert _hill_formula(np.array([8, 1, 1])) == "H2O"
+
+    def test_benzene(self):
+        assert _hill_formula(np.array([6] * 6 + [1] * 6)) == "C6H6"
+
+    def test_chfclbr(self):
+        # Hill: C first, then H, then alphabetical (Br, Cl, F).
+        assert _hill_formula(np.array([6, 1, 9, 17, 35])) == "CHBrClF"
+
+    def test_no_carbon(self):
+        # Without carbon, all elements alphabetical (H included alphabetically).
+        assert _hill_formula(np.array([8, 16])) == "OS"
+        assert _hill_formula(np.array([1, 8])) == "HO"
+
+    def test_single_atom(self):
+        assert _hill_formula(np.array([6])) == "C"
+        assert _hill_formula(np.array([1])) == "H"
+
+
+class TestStateTag:
+    def test_neutral_singlet(self):
+        assert _state_tag(0, 1) == "q0m1"
+
+    def test_cation(self):
+        assert _state_tag(1, 2) == "q+1m2"
+
+    def test_anion(self):
+        assert _state_tag(-2, 1) == "q-2m1"
+
+
+class TestAutoLength:
+    def test_small_floor(self):
+        assert _auto_length(1) == 16
+        assert _auto_length(15) == 16
+
+    def test_linear_middle(self):
+        assert _auto_length(16) == 16
+        assert _auto_length(32) == 32
+        assert _auto_length(50) == 50
+
+    def test_cap(self):
+        assert _auto_length(64) == 64
+        assert _auto_length(1000) == 64
+
+
 class TestPairSignature:
     def test_water_pairs(self, water):
         z, coords = water
         z_sorted, pairs = _pair_signature(z, coords, decimals=4)
         assert z_sorted == (1, 1, 8)
-        # 3 atoms -> 3 pairs.  Two O-H bonds + one H-H non-bond.
         assert len(pairs) == 3
         elements = sorted({(a, b) for a, b, _ in pairs})
         assert elements == [(1, 1), (1, 8)]
@@ -104,23 +153,29 @@ class TestDeterminism:
         assert a.hash_str == b.hash_str
         assert a.descriptor == b.descriptor
 
-    def test_different_charge_different_hash(self, water):
+    def test_charge_only_changes_prefix(self, water):
         z, coords = water
         a = hash_molecule(z, coords, charge=0)
         b = hash_molecule(z, coords, charge=1)
+        # Full identifier differs in the readable prefix...
         assert a.hash_str != b.hash_str
+        assert a.hash_str.startswith("H2Oq0")
+        assert b.hash_str.startswith("H2Oq+1")
+        # ...but the geometry hash is identical.
+        assert a.geometry_hash == b.geometry_hash
 
-    def test_different_multiplicity_different_hash(self, water):
+    def test_multiplicity_only_changes_prefix(self, water):
         z, coords = water
         a = hash_molecule(z, coords, multiplicity=1)
         b = hash_molecule(z, coords, multiplicity=3)
         assert a.hash_str != b.hash_str
+        assert a.geometry_hash == b.geometry_hash
 
     def test_different_precision_different_hash(self, chiral_chfclbr):
         z, coords = chiral_chfclbr
         a = hash_molecule(z, coords, precision=1e-4)
         b = hash_molecule(z, coords, precision=1e-3)
-        assert a.hash_str != b.hash_str
+        assert a.geometry_hash != b.geometry_hash
 
 
 class TestDeprecatedAlias:
@@ -130,7 +185,7 @@ class TestDeprecatedAlias:
             warnings.simplefilter("always")
             old = generate_hashmol3d(z, coords)
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
-        new = hash_molecule(z, coords)
+        new = hash_molecule(z, coords, length=32)
         assert old.hash_str == new.hash_str
 
     def test_generate_hashmol3d_hash_length_kwarg(self, water):
@@ -138,7 +193,7 @@ class TestDeprecatedAlias:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             r = generate_hashmol3d(z, coords, hash_length=16)
-        assert len(r.hash_str) == 16
+        assert len(r.geometry_hash) == 16
 
 
 class TestKeywordOnly:

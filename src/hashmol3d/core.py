@@ -1,8 +1,15 @@
 """
 HashMol3D core: a deterministic identifier for 3D molecular conformers.
 
-The identifier is invariant under exactly the operations that leave the
-non-relativistic molecular Hamiltonian's eigenvalues unchanged:
+The identifier has the form::
+
+    <Hill formula><state tag>-<geometry hash>
+
+For example, ``H2Oq0m1-a1b28135...`` for neutral singlet water.
+
+The trailing hexadecimal hash is invariant under exactly the operations
+that leave the non-relativistic molecular Hamiltonian's eigenvalues
+unchanged:
 
   * rigid translation of the coordinates
   * rigid rotation of the coordinates
@@ -10,7 +17,9 @@ non-relativistic molecular Hamiltonian's eigenvalues unchanged:
   * spatial inversion / reflection (parity)
 
 It depends on atomic numbers, pairwise distances (rounded to a user
-specified precision), total charge, and spin multiplicity.
+specified precision), and the descriptor version. Total charge and
+spin multiplicity are encoded in the readable prefix, not inside the
+hash, so changing charge or multiplicity only changes the prefix.
 
 The implementation has no RDKit dependency; it uses only NumPy and the
 Python standard library.
@@ -20,9 +29,12 @@ from __future__ import annotations
 
 import hashlib
 import warnings
+from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
+
+from .periodic_table import get_symbol
 
 __all__ = [
     "DESCRIPTOR_VERSION",
@@ -34,7 +46,15 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "3-INV-SHA256"
+DESCRIPTOR_VERSION = "4-GEOM-SHA256"
+
+# Auto-scaled hash length. The number of distinguishable conformers grows
+# (roughly) exponentially with N, so log2 of it grows linearly with N;
+# growing the hash length linearly with N keeps birthday-collision risk
+# constant. 16 hex chars (64 bits) is the floor for very small molecules;
+# SHA-256 caps us at 64 hex chars (256 bits).
+_MIN_LENGTH = 16
+_MAX_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -42,6 +62,8 @@ class HashMol3DResult:
     """The result of hashing a molecular geometry."""
 
     hash_str: str
+    formula: str
+    geometry_hash: str
     version: str
     precision: float
     charge: int
@@ -70,10 +92,44 @@ def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int 
     return 1 if electrons % 2 == 0 else 2
 
 
+def _hill_formula(atomic_nums: np.ndarray) -> str:
+    """Render the molecular formula in Hill order.
+
+    Carbon first (if present), then hydrogen (if present), then the
+    remaining elements alphabetically by symbol. A count of 1 is
+    omitted (e.g. ``H2O``, ``CHBrClF``).
+    """
+    counts: Counter = Counter(int(z) for z in atomic_nums)
+
+    ordered: list[tuple[str, int]] = []
+    if 6 in counts:
+        ordered.append(("C", counts.pop(6)))
+        if 1 in counts:
+            ordered.append(("H", counts.pop(1)))
+    rest = sorted(((get_symbol(z), n) for z, n in counts.items()), key=lambda x: x[0])
+    ordered.extend(rest)
+
+    return "".join(sym if n == 1 else f"{sym}{n}" for sym, n in ordered)
+
+
+def _state_tag(charge: int, multiplicity: int) -> str:
+    """Render the readable charge/multiplicity suffix, e.g. ``q+1m2``."""
+    if charge == 0:
+        q_part = "q0"
+    else:
+        q_part = f"q{'+' if charge > 0 else '-'}{abs(charge)}"
+    return f"{q_part}m{multiplicity}"
+
+
+def _auto_length(n_atoms: int) -> int:
+    """Default hash length in hex chars, scaling linearly with N."""
+    return max(_MIN_LENGTH, min(_MAX_LENGTH, n_atoms))
+
+
 def _pair_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
 ) -> tuple[tuple[int, ...], list[tuple[int, int, float]]]:
-    """Build the permutation-invariant fingerprint of the molecule.
+    """Build the permutation-invariant fingerprint of the geometry.
 
     Returns ``(z_sorted, pairs)`` where ``z_sorted`` is a sorted tuple of
     atomic numbers and ``pairs`` is a sorted list of
@@ -109,10 +165,12 @@ def _format_descriptor(
     decimals: int,
     z_sorted: tuple[int, ...],
     pairs: list[tuple[int, int, float]],
-    charge: int,
-    multiplicity: int,
 ) -> str:
-    """Render the canonical descriptor string that is fed to SHA-256."""
+    """Render the canonical descriptor string that is fed to SHA-256.
+
+    Charge and multiplicity are *not* included: they are part of the
+    readable prefix of the final identifier, not of the hashed payload.
+    """
     prec_str = f"{precision:.1e}"
     z_part = ",".join(str(z) for z in z_sorted)
     fmt = f"{{:.{decimals}f}}"
@@ -123,8 +181,6 @@ def _format_descriptor(
             "P:" + prec_str,
             "Z:" + z_part,
             "D:" + d_part,
-            "Q:" + str(charge),
-            "M:" + str(multiplicity),
         ]
     )
 
@@ -136,9 +192,13 @@ def hash_molecule(
     precision: float = 1e-4,
     charge: int = 0,
     multiplicity: int | None = None,
-    length: int = 32,
+    length: int | None = None,
 ) -> HashMol3DResult:
     """Compute the HashMol3D identifier for a 3D molecular geometry.
+
+    The identifier has the form ``<Hill formula><state tag>-<geom hash>``,
+    e.g. ``H2Oq0m1-a1b28135...``. Charge and multiplicity appear in the
+    readable prefix; only the geometry contributes to the hash.
 
     Args:
         atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
@@ -150,7 +210,9 @@ def hash_molecule(
             ...). If ``None``, inferred as singlet/doublet from the
             electron count.
         length: number of hex characters retained from the SHA-256 digest.
-            Must be in ``[1, 64]``.
+            Must be in ``[1, 64]``. If ``None`` (default), scales with the
+            number of atoms as ``clip(N, 16, 64)`` so collision risk stays
+            roughly constant as molecules grow.
 
     Returns:
         :class:`HashMol3DResult`.
@@ -170,7 +232,10 @@ def hash_molecule(
         raise ValueError("atomic numbers must be positive integers")
     if not np.all(np.isfinite(coords)):
         raise ValueError("coords contain non-finite values")
-    if not isinstance(length, int) or not (1 <= length <= 64):
+
+    if length is None:
+        length = _auto_length(int(atomic_nums.size))
+    elif not isinstance(length, int) or not (1 <= length <= 64):
         raise ValueError("length must be an int in [1, 64]")
 
     charge = int(charge)
@@ -178,13 +243,16 @@ def hash_molecule(
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
 
     z_sorted, pairs = _pair_signature(atomic_nums, coords, decimals)
-    descriptor = _format_descriptor(
-        DESCRIPTOR_VERSION, precision, decimals, z_sorted, pairs, charge, used_mult
-    )
-    digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()
+    descriptor = _format_descriptor(DESCRIPTOR_VERSION, precision, decimals, z_sorted, pairs)
+    digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
+
+    formula = _hill_formula(atomic_nums)
+    identifier = f"{formula}{_state_tag(charge, used_mult)}-{digest}"
 
     return HashMol3DResult(
-        hash_str=digest[:length],
+        hash_str=identifier,
+        formula=formula,
+        geometry_hash=digest,
         version=DESCRIPTOR_VERSION,
         precision=precision,
         charge=charge,
@@ -205,7 +273,9 @@ def generate_hashmol3d(
 
     .. deprecated:: 0.4.0
         Use :func:`hash_molecule` instead. The ``hash_length`` keyword is
-        renamed to ``length`` in the new function.
+        renamed to ``length`` in the new function. Note that as of 0.5.0
+        the returned ``hash_str`` is the full readable identifier
+        (``<formula><state>-<hash>``), not just the hex digest.
     """
     warnings.warn(
         "generate_hashmol3d() is deprecated; use hash_molecule() instead "

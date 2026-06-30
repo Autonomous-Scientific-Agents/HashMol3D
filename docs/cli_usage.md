@@ -14,6 +14,10 @@ hashmol3d --help
 behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
+The identifier has the form `<formula><state>-<hash>`, e.g.
+`H2Oq0m1-a1b28135...`. See the
+[API reference](api_reference.md#identifier-format) for the format spec.
+
 ## Options
 
 | Flag | Long form | Default | Meaning |
@@ -21,8 +25,8 @@ extra formatting — suitable for piping.
 | `-p` | `--precision`    | `1e-4` | Distance precision in angstroms |
 | `-c` | `--charge`       | `0`    | Total formal charge |
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
-| `-l` | `--length`       | `32`   | Hex characters of SHA-256 digest to retain (1–64) |
-| `-v` | `--verbose`      |        | Also print the descriptor, version, and metadata |
+| `-l` | `--length`       | auto   | Hex chars in the geometry hash, 1–64 (auto-scales as `clip(N, 16, 64)`) |
+| `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
 
 ## Examples
 
@@ -30,18 +34,26 @@ Hash a geometry with default settings:
 
 ```bash
 hashmol3d ethanol.xyz
+# C2H6Oq0m1-...
 ```
 
-Use a coarser precision and a shorter identifier:
+Use a coarser precision and a longer fixed identifier:
 
 ```bash
-hashmol3d -p 1e-3 -l 16 ethanol.xyz
+hashmol3d -p 1e-3 -l 32 ethanol.xyz
 ```
 
 Hash a cation with explicit multiplicity, verbosely:
 
 ```bash
 hashmol3d -c 1 -m 2 -v ethanol.xyz
+```
+
+Find all stored states of the same geometry by suffix-matching the
+`geometry_hash` portion (after the `-`):
+
+```bash
+grep -E -- "-a1b28135" identifiers.txt
 ```
 
 ## Exit codes

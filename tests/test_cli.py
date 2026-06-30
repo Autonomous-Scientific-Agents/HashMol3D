@@ -27,7 +27,11 @@ def test_cli_length_option(tmp_path, capsys):
     path = _write_water(tmp_path)
     rc = cli([path, "-l", "16"])
     assert rc == 0
-    assert len(capsys.readouterr().out.strip()) == 16
+    out = capsys.readouterr().out.strip()
+    # Identifier is "<formula><state>-<hash>"; only the hash portion is
+    # controlled by --length.
+    assert out.startswith("H2Oq0m1-")
+    assert len(out.rsplit("-", 1)[-1]) == 16
 
 
 def test_cli_verbose(tmp_path, capsys):
