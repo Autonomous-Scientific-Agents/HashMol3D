@@ -33,14 +33,12 @@ def _random_rotation(rng):
 
 
 class TestHashMol3D(unittest.TestCase):
-
     def setUp(self):
         # 1) Planar benzene: 6 C in a hexagon, 6 H radially outside.
         angles = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False)
         r_c, r_ch = 1.40, 1.09
         c_xy = np.column_stack([np.cos(angles) * r_c, np.sin(angles) * r_c])
-        h_xy = np.column_stack([np.cos(angles) * (r_c + r_ch),
-                                np.sin(angles) * (r_c + r_ch)])
+        h_xy = np.column_stack([np.cos(angles) * (r_c + r_ch), np.sin(angles) * (r_c + r_ch)])
         coords = np.zeros((12, 3))
         coords[:6, :2] = c_xy
         coords[6:, :2] = h_xy
@@ -49,13 +47,15 @@ class TestHashMol3D(unittest.TestCase):
 
         # 2) A specific chiral tetrahedral carbon: CHFClBr
         self.chiral_z = np.array([6, 1, 9, 17, 35], dtype=int)
-        self.chiral_coords = np.array([
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.09],
-            [1.03, 0.0, -0.36],
-            [-0.5, 0.89, -0.36],
-            [-0.5, -0.89, -0.36],
-        ])
+        self.chiral_coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.09],
+                [1.03, 0.0, -0.36],
+                [-0.5, 0.89, -0.36],
+                [-0.5, -0.89, -0.36],
+            ]
+        )
 
         self.rng = np.random.default_rng(0)
 
@@ -66,16 +66,14 @@ class TestHashMol3D(unittest.TestCase):
         base = generate_hashmol3d(self.benzene_z, self.benzene_coords)
         for _ in range(50):
             perm = self.rng.permutation(len(self.benzene_z))
-            res = generate_hashmol3d(self.benzene_z[perm],
-                                     self.benzene_coords[perm])
+            res = generate_hashmol3d(self.benzene_z[perm], self.benzene_coords[perm])
             self.assertEqual(base.hash_str, res.hash_str)
 
         # Also for an asymmetric molecule.
         base = generate_hashmol3d(self.chiral_z, self.chiral_coords)
         for _ in range(50):
             perm = self.rng.permutation(len(self.chiral_z))
-            res = generate_hashmol3d(self.chiral_z[perm],
-                                     self.chiral_coords[perm])
+            res = generate_hashmol3d(self.chiral_z[perm], self.chiral_coords[perm])
             self.assertEqual(base.hash_str, res.hash_str)
 
     # -------------------------------------------------- rotation/translation
@@ -110,12 +108,10 @@ class TestHashMol3D(unittest.TestCase):
     # -------------------------------------------------------- noise / geometry
     def test_precision_noise(self):
         precision = 1e-4
-        base = generate_hashmol3d(self.chiral_z, self.chiral_coords,
-                                  precision=precision)
+        base = generate_hashmol3d(self.chiral_z, self.chiral_coords, precision=precision)
 
         # (A) tiny sub-precision noise -> same hash
-        tiny = self.chiral_coords + self.rng.uniform(
-            -1e-9, 1e-9, size=self.chiral_coords.shape)
+        tiny = self.chiral_coords + self.rng.uniform(-1e-9, 1e-9, size=self.chiral_coords.shape)
         self.assertEqual(
             base.hash_str,
             generate_hashmol3d(self.chiral_z, tiny, precision=precision).hash_str,
@@ -151,14 +147,16 @@ class TestHashMol3D(unittest.TestCase):
     def test_3d_achiral_mirror_consistency(self):
         """A 3D-but-achiral structure (two orthogonal mirror planes) hashes
         the same as its mirror image."""
-        coords = np.array([
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 2.0],
-            [1.0, 1.0, 1.0],
-            [1.0, -1.0, 1.0],
-            [-1.0, 1.0, 1.0],
-            [-1.0, -1.0, 1.0],
-        ])
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 2.0],
+                [1.0, 1.0, 1.0],
+                [1.0, -1.0, 1.0],
+                [-1.0, 1.0, 1.0],
+                [-1.0, -1.0, 1.0],
+            ]
+        )
         z = np.array([6, 6, 9, 9, 9, 9])
 
         base = generate_hashmol3d(z, coords)

@@ -20,7 +20,7 @@ def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
 
     Returns ``(atomic_nums, coords)`` as NumPy arrays.
     """
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         lines = f.readlines()
 
     if len(lines) < 2:
@@ -28,13 +28,12 @@ def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
 
     try:
         n_declared = int(lines[0].strip())
-    except ValueError:
+    except ValueError as err:
         raise ValueError(
-            "First line of an XYZ file must be the atom count; "
-            "got {0!r}".format(lines[0].strip())
-        )
+            f"First line of an XYZ file must be the atom count; got {lines[0].strip()!r}"
+        ) from err
     if n_declared <= 0:
-        raise ValueError("XYZ atom count must be positive, got {0}".format(n_declared))
+        raise ValueError(f"XYZ atom count must be positive, got {n_declared}")
 
     atom_lines = lines[2:]
 
@@ -46,24 +45,24 @@ def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
             continue
         parts = line.split()
         if len(parts) < 4:
-            raise ValueError("Malformed XYZ atom line: {0!r}".format(line))
+            raise ValueError(f"Malformed XYZ atom line: {line!r}")
 
         sym = parts[0]
         if sym.lstrip("-").isdigit():
             z = int(sym)
             if z <= 0 or z > 118:
-                raise ValueError("Atomic number out of range: {0}".format(z))
+                raise ValueError(f"Atomic number out of range: {z}")
         else:
             z = get_atomic_num(sym)
             if z == 0:
-                raise ValueError("Unknown element symbol: {0!r}".format(sym))
+                raise ValueError(f"Unknown element symbol: {sym!r}")
 
         try:
             x = float(parts[1])
             y = float(parts[2])
             zc = float(parts[3])
-        except ValueError:
-            raise ValueError("Malformed coordinates in XYZ line: {0!r}".format(line))
+        except ValueError as err:
+            raise ValueError(f"Malformed coordinates in XYZ line: {line!r}") from err
 
         z_list.append(z)
         coords_list.append([x, y, zc])
@@ -72,8 +71,8 @@ def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
 
     if len(z_list) != n_declared:
         raise ValueError(
-            "XYZ header declares {0} atoms but only {1} valid atom lines were found"
-            .format(n_declared, len(z_list))
+            f"XYZ header declares {n_declared} atoms but only "
+            f"{len(z_list)} valid atom lines were found"
         )
 
     return (
@@ -85,7 +84,7 @@ def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
 def compute(args):
     """Compute HashMol3D identifier for a file."""
     if not os.path.exists(args.filepath):
-        raise FileNotFoundError("File not found: {0}".format(args.filepath))
+        raise FileNotFoundError(f"File not found: {args.filepath}")
 
     atomic_nums, coords = parse_xyz(args.filepath)
 
@@ -111,7 +110,7 @@ def compute(args):
 
 def version(args):
     """Show HashMol3D version."""
-    print("HashMol3D version {0}".format(__version__))
+    print(f"HashMol3D version {__version__}")
 
 
 def cli():
@@ -132,15 +131,21 @@ def cli():
         "--charge", type=int, default=None, help="Total formal charge (default 0)"
     )
     compute_parser.add_argument(
-        "--multiplicity", type=int, default=None,
+        "--multiplicity",
+        type=int,
+        default=None,
         help="Spin multiplicity (default: inferred from electron count)",
     )
     compute_parser.add_argument(
-        "--hash-length", type=int, default=32,
+        "--hash-length",
+        type=int,
+        default=32,
         help="Number of hex characters retained (default 32; max 64)",
     )
     compute_parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Also print the canonical descriptor and metadata",
     )
     compute_parser.set_defaults(func=compute)

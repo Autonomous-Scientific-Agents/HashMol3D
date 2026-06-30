@@ -18,10 +18,9 @@ Python standard library.
 
 import hashlib
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
+from typing import List, Optional, Tuple
 
 import numpy as np
-
 
 __all__ = ["HashMol3DResult", "generate_hashmol3d"]
 
@@ -68,8 +67,7 @@ def _precision_to_decimals(precision: float) -> int:
     return int(max(0, round(-np.log10(precision))))
 
 
-def _infer_multiplicity(atomic_nums: np.ndarray, charge: int,
-                        multiplicity: Optional[int]) -> int:
+def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: Optional[int]) -> int:
     """Use the caller-supplied multiplicity, or infer one from electron count."""
     if multiplicity is not None:
         m = int(multiplicity)
@@ -80,8 +78,9 @@ def _infer_multiplicity(atomic_nums: np.ndarray, charge: int,
     return 1 if electrons % 2 == 0 else 2
 
 
-def _pair_signature(atomic_nums: np.ndarray, coords: np.ndarray,
-                    decimals: int) -> Tuple[Tuple[int, ...], List[Tuple[int, int, float]]]:
+def _pair_signature(
+    atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
+) -> Tuple[Tuple[int, ...], List[Tuple[int, int, float]]]:
     """
     Build the permutation-invariant fingerprint of the molecule.
 
@@ -116,24 +115,30 @@ def _pair_signature(atomic_nums: np.ndarray, coords: np.ndarray,
     return z_sorted, pairs
 
 
-def _format_descriptor(version: str, precision: float, decimals: int,
-                       z_sorted: Tuple[int, ...],
-                       pairs: List[Tuple[int, int, float]],
-                       charge: int, multiplicity: int) -> str:
+def _format_descriptor(
+    version: str,
+    precision: float,
+    decimals: int,
+    z_sorted: Tuple[int, ...],
+    pairs: List[Tuple[int, int, float]],
+    charge: int,
+    multiplicity: int,
+) -> str:
     """Render the canonical descriptor string that is fed to SHA-256."""
-    prec_str = "{:.1e}".format(precision)
+    prec_str = f"{precision:.1e}"
     z_part = ",".join(str(z) for z in z_sorted)
-    fmt = "{{:.{0}f}}".format(decimals)
-    d_part = ",".join("{0}-{1}:{2}".format(a, b, fmt.format(d))
-                      for a, b, d in pairs)
-    return "|".join([
-        "V:" + version,
-        "P:" + prec_str,
-        "Z:" + z_part,
-        "D:" + d_part,
-        "Q:" + str(charge),
-        "M:" + str(multiplicity),
-    ])
+    fmt = f"{{:.{decimals}f}}"
+    d_part = ",".join(f"{a}-{b}:{fmt.format(d)}" for a, b, d in pairs)
+    return "|".join(
+        [
+            "V:" + version,
+            "P:" + prec_str,
+            "Z:" + z_part,
+            "D:" + d_part,
+            "Q:" + str(charge),
+            "M:" + str(multiplicity),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -181,13 +186,10 @@ def generate_hashmol3d(
     if atomic_nums.size == 0:
         raise ValueError("Molecule must contain at least one atom")
     if coords.ndim != 2 or coords.shape[1] != 3:
-        raise ValueError(
-            "coords must have shape (N, 3); got {0}".format(coords.shape)
-        )
+        raise ValueError(f"coords must have shape (N, 3); got {coords.shape}")
     if coords.shape[0] != atomic_nums.size:
         raise ValueError(
-            "atomic_nums has {0} entries but coords has {1} rows"
-            .format(atomic_nums.size, coords.shape[0])
+            f"atomic_nums has {atomic_nums.size} entries but coords has {coords.shape[0]} rows"
         )
     if not np.all(atomic_nums > 0):
         raise ValueError("Atomic numbers must be positive integers")

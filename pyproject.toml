@@ -1,22 +1,41 @@
-
 [project]
-name="hashmol3d"
-version="0.3.0"
-description="Deterministic 3D molecular geometry hashing standard"
-authors=[{name="Murat Keçeli"}]
-readme="README.md"
-requires-python=">=3.8"
-dependencies=["numpy"]
+name = "hashmol3d"
+version = "0.3.0"
+description = "Deterministic 3D molecular geometry hashing standard"
+authors = [{name = "Murat Keçeli"}]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["numpy"]
 
 [project.optional-dependencies]
-test=["pytest"]
+test = ["pytest"]
 
 [project.scripts]
 hashmol3d = "hashmol3d.cli:cli"
 
 [build-system]
-requires=["setuptools","wheel"]
-build-backend="setuptools.build_meta"
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-package-dir = {""="src"}
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+norecursedirs = ["gemini", "xyz", ".venv", ".git", "build", "dist"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+# Pyflakes (F), pycodestyle errors+warnings (E, W), isort (I),
+# pyupgrade (UP), bugbear (B).
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]  # tolerate long lines in test fixtures

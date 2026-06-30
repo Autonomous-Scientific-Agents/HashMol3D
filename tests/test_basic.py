@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from hashmol3d import generate_hashmol3d, HashMol3DResult
+from hashmol3d import HashMol3DResult, generate_hashmol3d
 
 
 def test_returns_result(water):

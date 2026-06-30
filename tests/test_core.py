@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from hashmol3d.core import (
-    HashMol3DResult,
     _infer_multiplicity,
     _pair_signature,
     _precision_to_decimals,
