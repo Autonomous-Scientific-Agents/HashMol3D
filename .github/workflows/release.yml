@@ -1,0 +1,56 @@
+name: Release
+
+# Triggered by pushing a version tag (e.g. v0.5.0). Builds an sdist
+# and wheel, then publishes to PyPI via Trusted Publishing (OIDC).
+#
+# One-time PyPI setup (no token needed afterwards):
+#   1. Create the project on PyPI.
+#   2. Add a "pending publisher" pointing at:
+#        Owner:    <github-org-or-user>
+#        Repo:     HashMol3D
+#        Workflow: release.yml
+#        Env:      pypi
+#   3. The first successful run from this workflow claims the project.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build
+        run: pip install build
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Check distributions
+        run: |
+          pip install twine
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/hashmol3d
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
