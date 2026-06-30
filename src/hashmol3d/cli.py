@@ -1,7 +1,54 @@
 import argparse
 import os
-from .core import generate_hashmol3d_from_file
+import numpy as np
+from typing import Tuple
+
+from .core import generate_hashmol3d
+from .periodic_table import get_atomic_num
 from .version import __version__
+
+
+def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Parses a standard .xyz file.
+    Returns (atomic_nums, coords).
+    """
+    z_list = []
+    coords_list = []
+
+    with open(filepath, "r") as f:
+        lines = f.readlines()
+
+    # Skip header (atom count) and comment line
+    try:
+        atom_lines = lines[2:]
+    except IndexError:
+        raise ValueError("File is too short to be XYZ")
+
+    for line in atom_lines:
+        parts = line.strip().split()
+        if not parts:
+            continue
+
+        # Parse Symbol or Z
+        sym = parts[0]
+        if sym.isdigit():
+            z = int(sym)
+        else:
+            z = get_atomic_num(sym)
+            if z == 0:
+                raise ValueError(f"Unknown element symbol: {sym}")
+
+        # Parse Coords
+        try:
+            x, y, z_coord = float(parts[1]), float(parts[2]), float(parts[3])
+        except (IndexError, ValueError):
+            continue  # Skip malformed lines
+
+        z_list.append(z)
+        coords_list.append([x, y, z_coord])
+
+    return np.array(z_list, dtype=int), np.array(coords_list, dtype=float)
 
 
 def compute(args):
@@ -9,10 +56,18 @@ def compute(args):
     if not os.path.exists(args.filepath):
         raise FileNotFoundError(f"File not found: {args.filepath}")
 
-    res = generate_hashmol3d_from_file(
-        args.filepath,
+    # Parse XYZ file
+    atomic_nums, coords = parse_xyz(args.filepath)
+
+    # Set default charge if not provided
+    charge = args.charge if args.charge is not None else 0
+
+    # Generate hash
+    res = generate_hashmol3d(
+        atomic_nums=atomic_nums,
+        coords=coords,
         precision=args.precision,
-        charge=args.charge,
+        charge=charge,
         multiplicity=args.multiplicity,
         hash_length=args.hash_length,
     )
