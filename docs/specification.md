@@ -1,4 +1,4 @@
-# HashMol3D Specification v0.3.0
+# HashMol3D Specification v0.4.0
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
@@ -101,9 +101,9 @@ Example (water, `precision = 1e-4`):
 
 1. Encode the descriptor as UTF-8 bytes.
 2. Compute the SHA-256 digest.
-3. Take the first `hash_length` hex characters of the hex digest.
+3. Take the first `length` hex characters of the hex digest.
 
-`hash_length ∈ [1, 64]`. The recommended canonical value is 32
+`length ∈ [1, 64]`. The recommended canonical value is 32
 (128 bits). 16 (64 bits) is acceptable for small datasets; 64
 (full 256 bits) is appropriate for archival.
 
@@ -130,16 +130,23 @@ cheminformatics toolkit.
 ## 9. Reference API
 
 ```python
-from hashmol3d import generate_hashmol3d
+from hashmol3d import hash_molecule
 
-result = generate_hashmol3d(
+result = hash_molecule(
     atomic_nums,
     coords,
     precision=1e-4,
     charge=0,
     multiplicity=None,   # inferred if None
-    hash_length=32,
-    version="3-INV-SHA256",
+    length=32,
 )
 print(result.hash_str)
+```
+
+A file-based convenience wrapper is also provided:
+
+```python
+from hashmol3d import hash_xyz
+
+print(hash_xyz("water.xyz").hash_str)
 ```

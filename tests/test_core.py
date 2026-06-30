@@ -1,13 +1,15 @@
 """Unit tests for HashMol3D core helpers and the public function."""
 
+import warnings
+
 import numpy as np
 import pytest
 
+from hashmol3d import generate_hashmol3d, hash_molecule
 from hashmol3d.core import (
     _infer_multiplicity,
     _pair_signature,
     _precision_to_decimals,
-    generate_hashmol3d,
 )
 
 
@@ -68,74 +70,80 @@ class TestPairSignature:
 class TestInputValidation:
     def test_empty(self):
         with pytest.raises(ValueError):
-            generate_hashmol3d(np.array([], dtype=int), np.zeros((0, 3)))
+            hash_molecule(np.array([], dtype=int), np.zeros((0, 3)))
 
     def test_mismatched_lengths(self):
         with pytest.raises(ValueError):
-            generate_hashmol3d(np.array([1, 1]), np.zeros((3, 3)))
+            hash_molecule(np.array([1, 1]), np.zeros((3, 3)))
 
     def test_wrong_coord_shape(self):
         with pytest.raises(ValueError):
-            generate_hashmol3d(np.array([1, 1]), np.zeros((2, 4)))
+            hash_molecule(np.array([1, 1]), np.zeros((2, 4)))
 
     def test_nonpositive_z(self):
         with pytest.raises(ValueError):
-            generate_hashmol3d(np.array([0, 1]), np.zeros((2, 3)))
+            hash_molecule(np.array([0, 1]), np.zeros((2, 3)))
 
     def test_nonfinite_coords(self):
         with pytest.raises(ValueError):
-            generate_hashmol3d(np.array([1, 1]), np.array([[0, 0, 0], [np.nan, 0, 0]]))
+            hash_molecule(np.array([1, 1]), np.array([[0, 0, 0], [np.nan, 0, 0]]))
 
-    def test_hash_length_bounds(self, water):
+    def test_length_bounds(self, water):
         z, coords = water
         with pytest.raises(ValueError):
-            generate_hashmol3d(z, coords, hash_length=0)
+            hash_molecule(z, coords, length=0)
         with pytest.raises(ValueError):
-            generate_hashmol3d(z, coords, hash_length=65)
+            hash_molecule(z, coords, length=65)
 
 
 class TestDeterminism:
     def test_same_input_same_hash(self, water):
         z, coords = water
-        a = generate_hashmol3d(z, coords)
-        b = generate_hashmol3d(z, coords)
+        a = hash_molecule(z, coords)
+        b = hash_molecule(z, coords)
         assert a.hash_str == b.hash_str
         assert a.descriptor == b.descriptor
 
     def test_different_charge_different_hash(self, water):
         z, coords = water
-        a = generate_hashmol3d(z, coords, charge=0)
-        b = generate_hashmol3d(z, coords, charge=1)
+        a = hash_molecule(z, coords, charge=0)
+        b = hash_molecule(z, coords, charge=1)
         assert a.hash_str != b.hash_str
 
     def test_different_multiplicity_different_hash(self, water):
         z, coords = water
-        a = generate_hashmol3d(z, coords, multiplicity=1)
-        b = generate_hashmol3d(z, coords, multiplicity=3)
+        a = hash_molecule(z, coords, multiplicity=1)
+        b = hash_molecule(z, coords, multiplicity=3)
         assert a.hash_str != b.hash_str
 
     def test_different_precision_different_hash(self, chiral_chfclbr):
         z, coords = chiral_chfclbr
-        a = generate_hashmol3d(z, coords, precision=1e-4)
-        b = generate_hashmol3d(z, coords, precision=1e-3)
-        assert a.hash_str != b.hash_str
-
-    def test_version_changes_hash(self, water):
-        z, coords = water
-        a = generate_hashmol3d(z, coords, version="alpha")
-        b = generate_hashmol3d(z, coords, version="beta")
+        a = hash_molecule(z, coords, precision=1e-4)
+        b = hash_molecule(z, coords, precision=1e-3)
         assert a.hash_str != b.hash_str
 
 
-class TestBackwardsCompatAliases:
-    def test_protocol_kwarg_overrides_version(self, water):
+class TestDeprecatedAlias:
+    def test_generate_hashmol3d_warns(self, water):
         z, coords = water
-        r1 = generate_hashmol3d(z, coords, version="X", protocol="Y")
-        r2 = generate_hashmol3d(z, coords, version="Y")
-        assert r1.hash_str == r2.hash_str
-        assert r1.version == "Y"
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            old = generate_hashmol3d(z, coords)
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+        new = hash_molecule(z, coords)
+        assert old.hash_str == new.hash_str
 
-    def test_protocol_property_mirrors_version(self, water):
+    def test_generate_hashmol3d_hash_length_kwarg(self, water):
         z, coords = water
-        r = generate_hashmol3d(z, coords, version="abc")
-        assert r.protocol == "abc"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            r = generate_hashmol3d(z, coords, hash_length=16)
+        assert len(r.hash_str) == 16
+
+
+class TestKeywordOnly:
+    def test_optional_args_are_keyword_only(self, water):
+        z, coords = water
+        with pytest.raises(TypeError):
+            # precision is keyword-only; positional must fail.
+            hash_molecule(z, coords, 1e-3)

@@ -1,6 +1,6 @@
 [project]
 name = "hashmol3d"
-version = "0.3.0"
+version = "0.4.0"
 description = "Deterministic 3D molecular geometry hashing standard"
 authors = [{name = "Murat Keçeli"}]
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = ["numpy"]
 test = ["pytest"]
 
 [project.scripts]
-hashmol3d = "hashmol3d.cli:cli"
+hashmol3d = "hashmol3d.cli:main"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]
@@ -31,6 +31,7 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 target-version = "py38"
+extend-exclude = ["gemini", "xyz", "build", "dist"]
 
 [tool.ruff.lint]
 # Pyflakes (F), pycodestyle errors+warnings (E, W), isort (I),

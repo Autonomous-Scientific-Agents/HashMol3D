@@ -1,162 +1,106 @@
 """Command-line interface for HashMol3D."""
 
+from __future__ import annotations
+
 import argparse
-import os
-from typing import Tuple
+import sys
+from typing import Sequence
 
-import numpy as np
-
-from .core import generate_hashmol3d
-from .periodic_table import get_atomic_num
+from .core import hash_molecule
+from .io import read_xyz
 from .version import __version__
 
 
-def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Parse a standard .xyz file.
-
-    The first line must contain the atom count; the second line is a free-form
-    comment; subsequent lines must contain ``symbol x y z`` (or ``Z x y z``).
-
-    Returns ``(atomic_nums, coords)`` as NumPy arrays.
-    """
-    with open(filepath) as f:
-        lines = f.readlines()
-
-    if len(lines) < 2:
-        raise ValueError("XYZ file is too short (need at least 2 header lines)")
-
-    try:
-        n_declared = int(lines[0].strip())
-    except ValueError as err:
-        raise ValueError(
-            f"First line of an XYZ file must be the atom count; got {lines[0].strip()!r}"
-        ) from err
-    if n_declared <= 0:
-        raise ValueError(f"XYZ atom count must be positive, got {n_declared}")
-
-    atom_lines = lines[2:]
-
-    z_list = []
-    coords_list = []
-    for raw in atom_lines:
-        line = raw.strip()
-        if not line:
-            continue
-        parts = line.split()
-        if len(parts) < 4:
-            raise ValueError(f"Malformed XYZ atom line: {line!r}")
-
-        sym = parts[0]
-        if sym.lstrip("-").isdigit():
-            z = int(sym)
-            if z <= 0 or z > 118:
-                raise ValueError(f"Atomic number out of range: {z}")
-        else:
-            z = get_atomic_num(sym)
-            if z == 0:
-                raise ValueError(f"Unknown element symbol: {sym!r}")
-
-        try:
-            x = float(parts[1])
-            y = float(parts[2])
-            zc = float(parts[3])
-        except ValueError as err:
-            raise ValueError(f"Malformed coordinates in XYZ line: {line!r}") from err
-
-        z_list.append(z)
-        coords_list.append([x, y, zc])
-        if len(z_list) == n_declared:
-            break
-
-    if len(z_list) != n_declared:
-        raise ValueError(
-            f"XYZ header declares {n_declared} atoms but only "
-            f"{len(z_list)} valid atom lines were found"
-        )
-
-    return (
-        np.array(z_list, dtype=int),
-        np.array(coords_list, dtype=float),
-    )
-
-
-def compute(args):
-    """Compute HashMol3D identifier for a file."""
-    if not os.path.exists(args.filepath):
-        raise FileNotFoundError(f"File not found: {args.filepath}")
-
-    atomic_nums, coords = parse_xyz(args.filepath)
-
-    charge = args.charge if args.charge is not None else 0
-
-    res = generate_hashmol3d(
-        atomic_nums=atomic_nums,
-        coords=coords,
-        precision=args.precision,
-        charge=charge,
-        multiplicity=args.multiplicity,
-        hash_length=args.hash_length,
-    )
-    if args.verbose:
-        print("descriptor:", res.descriptor)
-        print("charge:", res.charge)
-        print("multiplicity:", res.multiplicity)
-        print("version:", res.version)
-        print("hash:", res.hash_str)
-    else:
-        print(res.hash_str)
-
-
-def version(args):
-    """Show HashMol3D version."""
-    print(f"HashMol3D version {__version__}")
-
-
-def cli():
-    """Main CLI entry point."""
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Deterministic 3D molecular geometry hashing standard"
+        prog="hashmol3d",
+        description=(
+            "Deterministic 3D molecular geometry hash. "
+            "Reads an XYZ file and prints the HashMol3D identifier."
+        ),
     )
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    compute_parser = subparsers.add_parser(
-        "compute", help="Compute HashMol3D identifier for an XYZ file."
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"hashmol3d {__version__}",
     )
-    compute_parser.add_argument("filepath", help="Path to the molecular file (.xyz)")
-    compute_parser.add_argument(
-        "--precision", type=float, default=1e-4, help="Distance precision in Å"
+    parser.add_argument("file", help="Path to a molecular geometry file (.xyz)")
+    parser.add_argument(
+        "-p",
+        "--precision",
+        type=float,
+        default=1e-4,
+        metavar="Å",
+        help="Distance precision in angstroms (default: 1e-4)",
     )
-    compute_parser.add_argument(
-        "--charge", type=int, default=None, help="Total formal charge (default 0)"
+    parser.add_argument(
+        "-c",
+        "--charge",
+        type=int,
+        default=0,
+        help="Total formal charge (default: 0)",
     )
-    compute_parser.add_argument(
+    parser.add_argument(
+        "-m",
         "--multiplicity",
         type=int,
         default=None,
         help="Spin multiplicity (default: inferred from electron count)",
     )
-    compute_parser.add_argument(
-        "--hash-length",
+    parser.add_argument(
+        "-l",
+        "--length",
         type=int,
         default=32,
-        help="Number of hex characters retained (default 32; max 64)",
+        help="Number of hex characters to retain, 1-64 (default: 32)",
     )
-    compute_parser.add_argument(
-        "--verbose",
+    parser.add_argument(
         "-v",
+        "--verbose",
         action="store_true",
         help="Also print the canonical descriptor and metadata",
     )
-    compute_parser.set_defaults(func=compute)
+    return parser
 
-    version_parser = subparsers.add_parser("version", help="Show HashMol3D version.")
-    version_parser.set_defaults(func=version)
 
-    args = parser.parse_args()
+def cli(argv: Sequence[str] | None = None) -> int:
+    """Run the HashMol3D CLI.
 
-    if args.command is None:
-        parser.print_help()
-        return
+    Returns the process exit code. ``argv`` may be passed for testing;
+    if omitted, ``sys.argv[1:]`` is used.
+    """
+    parser = _build_parser()
+    args = parser.parse_args(argv)
 
-    args.func(args)
+    try:
+        atomic_nums, coords = read_xyz(args.file)
+        result = hash_molecule(
+            atomic_nums,
+            coords,
+            precision=args.precision,
+            charge=args.charge,
+            multiplicity=args.multiplicity,
+            length=args.length,
+        )
+    except FileNotFoundError as err:
+        print(f"hashmol3d: {err}", file=sys.stderr)
+        return 1
+    except (ValueError, OSError) as err:
+        print(f"hashmol3d: {err}", file=sys.stderr)
+        return 1
+
+    if args.verbose:
+        print(f"hash:         {result.hash_str}")
+        print(f"descriptor:   {result.descriptor}")
+        print(f"version:      {result.version}")
+        print(f"precision:    {result.precision}")
+        print(f"charge:       {result.charge}")
+        print(f"multiplicity: {result.multiplicity}")
+    else:
+        print(result.hash_str)
+    return 0
+
+
+def main() -> None:
+    """Entry point used by the ``hashmol3d`` console script."""
+    sys.exit(cli())

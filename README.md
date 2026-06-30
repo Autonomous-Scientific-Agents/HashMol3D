@@ -65,23 +65,23 @@ uv pip install -e .  # Or: pip install -e .
 
 ```bash
 # Compute hash for an XYZ file
-hashmol3d compute path/to/molecule.xyz
+hashmol3d path/to/molecule.xyz
 
-# With options
-hashmol3d compute --precision 1e-3 --hash-length 16 molecule.xyz
+# With options (short flags)
+hashmol3d -p 1e-3 -l 16 molecule.xyz
 
 # Print the canonical descriptor along with the hash
-hashmol3d compute --verbose molecule.xyz
+hashmol3d -v molecule.xyz
 
 # Show version
-hashmol3d version
+hashmol3d --version
 ```
 
 ## Usage (Python)
 
 ```python
 import numpy as np
-from hashmol3d import generate_hashmol3d
+from hashmol3d import hash_molecule
 
 atomic_nums = np.array([8, 1, 1])
 coords = np.array([
@@ -89,7 +89,15 @@ coords = np.array([
     [0.7572, 0.586, 0.0],
     [-0.7572,0.586, 0.0],
 ])
-res = generate_hashmol3d(atomic_nums, coords)
+res = hash_molecule(atomic_nums, coords)
 print(res.hash_str)
+```
+
+Or read straight from a file:
+
+```python
+from hashmol3d import hash_xyz
+
+print(hash_xyz("molecule.xyz").hash_str)
 ```
 

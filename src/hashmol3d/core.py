@@ -16,22 +16,31 @@ The implementation has no RDKit dependency; it uses only NumPy and the
 Python standard library.
 """
 
+from __future__ import annotations
+
 import hashlib
+import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 import numpy as np
 
-__all__ = ["HashMol3DResult", "generate_hashmol3d"]
+__all__ = [
+    "DESCRIPTOR_VERSION",
+    "HashMol3DResult",
+    "generate_hashmol3d",
+    "hash_molecule",
+]
 
 
-# ---------------------------------------------------------------------------
-# Result container
-# ---------------------------------------------------------------------------
+# The descriptor version is part of the hashed payload. Bump it whenever
+# the descriptor format changes in a way that would alter hashes.
+DESCRIPTOR_VERSION = "3-INV-SHA256"
 
 
 @dataclass(frozen=True)
 class HashMol3DResult:
+    """The result of hashing a molecular geometry."""
+
     hash_str: str
     version: str
     precision: float
@@ -42,23 +51,6 @@ class HashMol3DResult:
     def __str__(self) -> str:
         return self.hash_str
 
-    # ----- backwards-compatible aliases (older API) -----
-    @property
-    def protocol(self) -> str:
-        return self.version
-
-    @property
-    def chiral_sign(self) -> str:
-        # Chirality is intentionally not encoded: enantiomers share the
-        # eigenvalues of the non-relativistic molecular Hamiltonian and
-        # therefore the same HashMol3D identifier.
-        return ""
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _precision_to_decimals(precision: float) -> int:
     """Number of decimal places implied by a distance precision in Å."""
@@ -67,7 +59,7 @@ def _precision_to_decimals(precision: float) -> int:
     return int(max(0, round(-np.log10(precision))))
 
 
-def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: Optional[int]) -> int:
+def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
     """Use the caller-supplied multiplicity, or infer one from electron count."""
     if multiplicity is not None:
         m = int(multiplicity)
@@ -80,18 +72,15 @@ def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: Opti
 
 def _pair_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
-) -> Tuple[Tuple[int, ...], List[Tuple[int, int, float]]]:
-    """
-    Build the permutation-invariant fingerprint of the molecule.
+) -> tuple[tuple[int, ...], list[tuple[int, int, float]]]:
+    """Build the permutation-invariant fingerprint of the molecule.
 
-    Returns:
-        z_sorted: sorted tuple of atomic numbers
-        pairs:    sorted list of (Z_min, Z_max, rounded_distance) triples
-                  over every unordered pair of atoms
-
-    Both objects are invariant under any relabeling of atoms (they are
-    multisets) and under any rigid motion / reflection (they depend only
-    on Z and pairwise distances).
+    Returns ``(z_sorted, pairs)`` where ``z_sorted`` is a sorted tuple of
+    atomic numbers and ``pairs`` is a sorted list of
+    ``(Z_min, Z_max, rounded_distance)`` triples over every unordered pair
+    of atoms. Both objects are invariant under any relabeling of atoms
+    (multisets) and under any rigid motion or reflection (functions only
+    of Z and pairwise distances).
     """
     n = atomic_nums.shape[0]
     z_sorted = tuple(sorted(int(z) for z in atomic_nums))
@@ -99,7 +88,6 @@ def _pair_signature(
     if n < 2:
         return z_sorted, []
 
-    # Vectorized pairwise distances.
     diff = coords[:, None, :] - coords[None, :, :]
     dmat = np.linalg.norm(diff, axis=-1)
     iu, ju = np.triu_indices(n, k=1)
@@ -119,8 +107,8 @@ def _format_descriptor(
     version: str,
     precision: float,
     decimals: int,
-    z_sorted: Tuple[int, ...],
-    pairs: List[Tuple[int, int, float]],
+    z_sorted: tuple[int, ...],
+    pairs: list[tuple[int, int, float]],
     charge: int,
     multiplicity: int,
 ) -> str:
@@ -141,50 +129,37 @@ def _format_descriptor(
     )
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-def generate_hashmol3d(
+def hash_molecule(
     atomic_nums,
     coords,
+    *,
     precision: float = 1e-4,
     charge: int = 0,
-    multiplicity: Optional[int] = None,
-    hash_length: int = 32,
-    version: str = "3-INV-SHA256",
-    *,
-    protocol: Optional[str] = None,  # backwards-compatible alias for `version`
+    multiplicity: int | None = None,
+    length: int = 32,
 ) -> HashMol3DResult:
-    """
-    Compute the HashMol3D identifier for a 3D molecular geometry.
+    """Compute the HashMol3D identifier for a 3D molecular geometry.
 
     Args:
-        atomic_nums: integer array-like of atomic numbers, shape (N,)
-        coords:      float array-like of Cartesian coordinates in Å,
-                     shape (N, 3)
-        precision:   distance precision in Å (default 1e-4)
-        charge:      total formal charge (default 0)
-        multiplicity: spin multiplicity (1=singlet, 2=doublet, ...).
-                     If None, inferred as singlet/doublet from electron count.
-        hash_length: number of hex characters retained from the SHA-256
-                     digest. Must be in [1, 64].
-        version:     descriptor version tag. Changing it changes the hash.
-        protocol:    deprecated alias for `version`. If supplied, overrides
-                     `version`.
+        atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
+        coords: float array-like of Cartesian coordinates in Å, shape
+            ``(N, 3)``.
+        precision: distance precision in Å (default ``1e-4``).
+        charge: total formal charge (default ``0``).
+        multiplicity: spin multiplicity (``1`` = singlet, ``2`` = doublet,
+            ...). If ``None``, inferred as singlet/doublet from the
+            electron count.
+        length: number of hex characters retained from the SHA-256 digest.
+            Must be in ``[1, 64]``.
 
     Returns:
-        HashMol3DResult.
+        :class:`HashMol3DResult`.
     """
-    if protocol is not None:
-        version = protocol
-
     atomic_nums = np.asarray(atomic_nums, dtype=int).reshape(-1)
     coords = np.asarray(coords, dtype=float)
 
     if atomic_nums.size == 0:
-        raise ValueError("Molecule must contain at least one atom")
+        raise ValueError("molecule must contain at least one atom")
     if coords.ndim != 2 or coords.shape[1] != 3:
         raise ValueError(f"coords must have shape (N, 3); got {coords.shape}")
     if coords.shape[0] != atomic_nums.size:
@@ -192,11 +167,11 @@ def generate_hashmol3d(
             f"atomic_nums has {atomic_nums.size} entries but coords has {coords.shape[0]} rows"
         )
     if not np.all(atomic_nums > 0):
-        raise ValueError("Atomic numbers must be positive integers")
+        raise ValueError("atomic numbers must be positive integers")
     if not np.all(np.isfinite(coords)):
         raise ValueError("coords contain non-finite values")
-    if not isinstance(hash_length, int) or not (1 <= hash_length <= 64):
-        raise ValueError("hash_length must be an int in [1, 64]")
+    if not isinstance(length, int) or not (1 <= length <= 64):
+        raise ValueError("length must be an int in [1, 64]")
 
     charge = int(charge)
     decimals = _precision_to_decimals(precision)
@@ -204,15 +179,45 @@ def generate_hashmol3d(
 
     z_sorted, pairs = _pair_signature(atomic_nums, coords, decimals)
     descriptor = _format_descriptor(
-        version, precision, decimals, z_sorted, pairs, charge, used_mult
+        DESCRIPTOR_VERSION, precision, decimals, z_sorted, pairs, charge, used_mult
     )
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()
 
     return HashMol3DResult(
-        hash_str=digest[:hash_length],
-        version=version,
+        hash_str=digest[:length],
+        version=DESCRIPTOR_VERSION,
         precision=precision,
         charge=charge,
         multiplicity=used_mult,
         descriptor=descriptor,
+    )
+
+
+def generate_hashmol3d(
+    atomic_nums,
+    coords,
+    precision: float = 1e-4,
+    charge: int = 0,
+    multiplicity: int | None = None,
+    hash_length: int = 32,
+) -> HashMol3DResult:
+    """Deprecated alias for :func:`hash_molecule`.
+
+    .. deprecated:: 0.4.0
+        Use :func:`hash_molecule` instead. The ``hash_length`` keyword is
+        renamed to ``length`` in the new function.
+    """
+    warnings.warn(
+        "generate_hashmol3d() is deprecated; use hash_molecule() instead "
+        "(the hash_length kwarg is now called length).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return hash_molecule(
+        atomic_nums,
+        coords,
+        precision=precision,
+        charge=charge,
+        multiplicity=multiplicity,
+        length=hash_length,
     )

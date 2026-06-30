@@ -13,14 +13,13 @@ It MUST change under:
   * changes in atomic number
   * geometry distortions larger than the chosen precision
   * changes in charge or multiplicity
-  * changes in the version tag
 """
 
 import unittest
 
 import numpy as np
 
-from hashmol3d import generate_hashmol3d
+from hashmol3d import hash_molecule
 
 
 def _random_rotation(rng):
@@ -63,58 +62,58 @@ class TestHashMol3D(unittest.TestCase):
     def test_permutation_invariance(self):
         """Relabeling atoms (even of a highly symmetric molecule) must not
         change the hash."""
-        base = generate_hashmol3d(self.benzene_z, self.benzene_coords)
+        base = hash_molecule(self.benzene_z, self.benzene_coords)
         for _ in range(50):
             perm = self.rng.permutation(len(self.benzene_z))
-            res = generate_hashmol3d(self.benzene_z[perm], self.benzene_coords[perm])
+            res = hash_molecule(self.benzene_z[perm], self.benzene_coords[perm])
             self.assertEqual(base.hash_str, res.hash_str)
 
         # Also for an asymmetric molecule.
-        base = generate_hashmol3d(self.chiral_z, self.chiral_coords)
+        base = hash_molecule(self.chiral_z, self.chiral_coords)
         for _ in range(50):
             perm = self.rng.permutation(len(self.chiral_z))
-            res = generate_hashmol3d(self.chiral_z[perm], self.chiral_coords[perm])
+            res = hash_molecule(self.chiral_z[perm], self.chiral_coords[perm])
             self.assertEqual(base.hash_str, res.hash_str)
 
     # -------------------------------------------------- rotation/translation
     def test_rigid_body_invariance(self):
-        base = generate_hashmol3d(self.chiral_z, self.chiral_coords)
+        base = hash_molecule(self.chiral_z, self.chiral_coords)
         for _ in range(10):
             R = _random_rotation(self.rng)
             t = self.rng.uniform(-10.0, 10.0, size=3)
             transformed = self.chiral_coords @ R.T + t
-            res = generate_hashmol3d(self.chiral_z, transformed)
+            res = hash_molecule(self.chiral_z, transformed)
             self.assertEqual(base.hash_str, res.hash_str)
 
     # -------------------------------------------------------- parity / mirror
     def test_mirror_invariance_planar(self):
         """A planar molecule reflected through the molecular plane is
         identical; the hash must not change."""
-        base = generate_hashmol3d(self.benzene_z, self.benzene_coords)
+        base = hash_molecule(self.benzene_z, self.benzene_coords)
         mirrored = self.benzene_coords.copy()
         mirrored[:, 0] *= -1
-        res = generate_hashmol3d(self.benzene_z, mirrored)
+        res = hash_molecule(self.benzene_z, mirrored)
         self.assertEqual(base.hash_str, res.hash_str)
 
     def test_mirror_invariance_chiral(self):
         """Enantiomers share the eigenvalues of the non-relativistic
         Hamiltonian, so they must share the HashMol3D identifier."""
-        base = generate_hashmol3d(self.chiral_z, self.chiral_coords)
+        base = hash_molecule(self.chiral_z, self.chiral_coords)
         mirrored = self.chiral_coords.copy()
         mirrored[:, 0] *= -1
-        res = generate_hashmol3d(self.chiral_z, mirrored)
+        res = hash_molecule(self.chiral_z, mirrored)
         self.assertEqual(base.hash_str, res.hash_str)
 
     # -------------------------------------------------------- noise / geometry
     def test_precision_noise(self):
         precision = 1e-4
-        base = generate_hashmol3d(self.chiral_z, self.chiral_coords, precision=precision)
+        base = hash_molecule(self.chiral_z, self.chiral_coords, precision=precision)
 
         # (A) tiny sub-precision noise -> same hash
         tiny = self.chiral_coords + self.rng.uniform(-1e-9, 1e-9, size=self.chiral_coords.shape)
         self.assertEqual(
             base.hash_str,
-            generate_hashmol3d(self.chiral_z, tiny, precision=precision).hash_str,
+            hash_molecule(self.chiral_z, tiny, precision=precision).hash_str,
         )
 
         # (B) genuine geometric distortion -> different hash
@@ -122,25 +121,14 @@ class TestHashMol3D(unittest.TestCase):
         distorted[0] += 0.5
         self.assertNotEqual(
             base.hash_str,
-            generate_hashmol3d(self.chiral_z, distorted, precision=precision).hash_str,
+            hash_molecule(self.chiral_z, distorted, precision=precision).hash_str,
         )
-
-    # -------------------------------------------------------- version / Z
-    def test_version_separation(self):
-        a = generate_hashmol3d(self.chiral_z, self.chiral_coords, version="v1-TEST")
-        b = generate_hashmol3d(self.chiral_z, self.chiral_coords, version="v2-TEST")
-        self.assertNotEqual(a.hash_str, b.hash_str)
-
-    def test_protocol_alias_still_works(self):
-        a = generate_hashmol3d(self.chiral_z, self.chiral_coords, protocol="v1-TEST")
-        b = generate_hashmol3d(self.chiral_z, self.chiral_coords, version="v1-TEST")
-        self.assertEqual(a.hash_str, b.hash_str)
 
     def test_atomic_number_matters(self):
         z2 = self.chiral_z.copy()
         z2[1] = 7  # H -> N
-        a = generate_hashmol3d(self.chiral_z, self.chiral_coords)
-        b = generate_hashmol3d(z2, self.chiral_coords)
+        a = hash_molecule(self.chiral_z, self.chiral_coords)
+        b = hash_molecule(z2, self.chiral_coords)
         self.assertNotEqual(a.hash_str, b.hash_str)
 
     # -------------------------------------------------------- achirality
@@ -159,10 +147,10 @@ class TestHashMol3D(unittest.TestCase):
         )
         z = np.array([6, 6, 9, 9, 9, 9])
 
-        base = generate_hashmol3d(z, coords)
+        base = hash_molecule(z, coords)
         mirror = coords.copy()
         mirror[:, 0] *= -1
-        self.assertEqual(base.hash_str, generate_hashmol3d(z, mirror).hash_str)
+        self.assertEqual(base.hash_str, hash_molecule(z, mirror).hash_str)
 
 
 if __name__ == "__main__":

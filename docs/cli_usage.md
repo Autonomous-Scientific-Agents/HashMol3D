@@ -2,31 +2,53 @@
 
 After installation, a `hashmol3d` command is available.
 
-## Compute a hash for an XYZ file
+## Synopsis
 
 ```bash
-hashmol3d compute molecule.xyz
+hashmol3d FILE [options]
+hashmol3d --version
+hashmol3d --help
 ```
 
-Options:
+`FILE` is the path to a standard XYZ geometry file. The default
+behavior prints the HashMol3D identifier to stdout, one line, with no
+extra formatting — suitable for piping.
 
-- `--precision FLOAT`   Distance precision in Å (default: `1e-4`)
-- `--charge INT`        Total formal charge (default: `0`)
-- `--multiplicity INT`  Spin multiplicity (default: inferred from electron parity)
-- `--hash-length INT`   Number of hex characters (default: `32`, max `64`)
-- `--verbose`, `-v`     Also print the canonical descriptor and metadata
+## Options
 
-Example:
+| Flag | Long form | Default | Meaning |
+| --- | --- | --- | --- |
+| `-p` | `--precision`    | `1e-4` | Distance precision in angstroms |
+| `-c` | `--charge`       | `0`    | Total formal charge |
+| `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
+| `-l` | `--length`       | `32`   | Hex characters of SHA-256 digest to retain (1–64) |
+| `-v` | `--verbose`      |        | Also print the descriptor, version, and metadata |
+
+## Examples
+
+Hash a geometry with default settings:
 
 ```bash
-hashmol3d compute --precision 1e-3 --hash-length 16 ethanol.xyz
+hashmol3d ethanol.xyz
 ```
 
-## Show package version
+Use a coarser precision and a shorter identifier:
 
 ```bash
-hashmol3d version
+hashmol3d -p 1e-3 -l 16 ethanol.xyz
 ```
+
+Hash a cation with explicit multiplicity, verbosely:
+
+```bash
+hashmol3d -c 1 -m 2 -v ethanol.xyz
+```
+
+## Exit codes
+
+- `0` — success
+- `1` — input file missing or malformed (a one-line message is written
+  to stderr; no Python traceback is shown)
 
 ## Supported formats
 
