@@ -1,279 +1,145 @@
-# HashMol3D Specification v0.1.0
+# HashMol3D Specification v0.3.0
 
-**Status:** Draft standard  
-**Canonical algorithm:** SHA-256  
-**Canonical output length:** 32 hex characters (128 bits)  
+**Status:** Draft standard
+**Canonical algorithm:** SHA-256
+**Canonical output length:** 32 hex characters (128 bits)
+**Canonical version tag:** `3-INV-SHA256`
 
-HashMol3D is a deterministic, rotation-, translation-, and permutation-invariant
-identifier for 3D molecular conformers. It is designed for reproducible
-identification of geometries in computational chemistry and scientific workflows.
+HashMol3D is a deterministic identifier for 3D molecular conformers.
+It is designed for reproducible identification of geometries in
+computational-chemistry workflows and databases.
 
-HashMol3D encodes:
+## 1. Invariance contract
 
-- Atomic numbers (Z) in a canonical atom order
-- 3D Cartesian geometry via a pairwise distance matrix
-- Distance rounding at user-specified precision
-- Stereochemistry (R/S/?) from RDKit chiral center perception
-- Formal charge
-- Spin multiplicity
-- A version tag specifying descriptor and hash algorithm
+The HashMol3D identifier is invariant under exactly those operations
+that leave the eigenvalues of the non-relativistic molecular
+Hamiltonian unchanged:
 
-The canonical HashMol3D identifier is a fixed-length hexadecimal string
-
-    <hash>
-
-obtained by truncating the SHA-256 digest of a canonical descriptor string.
-
----
-
-## 1. Inputs
-
-HashMol3D requires:
-
-1. An RDKit `Mol` object with at least one 3D conformer.
-2. A distance precision epsilon in Å (default: 1e-4).
-3. Optionally, a user-specified formal charge.
-4. Optionally, a user-specified spin multiplicity.
-
-If charge and multiplicity are not given, they are inferred as:
-
-- `charge`: RDKit formal charge (fallback 0 if unavailable)
-- `multiplicity`:
-
-      number of electrons = sum(Z) - charge
-      multiplicity = 1 if number of electrons is even else 2
-
-No isotope information is included in HashMol3D, but it is possible to extend the specification as described in section 11.
-
----
-
-## 2. Invariance Guarantees
-
-HashMol3D is invariant under:
-
-- Rigid translations of the coordinates
-- Rigid rotations of the molecule
-- Permutations of atom indices (via canonical atom ordering)
-- Small numerical noise in coordinates, controlled by the rounding precision
+- rigid translation of the coordinates
+- rigid rotation of the coordinates
+- permutation (relabeling) of atom indices
+- spatial inversion / reflection (parity)
+- numerical noise smaller than the user-specified precision
 
 It is **not** invariant under:
 
-- Changes in atomic number Z
-- Changes in overall charge
-- Changes in multiplicity
-- Conformer changes larger than the chosen precision threshold
-- Inversion of stereochemistry (R ↔ S) for one or more chiral centers
+- changes in any atomic number Z
+- changes in total charge
+- changes in spin multiplicity
+- changes in the descriptor version tag
+- geometric distortions larger than the chosen precision
 
----
+> **Note on chirality.** Two enantiomers share the eigenvalues of the
+> non-relativistic Hamiltonian and therefore share the same HashMol3D
+> identifier. If you need to distinguish enantiomers, combine HashMol3D
+> with an external stereochemistry tag.
 
-## 3. Canonical Atom Ordering
+## 2. Inputs
 
-Permutation invariance is achieved by a canonical atom ordering:
+The reference implementation takes:
 
-1. Use `Chem.CanonicalRankAtoms(mol)` to obtain an integer rank for each atom.
-2. Sort atoms by `(rank, atom_index)` ascending.
-3. Reorder both coordinates and atomic numbers according to this order.
+1. `atomic_nums`: integer array of atomic numbers, shape `(N,)`
+2. `coords`: float array of Cartesian coordinates in Å, shape `(N, 3)`
+3. `precision`: distance precision in Å (default `1e-4`)
+4. `charge`: total formal charge (default `0`)
+5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
 
-This guarantees that the descriptor does not depend on input atom numbering.
+## 3. Pair signature
 
----
+Permutation, translation, rotation, and reflection invariance are all
+achieved together by reducing the geometry to a multiset of pairwise
+distances tagged by atomic numbers.
 
-## 4. Distance Matrix Construction
+For every unordered pair of atoms `(i, j)` with `i < j`:
 
-Given canonicalized coordinates \( r_i \in \mathbb{R}^3 \), construct the full
-interatomic distance matrix:
+1. Compute the Euclidean distance `d_ij = ||r_i - r_j||`.
+2. Round to `decimals = max(0, round(-log10(precision)))` decimal places.
+3. Emit the triple `(min(Z_i, Z_j), max(Z_i, Z_j), d_ij_rounded)`.
 
-\[
-D_{ij} = \lVert r_i - r_j \rVert
-\]
+The list of all such triples is sorted lexicographically. This sorted
+list is invariant under any relabeling of atoms (it is a multiset
+keyed only on Z and distance) and under any rigid motion or reflection
+of the geometry (it depends only on pairwise distances).
 
-Only the strict upper-triangular entries (i < j) are used in the descriptor.
+The sorted list of atomic numbers is included as a separate
+component so that empty-distance corner cases (single atom) still
+distinguish elements.
 
----
+## 4. Multiplicity inference
 
-## 5. Precision and Rounding
+If `multiplicity` is not supplied:
 
-Let epsilon be the distance precision, in Å (e.g., 1e-4). The number of
-decimal places to keep is:
+    electrons   = sum(Z_i) - charge
+    multiplicity = 1 if electrons is even else 2
 
-    decimals = max(0, round(-log10(epsilon)))
+This singlet/doublet default is appropriate when no other spin
+information is available. Callers that know better should pass
+`multiplicity` explicitly.
 
-Distances in the upper triangle are rounded to `decimals` decimal places:
+## 5. Canonical descriptor string
 
-\[
-D_{ij}^{\text{round}} = \text{round}(D_{ij}, \text{decimals})
-\]
+The descriptor is a UTF-8 string with the following pipe-separated
+components, in this fixed order:
 
-This controls how tolerant HashMol3D is to small numerical changes in geometry.
-
-Default:
-
-    epsilon = 1e-4 Å  →  decimals = 4
-
----
-
-## 6. Stereochemistry Encoding
-
-Topological stereochemistry is encoded using RDKit’s chiral center perception:
-
-1. Use `Chem.FindMolChiralCenters(mol, includeUnassigned=True)` to obtain chiral centers.
-2. Sort the centers by atom index.
-3. For each center:
-
-   - Use `"R"` or `"S"` if RDKit assigns an R/S configuration.
-   - Use `"?"` for unassigned or unknown chirality.
-
-4. Join the sequence with commas, e.g.:
-
-   - No chiral centers: empty string `""`
-   - One R center: `"R"`
-   - Two centers, R then S: `"R,S"`
-   - Center 1 unknown, center 4 S: `"?,S"`
-
-This stereochemistry string is included in the descriptor but not printed
-in the final hash.
-
----
-
-## 7. Charge and Multiplicity
-
-### 7.1 Charge
-
-The formal charge is either:
-
-- Provided explicitly by the user, **or**
-- Inferred via `rdMolOps.GetFormalCharge(mol)` if possible, otherwise 0.
-
-It is stored as an integer, e.g., `-1`, `0`, `+1`.
-
-### 7.2 Multiplicity
-
-The spin multiplicity is either:
-
-- Provided explicitly by the user, **or**
-- Inferred from electron count:
-
-      electrons = sum(Z_i) - charge
-      multiplicity = 1 if electrons % 2 == 0 else 2
-
-This simple rule is appropriate for default behavior. Users with more detailed
-spin information should pass the multiplicity explicitly.
-
----
-
-## 8. Descriptor String
-
-The descriptor is a UTF‑8 string that concatenates all components using
-pipe (`|`) separators in a fixed order:
-
-1. Version tag
-2. Precision
-3. Atomic numbers (canonical order)
-4. Distance matrix (upper-triangular, rounded)
-5. Stereochemistry
-6. Charge
-7. Multiplicity
-
-The general format is:
-
-    V:<version>|PREC:<epsilon>|Z:z1,z2,...,zN|D:d12,d13,...,d(N-1)N|STEREO:<stereo>|CHARGE:<q>|MULT:<m>
+    V:<version>|P:<precision>|Z:<z_sorted>|D:<pairs>|Q:<charge>|M:<multiplicity>
 
 Where:
 
-- `<version>` is a string, e.g., `2-SHA256`.
-- `<epsilon>` is printed in scientific notation (e.g., `1.0e-04`).
-- `z_i` are atomic numbers in canonical order.
-- `d_ij` are rounded distances formatted with fixed decimal places.
-- `<stereo>` is the stereochemistry string.
-- `<q>` is the formal charge.
-- `<m>` is the multiplicity.
+- `<version>` is a string, e.g. `3-INV-SHA256`.
+- `<precision>` is in scientific notation, e.g. `1.0e-04`.
+- `<z_sorted>` is the sorted list of atomic numbers, comma-separated.
+- `<pairs>` is the sorted list of triples, formatted as
+  `Za-Zb:d.dddd`, comma-separated.
+- `<charge>` is the integer formal charge.
+- `<multiplicity>` is the integer spin multiplicity.
 
-Example (truncated):
+Example (water, `precision = 1e-4`):
 
-    V:2-SHA256|PREC:1.0e-04|Z:6,6,8,1,1,1|
-    D:1.0900,1.3400,1.8221,...|
-    STEREO:R,S|CHARGE:0|MULT:1
+    V:3-INV-SHA256|P:1.0e-04|Z:1,1,8|D:1-1:1.5144,1-8:0.9579,1-8:0.9579|Q:0|M:1
 
-This string is what is passed to the SHA-256 algorithm.
+## 6. Hashing
 
----
-
-## 9. Hashing
-
-HashMol3D uses SHA-256 as its canonical hash function.
-
-1. Encode the descriptor as UTF‑8 bytes.
+1. Encode the descriptor as UTF-8 bytes.
 2. Compute the SHA-256 digest.
-3. Convert to hexadecimal using `.hexdigest()`.
-4. Truncate to a desired length L in hex characters, where
+3. Take the first `hash_length` hex characters of the hex digest.
 
-   - L ∈ {16, 32, 64} is permitted.
-   - L = 32 (128-bit output) is the recommended canonical form.
+`hash_length ∈ [1, 64]`. The recommended canonical value is 32
+(128 bits). 16 (64 bits) is acceptable for small datasets; 64
+(full 256 bits) is appropriate for archival.
 
-Formally:
+## 7. Determinism and portability
 
-    hash = SHA256(descriptor_bytes).hexdigest()[:L]
+To guarantee identical hashes across machines:
 
-This resulting hex string is the HashMol3D identifier.
-
----
-
-## 10. Recommended Usage Modes
-
-- **Canonical mode**: SHA-256, L = 32 hex chars, epsilon = 1e-4 Å.
-- **Short mode**: SHA-256, L = 16 hex chars (64 bits) – suitable for small datasets.
-- **Archival mode**: SHA-256, L = 64 hex chars (full 256 bits).
-
-Implementations should clearly document which mode they are using and should
-treat mode changes as semantically different identifiers.
-
----
-
-## 11. Isotope Considerations (Out of Scope for v0.1.0)
-
-In HashMol3D v0.1.0, isotopes are explicitly **ignored**:
-
-- Only atomic numbers (Z) are considered.
-- No isotope mass numbers appear in the descriptor.
-
-This matches the goal of HashMol3D as an identifier for electronic-structure calculations, where isotopes do not change the underlying electronic Hamiltonian.
-
-One can define an optional isotope-aware extension by adding an `ISO:` field:
-
-    ISO:a1,a2,...,aN
-
-where `a_i` are mass numbers, and changing the version tag accordingly.
-
----
-
-## 12. Determinism and Portability
-
-To guarantee identical hashes across machines and platforms, implementations
-must:
-
-- Use the same version tag (e.g., `2-SHA256`).
-- Use the same precision epsilon.
-- Use the same RDKit canonical ranking and stereochemistry perception.
-- Use the exact descriptor formatting rules specified above.
-- Encode strings in UTF‑8 before hashing.
+- Use the same version tag.
+- Use the same precision.
+- Format atomic numbers as decimal integers.
+- Format distances with exactly `decimals` fractional digits.
+- Encode the descriptor in UTF-8 before hashing.
 - Use SHA-256 as defined in FIPS 180-4.
 
-Any change to the descriptor format or semantics requires a new version tag.
+Any change to the descriptor format or semantics requires a new
+version tag.
 
----
+## 8. Dependencies
 
-## 13. Reference Implementation
+The reference implementation uses only NumPy and the Python standard
+library; in particular it does **not** depend on RDKit or any
+cheminformatics toolkit.
 
-The reference implementation is provided as a Python package `hashmol3d`,
-which uses:
+## 9. Reference API
 
-- RDKit for molecule I/O, canonicalization, and stereochemistry.
-- NumPy for distance matrix computation.
-- Python's `hashlib` for SHA-256 hashing.
+```python
+from hashmol3d import generate_hashmol3d
 
-The primary API functions are:
-
-- `generate_hashmol3d(mol, ...)`
-- `generate_hashmol3d_from_file(path, ...)`
-
-These functions are considered normative for behavior in descriptor version `2-SHA256`.
+result = generate_hashmol3d(
+    atomic_nums,
+    coords,
+    precision=1e-4,
+    charge=0,
+    multiplicity=None,   # inferred if None
+    hash_length=32,
+    version="3-INV-SHA256",
+)
+print(result.hash_str)
+```

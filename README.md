@@ -3,15 +3,20 @@
 **HashMol3D** is a standard, deterministic 3D molecular geometry identifier
 for computational chemistry, machine learning, and HPC workflows.
 
-It produces a **rotation-invariant, translation-invariant, atom-permutation-invariant**
-hash string that uniquely identifies a **conformer**, including:
+It produces a **rotation-, translation-, permutation-, and parity-invariant**
+hash string that identifies a **conformer** with the same invariance
+properties as the eigenvalues of the non-relativistic molecular
+Hamiltonian. The descriptor encodes:
 
-- exact 3D geometry (distance matrix)
 - atomic numbers
-- stereochemistry (R/S)
+- pairwise distances rounded to a user-specified precision
 - charge
 - spin multiplicity
-- numerical precision used
+- a version tag
+
+It deliberately does **not** distinguish enantiomers (which share their
+Hamiltonian eigenvalues). The reference implementation depends only on
+NumPy.
 
 HashMol3D IDs are **stable across machines**, **reproducible**, and ideal for:
 - workflow deduplication  
@@ -59,13 +64,32 @@ uv pip install -e .  # Or: pip install -e .
 ## Usage (CLI)
 
 ```bash
-# Compute hash for a molecule file
-hashmol3d compute path/to/molecule.mol
+# Compute hash for an XYZ file
+hashmol3d compute path/to/molecule.xyz
 
 # With options
 hashmol3d compute --precision 1e-3 --hash-length 16 molecule.xyz
 
+# Print the canonical descriptor along with the hash
+hashmol3d compute --verbose molecule.xyz
+
 # Show version
 hashmol3d version
+```
+
+## Usage (Python)
+
+```python
+import numpy as np
+from hashmol3d import generate_hashmol3d
+
+atomic_nums = np.array([8, 1, 1])
+coords = np.array([
+    [0.0,    0.0,   0.0],
+    [0.7572, 0.586, 0.0],
+    [-0.7572,0.586, 0.0],
+])
+res = generate_hashmol3d(atomic_nums, coords)
+print(res.hash_str)
 ```
 

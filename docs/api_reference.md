@@ -1,44 +1,44 @@
 # HashMol3D API Reference
 
-## `generate_hashmol3d(mol, conf_id=0, precision=1e-4, charge=None, multiplicity=None, hash_length=32, version="2-SHA256")`
+## `generate_hashmol3d(atomic_nums, coords, precision=1e-4, charge=0, multiplicity=None, hash_length=32, version="3-INV-SHA256")`
 
-Compute the HashMol3D identifier for an RDKit `Mol` with 3D coordinates.
+Compute the HashMol3D identifier for a 3D molecular geometry.
 
 **Parameters:**
-- `mol`: RDKit `Mol` object with at least one 3D conformer
-- `conf_id`: Conformer ID to use (default: 0)
-- `precision`: Distance precision in Å (default: 1e-4)
-- `charge`: Formal charge (default: None, inferred from molecule)
-- `multiplicity`: Spin multiplicity (default: None, inferred from electron count)
-- `hash_length`: Length of hash string in hex characters (default: 32)
-- `version`: Descriptor version tag (default: "2-SHA256")
 
-**Returns:** `HashMol3DResult` object with fields:
+- `atomic_nums`: integer array-like of atomic numbers, shape `(N,)`
+- `coords`: float array-like of Cartesian coordinates in Å, shape `(N, 3)`
+- `precision`: distance precision in Å (default `1e-4`)
+- `charge`: total formal charge (default `0`)
+- `multiplicity`: spin multiplicity. If `None`, inferred as singlet/doublet
+  from electron parity.
+- `hash_length`: number of hex characters retained from the SHA-256 digest.
+  Must be in `[1, 64]`.
+- `version`: descriptor version tag (default `"3-INV-SHA256"`).
+- `protocol` *(keyword-only, deprecated)*: alias for `version`.
 
-- `hash_str`: canonical HashMol3D ID (hex string)
-- `version`: descriptor+hash version string
-- `precision`: distance precision (Å)
+**Returns:** `HashMol3DResult` with fields:
+
+- `hash_str`: canonical HashMol3D identifier (hex string)
+- `version`: descriptor + hash version string
+- `precision`: distance precision used (Å)
 - `charge`: charge used
 - `multiplicity`: multiplicity used
-- `formula`: RDKit molecular formula
-- `canonical_smiles`: RDKit canonical SMILES
 - `descriptor`: raw descriptor string (for debugging)
 
-## `generate_hashmol3d_from_file(path, file_format=None, precision=1e-4, charge=None, multiplicity=None, hash_length=32, version="2-SHA256")`
+The result also exposes `result.protocol` and `result.chiral_sign`
+as backwards-compatible read-only properties.
 
-High-level convenience function:
+**Invariance:** the identifier is invariant under permutation of atoms,
+rigid translation, rigid rotation, spatial inversion (parity), and
+sub-precision numerical noise.
 
-1. Loads a molecule from file using RDKit (XYZ, SDF, MOL, MOL2, PDB, SMILES).
-2. Ensures a 3D conformer (embedding if needed).
-3. Computes the HashMol3D identifier as above.
+## XYZ parsing (CLI helper)
 
-**Parameters:**
-- `path`: Path to molecular file
-- `file_format`: File format (default: None, inferred from extension)
-- `precision`: Distance precision in Å (default: 1e-4)
-- `charge`: Formal charge (default: None, inferred from molecule)
-- `multiplicity`: Spin multiplicity (default: None, inferred from electron count)
-- `hash_length`: Length of hash string in hex characters (default: 32)
-- `version`: Descriptor version tag (default: "2-SHA256")
+```python
+from hashmol3d.cli import parse_xyz
+atomic_nums, coords = parse_xyz("molecule.xyz")
+```
 
-**Returns:** `HashMol3DResult` object.
+`parse_xyz` validates the atom count declared in the header and raises
+`ValueError` on malformed input.

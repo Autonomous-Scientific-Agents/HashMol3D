@@ -1,7 +1,10 @@
+"""Command-line interface for HashMol3D."""
+
 import argparse
 import os
-import numpy as np
 from typing import Tuple
+
+import numpy as np
 
 from .core import generate_hashmol3d
 from .periodic_table import get_atomic_num
@@ -10,59 +13,84 @@ from .version import __version__
 
 def parse_xyz(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Parses a standard .xyz file.
-    Returns (atomic_nums, coords).
-    """
-    z_list = []
-    coords_list = []
+    Parse a standard .xyz file.
 
+    The first line must contain the atom count; the second line is a free-form
+    comment; subsequent lines must contain ``symbol x y z`` (or ``Z x y z``).
+
+    Returns ``(atomic_nums, coords)`` as NumPy arrays.
+    """
     with open(filepath, "r") as f:
         lines = f.readlines()
 
-    # Skip header (atom count) and comment line
+    if len(lines) < 2:
+        raise ValueError("XYZ file is too short (need at least 2 header lines)")
+
     try:
-        atom_lines = lines[2:]
-    except IndexError:
-        raise ValueError("File is too short to be XYZ")
+        n_declared = int(lines[0].strip())
+    except ValueError:
+        raise ValueError(
+            "First line of an XYZ file must be the atom count; "
+            "got {0!r}".format(lines[0].strip())
+        )
+    if n_declared <= 0:
+        raise ValueError("XYZ atom count must be positive, got {0}".format(n_declared))
 
-    for line in atom_lines:
-        parts = line.strip().split()
-        if not parts:
+    atom_lines = lines[2:]
+
+    z_list = []
+    coords_list = []
+    for raw in atom_lines:
+        line = raw.strip()
+        if not line:
             continue
+        parts = line.split()
+        if len(parts) < 4:
+            raise ValueError("Malformed XYZ atom line: {0!r}".format(line))
 
-        # Parse Symbol or Z
         sym = parts[0]
-        if sym.isdigit():
+        if sym.lstrip("-").isdigit():
             z = int(sym)
+            if z <= 0 or z > 118:
+                raise ValueError("Atomic number out of range: {0}".format(z))
         else:
             z = get_atomic_num(sym)
             if z == 0:
-                raise ValueError(f"Unknown element symbol: {sym}")
+                raise ValueError("Unknown element symbol: {0!r}".format(sym))
 
-        # Parse Coords
         try:
-            x, y, z_coord = float(parts[1]), float(parts[2]), float(parts[3])
-        except (IndexError, ValueError):
-            continue  # Skip malformed lines
+            x = float(parts[1])
+            y = float(parts[2])
+            zc = float(parts[3])
+        except ValueError:
+            raise ValueError("Malformed coordinates in XYZ line: {0!r}".format(line))
 
         z_list.append(z)
-        coords_list.append([x, y, z_coord])
+        coords_list.append([x, y, zc])
+        if len(z_list) == n_declared:
+            break
 
-    return np.array(z_list, dtype=int), np.array(coords_list, dtype=float)
+    if len(z_list) != n_declared:
+        raise ValueError(
+            "XYZ header declares {0} atoms but only {1} valid atom lines were found"
+            .format(n_declared, len(z_list))
+        )
+
+    return (
+        np.array(z_list, dtype=int),
+        np.array(coords_list, dtype=float),
+    )
 
 
 def compute(args):
     """Compute HashMol3D identifier for a file."""
     if not os.path.exists(args.filepath):
-        raise FileNotFoundError(f"File not found: {args.filepath}")
+        raise FileNotFoundError("File not found: {0}".format(args.filepath))
 
-    # Parse XYZ file
     atomic_nums, coords = parse_xyz(args.filepath)
 
-    # Set default charge if not provided
     charge = args.charge if args.charge is not None else 0
 
-    # Generate hash
     res = generate_hashmol3d(
         atomic_nums=atomic_nums,
         coords=coords,
@@ -71,12 +99,19 @@ def compute(args):
         multiplicity=args.multiplicity,
         hash_length=args.hash_length,
     )
-    print(res.hash_str)
+    if args.verbose:
+        print("descriptor:", res.descriptor)
+        print("charge:", res.charge)
+        print("multiplicity:", res.multiplicity)
+        print("version:", res.version)
+        print("hash:", res.hash_str)
+    else:
+        print(res.hash_str)
 
 
 def version(args):
     """Show HashMol3D version."""
-    print(f"HashMol3D version {__version__}")
+    print("HashMol3D version {0}".format(__version__))
 
 
 def cli():
@@ -86,26 +121,30 @@ def cli():
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # compute command
     compute_parser = subparsers.add_parser(
-        "compute", help="Compute HashMol3D identifier for a file."
+        "compute", help="Compute HashMol3D identifier for an XYZ file."
     )
-    compute_parser.add_argument("filepath", help="Path to the molecular file")
+    compute_parser.add_argument("filepath", help="Path to the molecular file (.xyz)")
     compute_parser.add_argument(
-        "--precision", type=float, default=1e-4, help="Distance precision in Å."
-    )
-    compute_parser.add_argument(
-        "--charge", type=int, default=None, help="Molecular charge"
+        "--precision", type=float, default=1e-4, help="Distance precision in Å"
     )
     compute_parser.add_argument(
-        "--multiplicity", type=int, default=None, help="Spin multiplicity"
+        "--charge", type=int, default=None, help="Total formal charge (default 0)"
     )
     compute_parser.add_argument(
-        "--hash-length", type=int, default=32, help="Hash string length"
+        "--multiplicity", type=int, default=None,
+        help="Spin multiplicity (default: inferred from electron count)",
+    )
+    compute_parser.add_argument(
+        "--hash-length", type=int, default=32,
+        help="Number of hex characters retained (default 32; max 64)",
+    )
+    compute_parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Also print the canonical descriptor and metadata",
     )
     compute_parser.set_defaults(func=compute)
 
-    # version command
     version_parser = subparsers.add_parser("version", help="Show HashMol3D version.")
     version_parser.set_defaults(func=version)
 
