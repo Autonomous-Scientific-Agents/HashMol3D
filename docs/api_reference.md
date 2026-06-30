@@ -11,8 +11,9 @@ For example: `H2Oq0m1-a1b28135d0c66...`.
 - **Hill formula**: carbon first if present, then hydrogen, then the
   remaining elements alphabetically. A count of 1 is omitted
   (`H2O`, `C6H6`, `CHBrClF`).
-- **State tag**: `q<sign><charge>m<mult>`. Zero charge is written `q0`;
-  non-zero charges always carry an explicit sign (`q+1`, `q-2`).
+- **State tag**: `q<charge>m<mult>`. Zero and positive charges have no
+  sign (`q0`, `q1`); only negative charges carry a leading `-`
+  (`q-1`, `q-2`).
 - **Geometry hash**: hex truncation of SHA-256 over the geometry-only
   descriptor (atomic numbers + pairwise distances + precision +
   descriptor version). Charge and multiplicity are *not* hashed — they

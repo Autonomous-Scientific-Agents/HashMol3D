@@ -81,7 +81,7 @@ class TestStateTag:
         assert _state_tag(0, 1) == "q0m1"
 
     def test_cation(self):
-        assert _state_tag(1, 2) == "q+1m2"
+        assert _state_tag(1, 2) == "q1m2"
 
     def test_anion(self):
         assert _state_tag(-2, 1) == "q-2m1"
@@ -160,7 +160,7 @@ class TestDeterminism:
         # Full identifier differs in the readable prefix...
         assert a.hash_str != b.hash_str
         assert a.hash_str.startswith("H2Oq0")
-        assert b.hash_str.startswith("H2Oq+1")
+        assert b.hash_str.startswith("H2Oq1")
         # ...but the geometry hash is identical.
         assert a.geometry_hash == b.geometry_hash
 

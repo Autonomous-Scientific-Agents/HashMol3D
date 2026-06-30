@@ -113,12 +113,12 @@ def _hill_formula(atomic_nums: np.ndarray) -> str:
 
 
 def _state_tag(charge: int, multiplicity: int) -> str:
-    """Render the readable charge/multiplicity suffix, e.g. ``q+1m2``."""
-    if charge == 0:
-        q_part = "q0"
-    else:
-        q_part = f"q{'+' if charge > 0 else '-'}{abs(charge)}"
-    return f"{q_part}m{multiplicity}"
+    """Render the readable charge/multiplicity suffix, e.g. ``q1m2``.
+
+    Positive and zero charges are written without a sign (``q0``, ``q1``);
+    only negative charges carry a leading ``-`` (``q-1``).
+    """
+    return f"q{charge}m{multiplicity}"
 
 
 def _auto_length(n_atoms: int) -> int:

@@ -19,9 +19,9 @@ For example: `H2Oq0m1-a1b28135d0c66ad0`.
 - **Hill formula** — carbon first if present, then hydrogen, then the
   remaining elements alphabetically by symbol. A count of 1 is omitted.
   Examples: `H2O`, `C6H6`, `CHBrClF`, `H3N`.
-- **State tag** — `q<sign><charge>m<multiplicity>`. Zero charge is
-  rendered as `q0`; non-zero charges always carry an explicit sign
-  (`q+1`, `q-2`). Multiplicity is a positive integer with no sign.
+- **State tag** — `q<charge>m<multiplicity>`. Zero and positive charges
+  have no sign (`q0`, `q1`); only negative charges carry a leading `-`
+  (`q-1`, `q-2`). Multiplicity is a positive integer with no sign.
 - **`-`** — single hyphen separator, so the start of the geometry hash
   is unambiguous even though the formula and state tag contain no
   delimiters.

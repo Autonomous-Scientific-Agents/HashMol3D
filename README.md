@@ -22,7 +22,7 @@ and can be grouped by suffix matching:
 
 ```text
 H2Oq0m1-68936c504bf5fa3b     # neutral singlet water
-H2Oq+1m2-68936c504bf5fa3b    # water cation, same geometry → same hex tail
+H2Oq1m2-68936c504bf5fa3b     # water cation, same geometry → same hex tail
 ```
 
 The hash length auto-scales with the number of atoms (`clip(N, 16, 64)`
@@ -84,7 +84,7 @@ H2Oq0m1-68936c504bf5fa3b
 
 # Cation with explicit multiplicity — only the prefix changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-H2Oq+1m2-68936c504bf5fa3b
+H2Oq1m2-68936c504bf5fa3b
 
 # Pin a fixed hash length and a coarser precision.
 $ hashmol3d -p 1e-3 -l 32 benzene.xyz
@@ -129,7 +129,7 @@ from hashmol3d import hash_xyz
 
 print(hash_xyz("water.xyz").hash_str)        # H2Oq0m1-68936c504bf5fa3b
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# H2Oq+1m2-68936c504bf5fa3b
+# H2Oq1m2-68936c504bf5fa3b
 ```
 
 See [`docs/`](docs/) for the full
