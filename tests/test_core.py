@@ -144,6 +144,18 @@ class TestInputValidation:
         with pytest.raises(ValueError):
             hash_molecule(z, coords, length=65)
 
+    def test_length_accepts_numpy_integer(self, water):
+        z, coords = water
+        # NumPy integers are not `int` subclasses; they must still be accepted.
+        r = hash_molecule(z, coords, length=np.int64(16))
+        assert len(r.geometry_hash) == 16
+
+    def test_length_rejects_bool(self, water):
+        z, coords = water
+        # bool is an int subclass but is not a meaningful length.
+        with pytest.raises(ValueError):
+            hash_molecule(z, coords, length=True)
+
 
 class TestDeterminism:
     def test_same_input_same_hash(self, water):

@@ -39,9 +39,11 @@ def test_cli_verbose(tmp_path, capsys):
     rc = cli([path, "-v"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "hash:" in out
-    assert "descriptor:" in out
-    assert "charge:" in out
+    lines = out.splitlines()
+    assert any(line.startswith("identifier:") for line in lines)
+    assert any(line.startswith("geometry_hash:") for line in lines)
+    assert any(line.startswith("descriptor:") for line in lines)
+    assert any(line.startswith("charge:") for line in lines)
 
 
 def test_cli_charge_changes_hash(tmp_path, capsys):
