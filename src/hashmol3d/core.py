@@ -7,14 +7,20 @@ The identifier has the form::
 
 For example, ``H2Oq0m1-a1b28135...`` for neutral singlet water.
 
-The trailing hexadecimal hash is invariant under exactly the operations
-that leave the non-relativistic molecular Hamiltonian's eigenvalues
-unchanged:
+The trailing hexadecimal hash is invariant under the operations that
+leave the non-relativistic molecular Hamiltonian's eigenvalues unchanged:
 
   * rigid translation of the coordinates
   * rigid rotation of the coordinates
   * permutation (relabeling) of atom indices
   * spatial inversion / reflection (parity)
+
+Because the hash is built from the multiset of pairwise distances, it is
+not a *complete* invariant: distinct (non-congruent) geometries that
+share the same distance multiset -- so-called homometric sets -- collide.
+This is vanishingly rare for real element-tagged 3D molecules and is
+accepted as a tradeoff for portable, dependency-free invariance; see
+``docs/design_notes.md``.
 
 It depends on atomic numbers, pairwise distances (rounded to a user
 specified precision), and the descriptor version. Total charge and
@@ -28,6 +34,7 @@ Python standard library.
 from __future__ import annotations
 
 import hashlib
+import numbers
 import warnings
 from collections import Counter
 from dataclasses import dataclass
@@ -75,7 +82,14 @@ class HashMol3DResult:
 
 
 def _precision_to_decimals(precision: float) -> int:
-    """Number of decimal places implied by a distance precision in Å."""
+    """Number of decimal places implied by a distance precision in Å.
+
+    The precision is snapped to the nearest power of ten:
+    ``decimals = round(-log10(precision))``. So ``1e-4`` -> 4 decimals, but
+    an intermediate value such as ``0.05`` also maps to the nearest decade
+    (here 1 decimal, i.e. a 0.1 Å grid), not to a 0.05 Å grid. Pass a power
+    of ten to make the rounding grid unambiguous.
+    """
     if not np.isfinite(precision) or precision <= 0:
         raise ValueError(f"precision must be a positive finite number, got {precision!r}")
     return int(max(0, round(-np.log10(precision))))
@@ -204,7 +218,10 @@ def hash_molecule(
         atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
         coords: float array-like of Cartesian coordinates in Å, shape
             ``(N, 3)``.
-        precision: distance precision in Å (default ``1e-4``).
+        precision: distance precision in Å (default ``1e-4``). Snapped to
+            the nearest power of ten before rounding distances, so passing a
+            power of ten (``1e-3``, ``1e-4``, ...) is recommended; see
+            :func:`_precision_to_decimals`.
         charge: total formal charge (default ``0``).
         multiplicity: spin multiplicity (``1`` = singlet, ``2`` = doublet,
             ...). If ``None``, inferred as singlet/doublet from the
@@ -235,8 +252,14 @@ def hash_molecule(
 
     if length is None:
         length = _auto_length(int(atomic_nums.size))
-    elif not isinstance(length, int) or not (1 <= length <= 64):
-        raise ValueError("length must be an int in [1, 64]")
+    else:
+        # Accept any integer type (incl. NumPy integers) but not bool, which
+        # is an int subclass and would silently truncate the hash.
+        if isinstance(length, bool) or not isinstance(length, numbers.Integral):
+            raise ValueError("length must be an int in [1, 64]")
+        length = int(length)
+        if not (1 <= length <= 64):
+            raise ValueError("length must be an int in [1, 64]")
 
     charge = int(charge)
     decimals = _precision_to_decimals(precision)
