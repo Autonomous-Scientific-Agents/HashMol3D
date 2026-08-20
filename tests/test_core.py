@@ -5,9 +5,8 @@ import warnings
 import numpy as np
 import pytest
 
-from hashmol3d import generate_hashmol3d, hash_molecule
+from hashmol3d import generate_hashmol3d, hash_length_for, hash_molecule
 from hashmol3d.core import (
-    _auto_length,
     _hill_formula,
     _infer_multiplicity,
     _pair_signature,
@@ -87,19 +86,24 @@ class TestStateTag:
         assert _state_tag(-2, 1) == "q-2m1"
 
 
-class TestAutoLength:
-    def test_small_floor(self):
-        assert _auto_length(1) == 16
-        assert _auto_length(15) == 16
+class TestHashLengthFor:
+    def test_monotonic_in_corpus_and_stringency(self):
+        assert hash_length_for(10) <= hash_length_for(10 ** 9)
+        assert hash_length_for(10 ** 9, 1e-6) <= hash_length_for(10 ** 9, 1e-12)
 
-    def test_linear_middle(self):
-        assert _auto_length(16) == 16
-        assert _auto_length(32) == 32
-        assert _auto_length(50) == 50
+    def test_within_range(self):
+        for n in (1, 10, 10 ** 6, 10 ** 12, 10 ** 30):
+            assert 1 <= hash_length_for(n) <= 64
 
-    def test_cap(self):
-        assert _auto_length(64) == 64
-        assert _auto_length(1000) == 64
+    def test_satisfies_birthday_bound(self):
+        for n, p in [(10 ** 6, 1e-9), (10 ** 9, 1e-9), (10 ** 6, 1e-12)]:
+            L = hash_length_for(n, p)
+            assert n ** 2 / 2 ** (4 * L + 1) <= p
+
+    def test_edge_cases(self):
+        assert hash_length_for(1) == 1
+        with pytest.raises(ValueError):
+            hash_length_for(10, target_prob=1.0)
 
 
 class TestPairSignature:

@@ -1,8 +1,9 @@
 """Smoke tests for the public API."""
 
 import numpy as np
+import pytest
 
-from hashmol3d import HashMol3DResult, hash_molecule
+from hashmol3d import DEFAULT_LENGTH, HashMol3DResult, hash_length_for, hash_molecule
 
 
 def test_returns_result(water):
@@ -34,27 +35,42 @@ def test_length_override(water):
     assert len(hash_molecule(z, coords, length=64).geometry_hash) == 64
 
 
-def test_auto_length_scales_with_atom_count():
-    # Small molecule (N < 16) clamps to 16 hex chars.
+def test_default_length_is_fixed_regardless_of_size():
+    # The default length is a fixed 32 hex chars (128 bits): collision
+    # resistance is governed by corpus size, not molecule size.
+    assert DEFAULT_LENGTH == 32
+
     z3 = np.array([8, 1, 1], dtype=int)
     coords3 = np.zeros((3, 3))
     coords3[1, 0] = 1.0
     coords3[2, 1] = 1.0
-    assert len(hash_molecule(z3, coords3).geometry_hash) == 16
+    assert len(hash_molecule(z3, coords3).geometry_hash) == DEFAULT_LENGTH
 
-    # Mid-size molecule: length == N.
-    n = 25
-    z = np.full(n, 6, dtype=int)
-    coords = np.zeros((n, 3))
-    coords[:, 0] = np.arange(n) * 1.5
-    assert len(hash_molecule(z, coords).geometry_hash) == 25
+    for n in (25, 200):
+        z = np.full(n, 6, dtype=int)
+        coords = np.zeros((n, 3))
+        coords[:, 0] = np.arange(n) * 1.5
+        assert len(hash_molecule(z, coords).geometry_hash) == DEFAULT_LENGTH
 
-    # Big molecule clamps to 64.
-    n = 200
-    z = np.full(n, 6, dtype=int)
-    coords = np.zeros((n, 3))
-    coords[:, 0] = np.arange(n) * 1.5
-    assert len(hash_molecule(z, coords).geometry_hash) == 64
+
+def test_hash_length_for():
+    # Monotonic non-decreasing in corpus size and in stringency.
+    assert hash_length_for(10) <= hash_length_for(10**9)
+    assert hash_length_for(10**9, 1e-6) <= hash_length_for(10**9, 1e-12)
+    # Always within the valid API range.
+    for n in (1, 10, 10**6, 10**12, 10**30):
+        L = hash_length_for(n)
+        assert 1 <= L <= 64
+    # A hashed length actually satisfies the requested bound: with L hex chars
+    # (b = 4L bits), n^2 / 2^(b+1) <= target_prob.
+    import math
+    for n, p in [(10**6, 1e-9), (10**9, 1e-9), (10**6, 1e-12)]:
+        L = hash_length_for(n, p)
+        assert n**2 / 2 ** (4 * L + 1) <= p
+    # Never-collide edge case.
+    assert hash_length_for(1) == 1
+    with pytest.raises(ValueError):
+        hash_length_for(10, target_prob=0.0)
 
 
 def test_single_atom_is_valid():

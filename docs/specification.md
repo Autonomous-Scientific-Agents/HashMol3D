@@ -1,4 +1,4 @@
-# HashMol3D Specification v0.5.0
+# HashMol3D Specification v0.6.0
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
@@ -14,7 +14,7 @@ A HashMol3D identifier is a single ASCII string with three parts:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-a1b28135d0c66ad0`.
+For example: `H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8`.
 
 - **Hill formula** — carbon first if present, then hydrogen, then the
   remaining elements alphabetically by symbol. A count of 1 is omitted.
@@ -115,9 +115,11 @@ Where:
 Charge and multiplicity are **not** part of the descriptor; they are
 written into the readable prefix of the identifier instead.
 
-Example (water, `precision = 1e-4`):
+Example (water, `precision = 1e-4`); this descriptor's SHA-256 digest,
+truncated to the default 32 hex characters, is the geometry hash
+`68936c504bf5fa3b4d931f828ee168b8`:
 
-    V:4-GEOM-SHA256|P:1.0e-04|Z:1,1,8|D:1-1:1.5144,1-8:0.9579,1-8:0.9579
+    V:4-GEOM-SHA256|P:1.0e-04|Z:1,1,8|D:1-1:1.5144,1-8:0.9575,1-8:0.9575
 
 ## 7. Hashing
 
@@ -125,10 +127,15 @@ Example (water, `precision = 1e-4`):
 2. Compute the SHA-256 digest.
 3. Take the first `length` hex characters of the hex digest.
 
-`length ∈ [1, 64]`. The reference implementation auto-scales `length`
-as `clip(N, 16, 64)` when not explicitly supplied, where `N` is the
-number of atoms; this keeps birthday-collision risk roughly constant
-as molecules grow. Callers may pin a fixed value (e.g. 16, 32, 64).
+`length ∈ [1, 64]`. When not explicitly supplied, the reference
+implementation uses a fixed default of 32 hex characters (128 bits).
+Collision resistance is a property of the namespace, not of molecule
+size: for `n` distinct geometries hashed into `b = 4·length` bits, the
+expected number of birthday collisions is `~ n² / 2^{b+1}`. The 128-bit
+default keeps that below one for corpora up to ~10¹⁶ geometries. Callers
+who know their corpus size may pick `length` accordingly (the reference
+implementation provides `hash_length_for(n_items, target_prob)`), or pin
+any fixed value in `[1, 64]`.
 
 ## 8. Determinism and portability
 
@@ -162,10 +169,10 @@ result = hash_molecule(
     precision=1e-4,
     charge=0,
     multiplicity=None,   # inferred if None
-    length=None,         # auto-scaled if None
+    length=None,         # 32 hex (128-bit) if None
 )
-print(result.hash_str)        # H2Oq0m1-a1b28135d0c66ad0
-print(result.geometry_hash)   # a1b28135d0c66ad0
+print(result.hash_str)        # H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
+print(result.geometry_hash)   # 68936c504bf5fa3b4d931f828ee168b8
 ```
 
 A file-based convenience wrapper is also provided:

@@ -53,7 +53,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of hex characters in the geometry hash, 1-64 "
-        "(default: auto-scaled as clip(N, 16, 64))",
+        "(default: 32 = 128-bit; size by corpus, not molecule)",
     )
     parser.add_argument(
         "-v",

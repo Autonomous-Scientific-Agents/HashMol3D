@@ -34,6 +34,7 @@ Python standard library.
 from __future__ import annotations
 
 import hashlib
+import math
 import numbers
 import warnings
 from collections import Counter
@@ -44,9 +45,11 @@ import numpy as np
 from .periodic_table import get_symbol
 
 __all__ = [
+    "DEFAULT_LENGTH",
     "DESCRIPTOR_VERSION",
     "HashMol3DResult",
     "generate_hashmol3d",
+    "hash_length_for",
     "hash_molecule",
 ]
 
@@ -55,13 +58,42 @@ __all__ = [
 # the descriptor format changes in a way that would alter hashes.
 DESCRIPTOR_VERSION = "4-GEOM-SHA256"
 
-# Auto-scaled hash length. The number of distinguishable conformers grows
-# (roughly) exponentially with N, so log2 of it grows linearly with N;
-# growing the hash length linearly with N keeps birthday-collision risk
-# constant. 16 hex chars (64 bits) is the floor for very small molecules;
-# SHA-256 caps us at 64 hex chars (256 bits).
-_MIN_LENGTH = 16
+# Default geometry-hash length in hex characters. The hash is a truncated
+# SHA-256 digest, and its collision resistance is governed by how many
+# distinct geometries share a single namespace -- not by molecule size. For a
+# namespace of n distinct geometries hashed into b = 4*length bits, the
+# expected number of birthday collisions is ~ n^2 / 2^(b+1). 32 hex chars
+# (128 bits) keeps that below ~1 for corpora up to ~10^16 geometries and below
+# 1e-9 up to ~10^14; use hash_length_for() to size the hash to a specific
+# corpus and target probability. SHA-256 caps us at 64 hex chars (256 bits).
+DEFAULT_LENGTH = 32
 _MAX_LENGTH = 64
+
+
+def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
+    """Hash length (hex chars) keeping collision risk below ``target_prob``.
+
+    Collision resistance depends on how many distinct geometries share a
+    namespace, not on molecule size. Using the birthday approximation
+    ``P ~ n^2 / 2^(b+1)`` for ``b`` hash bits, the required length is
+    ``ceil((2*log2(n) - log2(target_prob) - 1) / 4)`` hex characters, clamped
+    to ``[1, 64]`` (64 hex = full SHA-256, enough for ~1e38 items at 1e-9).
+
+    Args:
+        n_items: expected number of distinct geometries in one namespace.
+        target_prob: acceptable probability of *any* collision (default 1e-9).
+
+    Returns:
+        Recommended hash length in hex characters, in ``[1, 64]``.
+    """
+    n = int(n_items)
+    if not (0.0 < target_prob < 1.0):
+        raise ValueError(f"target_prob must be in (0, 1), got {target_prob!r}")
+    if n <= 1:
+        return 1
+    bits = 2.0 * math.log2(n) - math.log2(target_prob) - 1.0
+    hexlen = int(math.ceil(bits / 4.0))
+    return max(1, min(_MAX_LENGTH, hexlen))
 
 
 @dataclass(frozen=True)
@@ -133,11 +165,6 @@ def _state_tag(charge: int, multiplicity: int) -> str:
     only negative charges carry a leading ``-`` (``q-1``).
     """
     return f"q{charge}m{multiplicity}"
-
-
-def _auto_length(n_atoms: int) -> int:
-    """Default hash length in hex chars, scaling linearly with N."""
-    return max(_MIN_LENGTH, min(_MAX_LENGTH, n_atoms))
 
 
 def _pair_signature(
@@ -227,9 +254,11 @@ def hash_molecule(
             ...). If ``None``, inferred as singlet/doublet from the
             electron count.
         length: number of hex characters retained from the SHA-256 digest.
-            Must be in ``[1, 64]``. If ``None`` (default), scales with the
-            number of atoms as ``clip(N, 16, 64)`` so collision risk stays
-            roughly constant as molecules grow.
+            Must be in ``[1, 64]``. If ``None`` (default), uses
+            :data:`DEFAULT_LENGTH` (32 hex = 128 bits). Collision resistance
+            depends on how many distinct geometries share a namespace, not on
+            molecule size; use :func:`hash_length_for` to size the hash to a
+            target corpus and probability.
 
     Returns:
         :class:`HashMol3DResult`.
@@ -251,7 +280,7 @@ def hash_molecule(
         raise ValueError("coords contain non-finite values")
 
     if length is None:
-        length = _auto_length(int(atomic_nums.size))
+        length = DEFAULT_LENGTH
     else:
         # Accept any integer type (incl. NumPy integers) but not bool, which
         # is an int subclass and would silently truncate the hash.

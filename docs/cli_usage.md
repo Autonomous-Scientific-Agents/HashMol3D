@@ -15,7 +15,7 @@ behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
 The identifier has the form `<formula><state>-<hash>`, e.g.
-`H2Oq0m1-a1b28135...`. See the
+`H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
@@ -25,7 +25,7 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 | `-p` | `--precision`    | `1e-4` | Distance precision in angstroms |
 | `-c` | `--charge`       | `0`    | Total formal charge |
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
-| `-l` | `--length`       | auto   | Hex chars in the geometry hash, 1–64 (auto-scales as `clip(N, 16, 64)`) |
+| `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |
 | `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
 
 ## Examples
@@ -53,7 +53,7 @@ Find all stored states of the same geometry by suffix-matching the
 `geometry_hash` portion (after the `-`):
 
 ```bash
-grep -E -- "-a1b28135" identifiers.txt
+grep -E -- "-68936c504bf5fa3b4d931f828ee168b8" identifiers.txt
 ```
 
 ## Exit codes

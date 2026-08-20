@@ -6,7 +6,7 @@ A HashMol3D identifier has the form:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-a1b28135d0c66...`.
+For example: `H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8`.
 
 - **Hill formula**: carbon first if present, then hydrogen, then the
   remaining elements alphabetically. A count of 1 is omitted
@@ -36,9 +36,23 @@ All optional arguments are **keyword-only**.
 - `multiplicity`: spin multiplicity. If `None`, inferred as singlet/doublet
   from electron parity.
 - `length`: number of hex characters in the geometry hash. Must be in
-  `[1, 64]`. If `None` (default), auto-scales with the number of atoms
-  as `clip(N, 16, 64)` so collision risk stays roughly constant as
-  molecules grow.
+  `[1, 64]`. If `None` (default), uses `DEFAULT_LENGTH` (32 hex = 128 bits).
+  Collision resistance depends on how many distinct geometries share a
+  namespace, not on molecule size; use `hash_length_for()` to size the hash
+  to a target corpus.
+
+### `hash_length_for(n_items, target_prob=1e-9) -> int`
+
+Return the minimum geometry-hash length (hex chars) that keeps the
+birthday-collision probability below `target_prob` for a namespace of
+`n_items` distinct geometries, using `P ~ n² / 2^{b+1}` with `b = 4·length`
+bits. The result is clamped to `[1, 64]`.
+
+```python
+from hashmol3d import hash_length_for, hash_molecule
+L = hash_length_for(10**9)                 # 23 hex chars (1e9 items, p=1e-9)
+res = hash_molecule(z, coords, length=L)
+```
 
 **Returns:** `HashMol3DResult` with fields:
 

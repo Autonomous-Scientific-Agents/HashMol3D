@@ -7,7 +7,7 @@ It produces a **readable** identifier of the form
 
     <Hill formula><state tag>-<geometry hash>
 
-e.g. `H2Oq0m1-68936c504bf5fa3b` for neutral singlet water. The trailing
+e.g. `H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8` for neutral singlet water. The trailing
 geometry hash is **rotation-, translation-, permutation-, and
 parity-invariant** (matching the invariances of the eigenvalues of the
 non-relativistic molecular Hamiltonian), and depends on:
@@ -21,13 +21,32 @@ the hash, so two states of the same geometry share the same hex tail
 and can be grouped by suffix matching:
 
 ```text
-H2Oq0m1-68936c504bf5fa3b     # neutral singlet water
-H2Oq1m2-68936c504bf5fa3b     # water cation, same geometry → same hex tail
+H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8     # neutral singlet water
+H2Oq1m2-68936c504bf5fa3b4d931f828ee168b8     # water cation, same geometry → same hex tail
 ```
 
-The hash length auto-scales with the number of atoms (`clip(N, 16, 64)`
-hex chars) so collision risk stays roughly constant as molecules grow;
-pass `length=` to pin a fixed value.
+The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
+Collision resistance is governed by how many distinct geometries share a
+namespace (birthday bound `~ n² / 2^{b+1}` for `b = 4·length` bits), **not**
+by molecule size; the 128-bit default keeps the expected collision count below
+one for corpora up to ~10¹⁶ geometries. Pass `length=` to pin any value in
+`[1, 64]`, or call `hash_length_for(n_items, target_prob)` to size the hash to
+your corpus:
+
+```python
+from hashmol3d import hash_length_for
+hash_length_for(10**9)            # -> 23 hex chars for 1e9 items at p=1e-9
+hash_molecule(z, coords, length=hash_length_for(10**9))
+```
+
+| distinct geometries | `p=1e-6` | `p=1e-9` | `p=1e-12` |
+|--------------------:|:--------:|:--------:|:---------:|
+| 10⁶                 | 15       | 18       | 20        |
+| 10⁹                 | 20       | 23       | 25        |
+| 10¹²                | 25       | 28       | 30        |
+| 10¹⁵                | 30       | 33       | 35        |
+
+(recommended hex length; the default of 32 covers up to ~8·10¹⁴ items at `p=1e-9`.)
 
 It deliberately does **not** distinguish enantiomers (which share their
 Hamiltonian eigenvalues). The reference implementation depends only on
@@ -80,11 +99,11 @@ uv pip install -e .  # Or: pip install -e .
 
 ```bash
 $ hashmol3d water.xyz
-H2Oq0m1-68936c504bf5fa3b
+H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
 
 # Cation with explicit multiplicity — only the prefix changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-H2Oq1m2-68936c504bf5fa3b
+H2Oq1m2-68936c504bf5fa3b4d931f828ee168b8
 
 # Pin a fixed hash length and a coarser precision.
 $ hashmol3d -p 1e-3 -l 32 benzene.xyz
@@ -113,9 +132,9 @@ coords = np.array([
     [-0.7572, 0.5860, 0.0],
 ])
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)        # H2Oq0m1-68936c504bf5fa3b
+print(res.hash_str)        # H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
 print(res.formula)         # H2O
-print(res.geometry_hash)   # 68936c504bf5fa3b
+print(res.geometry_hash)   # 68936c504bf5fa3b4d931f828ee168b8
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
@@ -127,9 +146,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)        # H2Oq0m1-68936c504bf5fa3b
+print(hash_xyz("water.xyz").hash_str)        # H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# H2Oq1m2-68936c504bf5fa3b
+# H2Oq1m2-68936c504bf5fa3b4d931f828ee168b8
 ```
 
 See [`docs/`](docs/) for the full
