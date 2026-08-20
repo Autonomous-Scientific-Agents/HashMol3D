@@ -1,0 +1,138 @@
+{
+  "summary": {
+    "shard": "data/MBIS/mbis_6.h5",
+    "precision": 0.0001,
+    "descriptor_version": "4-GEOM-SHA256",
+    "n_records": 369595,
+    "n_distinct_hashes_len64": 369590,
+    "n_colliding_groups_len64": 5,
+    "n_duplicate_records_len64": 5,
+    "hash32_extra_collisions_vs_hash64": 0,
+    "hash32_total_collisions": 5,
+    "n_same_constitution_groups": 0,
+    "n_homometric_groups_true_collisions": 5
+  },
+  "homometric_true_collisions": [
+    {
+      "hash": "5eaafe8ee6392cd57432b365bb85ad779929deeab70a4a0c660c9c946cb85122",
+      "count": 2,
+      "n_distinct_nonisomeric_smiles": 2,
+      "n_distinct_isomeric_smiles": 2,
+      "formulas": [
+        "CSi"
+      ],
+      "natoms": [
+        2
+      ],
+      "nonisomeric_smiles": [
+        "[C+:1]#[Si-:2]",
+        "[C-:1]#[Si+:2]"
+      ],
+      "isomeric_smiles": [
+        "[C+:1]#[Si-:2]",
+        "[C-:1]#[Si+:2]"
+      ],
+      "uuids": [
+        "017a04890a085431b4a1f5f0f5c923aa",
+        "6997d83d34af513fb248515a2923f11a"
+      ]
+    },
+    {
+      "hash": "71fca117889ffad4ecbe4f122c8276de37bb8dc3deb27f067c934368fa7361ba",
+      "count": 2,
+      "n_distinct_nonisomeric_smiles": 2,
+      "n_distinct_isomeric_smiles": 2,
+      "formulas": [
+        "C11H10ClNO2"
+      ],
+      "natoms": [
+        25
+      ],
+      "nonisomeric_smiles": [
+        "[C:1]([O:2][C:3](=[O:4])[c:5]1[c:6]([C:8]([H:23])([H:24])[H:25])[n:9]([H:10])[c:11]2[c:7]1[c:18]([H:19])[c:16]([Cl:17])[c:14]([H:15])[c:12]2[H:13])([H:20])([H:21])[H:22]",
+        "[C:1]([O:2][C:6](=[O:7])[c:8]1[c:9]([C:11]([H:23])([H:24])[H:25])[n:12]([H:13])[c:14]2[c:10]1[c:21]([H:22])[c:19]([Cl:20])[c:17]([H:18])[c:15]2[H:16])([H:3])([H:4])[H:5]"
+      ],
+      "isomeric_smiles": [
+        "[C:1]([O:2][C:3](=[O:4])[c:5]1[c:6]([C:8]([H:23])([H:24])[H:25])[n:9]([H:10])[c:11]2[c:7]1[c:18]([H:19])[c:16]([Cl:17])[c:14]([H:15])[c:12]2[H:13])([H:20])([H:21])[H:22]",
+        "[C:1]([O:2][C:6](=[O:7])[c:8]1[c:9]([C:11]([H:23])([H:24])[H:25])[n:12]([H:13])[c:14]2[c:10]1[c:21]([H:22])[c:19]([Cl:20])[c:17]([H:18])[c:15]2[H:16])([H:3])([H:4])[H:5]"
+      ],
+      "uuids": [
+        "278f99231e6552c2a2d7c5e2aa3d91e1",
+        "922c46c13d5454039b6a13701933fff9"
+      ]
+    },
+    {
+      "hash": "a2d172ba461c36aca0a2415c369e07c6213fb1645b6be4c953eb177c459bb4cc",
+      "count": 2,
+      "n_distinct_nonisomeric_smiles": 2,
+      "n_distinct_isomeric_smiles": 2,
+      "formulas": [
+        "C6H6BrN4O"
+      ],
+      "natoms": [
+        18
+      ],
+      "nonisomeric_smiles": [
+        "[C:1]([C:2](=[N:3][N-:4][C:5](=[O:6])[c:7]1[n:8]([H:17])[n:9][c:10]([H:18])[c:11]1[Br:12])[H:16])([H:13])([H:14])[H:15]",
+        "[C:1]([C:2](=[N:3][N:4]=[C:5]([O-:6])[c:7]1[n:8]([H:17])[n:9][c:10]([H:18])[c:11]1[Br:12])[H:16])([H:13])([H:14])[H:15]"
+      ],
+      "isomeric_smiles": [
+        "[C:1](/[C:2](=[N:3]\\[N-:4][C:5](=[O:6])[c:7]1[n:8]([H:17])[n:9][c:10]([H:18])[c:11]1[Br:12])[H:16])([H:13])([H:14])[H:15]",
+        "[C:1](/[C:2](=[N:3]\\[N:4]=[C:5](\\[O-:6])[c:7]1[n:8]([H:17])[n:9][c:10]([H:18])[c:11]1[Br:12])[H:16])([H:13])([H:14])[H:15]"
+      ],
+      "uuids": [
+        "3ad5bb83dd015e65912cf6ecbd87297e",
+        "be15e815d35a5b7291999c26b473c025"
+      ]
+    },
+    {
+      "hash": "e67bac5c0d844a685c3322194b9eb787441993db3f924affe0cd789e7d04ae7b",
+      "count": 2,
+      "n_distinct_nonisomeric_smiles": 2,
+      "n_distinct_isomeric_smiles": 2,
+      "formulas": [
+        "C9H11NO3"
+      ],
+      "natoms": [
+        24
+      ],
+      "nonisomeric_smiles": [
+        "[C:1]([O:2][C:3](=[O:4])[C:5]1([H:6])[C:7]([H:9])([H:10])[c:11]2[c:12]([o:16][n:14][c:13]2[H:15])[C:17]([H:18])([H:19])[C:8]1([H:20])[H:21])([H:22])([H:23])[H:24]",
+        "[C:1]([O:2][C:6](=[O:7])[C:8]1([H:9])[C:10]([H:12])([H:13])[c:14]2[c:15]([o:19][n:17][c:16]2[H:18])[C:20]([H:21])([H:22])[C:11]1([H:23])[H:24])([H:3])([H:4])[H:5]"
+      ],
+      "isomeric_smiles": [
+        "[C:1]([O:2][C:3](=[O:4])[C@@:5]1([H:6])[C:7]([H:9])([H:10])[c:11]2[c:12]([o:16][n:14][c:13]2[H:15])[C:17]([H:18])([H:19])[C:8]1([H:20])[H:21])([H:22])([H:23])[H:24]",
+        "[C:1]([O:2][C:6](=[O:7])[C@@:8]1([H:9])[C:10]([H:12])([H:13])[c:14]2[c:15]([o:19][n:17][c:16]2[H:18])[C:20]([H:21])([H:22])[C:11]1([H:23])[H:24])([H:3])([H:4])[H:5]"
+      ],
+      "uuids": [
+        "5497209408ce5eada8c4f05249eb621a",
+        "5ca7262bc52857ebba05aa6ef7ecc505"
+      ]
+    },
+    {
+      "hash": "ab5f95b07aab8779c95be953494e62017eaf87f99a4afcf736d928ef91d02afa",
+      "count": 2,
+      "n_distinct_nonisomeric_smiles": 2,
+      "n_distinct_isomeric_smiles": 2,
+      "formulas": [
+        "C9H11NO"
+      ],
+      "natoms": [
+        22
+      ],
+      "nonisomeric_smiles": [
+        "[H:1][C:2]([C:3]([C:6]([N:9]([H:11])[H:12])=[O:10])([c:7]1[c:13]([H:15])[c:16]([H:17])[c:18]([H:19])[c:20]([H:21])[c:14]1[H:22])[H:8])([H:4])[H:5]",
+        "[N:1]([C:2](=[O:5])[C:6]([C:7]([H:10])([H:11])[H:12])([c:8]1[c:13]([H:15])[c:16]([H:17])[c:18]([H:19])[c:20]([H:21])[c:14]1[H:22])[H:9])([H:3])[H:4]"
+      ],
+      "isomeric_smiles": [
+        "[H:1][C:2]([C@@:3]([C:6]([N:9]([H:11])[H:12])=[O:10])([c:7]1[c:13]([H:15])[c:16]([H:17])[c:18]([H:19])[c:20]([H:21])[c:14]1[H:22])[H:8])([H:4])[H:5]",
+        "[N:1]([C:2](=[O:5])[C@@:6]([C:7]([H:10])([H:11])[H:12])([c:8]1[c:13]([H:15])[c:16]([H:17])[c:18]([H:19])[c:20]([H:21])[c:14]1[H:22])[H:9])([H:3])[H:4]"
+      ],
+      "uuids": [
+        "73af5c1ad28e532490066cc53a5e3564",
+        "83ca0c0257375bc6a7e17c41ddf0c0ea"
+      ]
+    }
+  ],
+  "same_constitution_examples": []
+}

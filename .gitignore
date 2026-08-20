@@ -48,3 +48,7 @@ htmlcov/
 # Jupyter
 .ipynb_checkpoints/
 
+# Local datasets (large, licensed) and nested paper repo
+data/
+paper/
+
