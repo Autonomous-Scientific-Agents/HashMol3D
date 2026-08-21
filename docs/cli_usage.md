@@ -15,7 +15,7 @@ behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
 The identifier has the form `<formula><state>-<hash>`, e.g.
-`H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8`. See the
+`H2Oq0m1-a4ba9da41d888939961ef77dae43b297`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
@@ -53,7 +53,7 @@ Find all stored states of the same geometry by suffix-matching the
 `geometry_hash` portion (after the `-`):
 
 ```bash
-grep -E -- "-68936c504bf5fa3b4d931f828ee168b8" identifiers.txt
+grep -E -- "-a4ba9da41d888939961ef77dae43b297" identifiers.txt
 ```
 
 ## Exit codes

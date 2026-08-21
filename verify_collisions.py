@@ -13,14 +13,14 @@ For every colliding group we ask two independent questions:
    after stripping atom-map numbers. Equal canonical SMILES => the
    differing raw strings were only cosmetic (atom renumbering / resonance).
 """
+
 from __future__ import annotations
 
 import json
 
 import h5py
 import numpy as np
-from rdkit import Chem
-from rdkit import RDLogger
+from rdkit import Chem, RDLogger
 
 RDLogger.DisableLog("rdApp.*")
 

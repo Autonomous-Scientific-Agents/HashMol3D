@@ -15,11 +15,14 @@ leave the non-relativistic molecular Hamiltonian's eigenvalues unchanged:
   * permutation (relabeling) of atom indices
   * spatial inversion / reflection (parity)
 
-Because the hash is built from the multiset of pairwise distances, it is
-not a *complete* invariant: distinct (non-congruent) geometries that
-share the same distance multiset -- so-called homometric sets -- collide.
-This is vanishingly rare for real element-tagged 3D molecules and is
-accepted as a tradeoff for portable, dependency-free invariance; see
+The hash is built from the full element-labeled distance matrix written
+in a canonical atom order (found by Weisfeiler-Leman color refinement
+plus an individualization-refinement search). Two geometries receive the
+same descriptor if and only if their rounded distance matrices are equal
+up to an atom relabeling, i.e. if and only if the geometries are
+congruent at the chosen precision. Unlike a plain multiset of pairwise
+distances, this is a *complete* invariant: homometric pairs (distinct
+geometries sharing a distance multiset) do not collide; see
 ``docs/design_notes.md``.
 
 It depends on atomic numbers, pairwise distances (rounded to a user
@@ -56,7 +59,7 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "4-GEOM-SHA256"
+DESCRIPTOR_VERSION = "5-CANON-SHA256"
 
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
@@ -68,6 +71,19 @@ DESCRIPTOR_VERSION = "4-GEOM-SHA256"
 # corpus and target probability. SHA-256 caps us at 64 hex chars (256 bits).
 DEFAULT_LENGTH = 32
 _MAX_LENGTH = 64
+
+# Cap on the number of partition-refinement states visited by the canonical
+# atom-ordering search. The search tree's size is a function of the geometry
+# alone (never of the input atom order), so hitting the cap is itself a
+# permutation-invariant event; such inputs deterministically fall back to the
+# stable-WL multiset descriptor (section tag "W" instead of "C"). Real
+# molecules stay far below the cap: the tree has a single node for generic
+# geometries and ~|symmetry group| leaves for perfectly symmetric ones
+# (e.g. 361 nodes for a 120-atom monoelemental ring at default precision).
+_NODE_BUDGET = 10_000
+
+# Scaled distances must stay below 2^62 so they fit int64 with headroom.
+_MAX_SCALED = float(2**62)
 
 
 def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
@@ -167,61 +183,179 @@ def _state_tag(charge: int, multiplicity: int) -> str:
     return f"q{charge}m{multiplicity}"
 
 
-def _pair_signature(
-    atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
-) -> tuple[tuple[int, ...], list[tuple[int, int, float]]]:
-    """Build the permutation-invariant fingerprint of the geometry.
+def _scaled_distances(coords: np.ndarray, decimals: int) -> np.ndarray:
+    """Pairwise distances as integer multiples of the precision grid.
 
-    Returns ``(z_sorted, pairs)`` where ``z_sorted`` is a sorted tuple of
-    atomic numbers and ``pairs`` is a sorted list of
-    ``(Z_min, Z_max, rounded_distance)`` triples over every unordered pair
-    of atoms. Both objects are invariant under any relabeling of atoms
-    (multisets) and under any rigid motion or reflection (functions only
-    of Z and pairwise distances).
+    Returns an ``(N, N)`` int64 matrix ``q`` with
+    ``q[i, j] = rint(||r_i - r_j|| * 10**decimals)`` and a zero diagonal.
+    This is the same binning as rounding each distance to ``decimals``
+    places; integers make every later comparison and serialization exact.
+    """
+    diff = coords[:, None, :] - coords[None, :, :]
+    scaled = np.linalg.norm(diff, axis=-1) * (10.0**decimals)
+    if scaled.size and float(scaled.max()) >= _MAX_SCALED:
+        raise ValueError(
+            "precision too fine for this geometry's extent: scaled distances "
+            "exceed the exact-integer range; use a coarser precision"
+        )
+    q = np.rint(scaled).astype(np.int64)
+    np.fill_diagonal(q, 0)
+    return q
+
+
+class _SearchBudgetExceeded(Exception):
+    """Internal: the canonical-ordering search exceeded its node budget."""
+
+
+def _refine_partition(colors: np.ndarray, rank_q: np.ndarray, n_ranks: int) -> np.ndarray:
+    """Weisfeiler-Leman color refinement to a stable ordered partition.
+
+    ``colors`` are dense ranks (0..k-1). Each round recolors atom ``i`` by
+    the pair (own color, sorted multiset of (color_j, distance-rank) over
+    all other atoms) and re-ranks lexicographically, so equal geometries
+    yield identical colors regardless of the input atom order. Old colors
+    are the primary sort key, so cells only ever split.
+    """
+    n = colors.shape[0]
+    n_colors = int(colors.max()) + 1
+    while n_colors < n:
+        # Composite per-pair key (color_j, rank_q[i, j]); n * n_ranks stays
+        # far below 2^63 for any geometry that fits in memory.
+        key = colors[None, :] * n_ranks + rank_q
+        np.fill_diagonal(key, -1)  # self entry: sorts first, dropped below
+        rows = np.sort(key, axis=1)[:, 1:]
+        sig = np.concatenate([colors[:, None], rows], axis=1)
+        _, inv = np.unique(sig, axis=0, return_inverse=True)
+        new_colors = inv.reshape(-1).astype(np.int64)
+        new_n = int(new_colors.max()) + 1
+        if new_n == n_colors:
+            break
+        colors, n_colors = new_colors, new_n
+    return colors
+
+
+def _canonical_signature(
+    atomic_nums: np.ndarray, qmat: np.ndarray
+) -> tuple[str, tuple[int, ...], str]:
+    """Canonical geometry signature: ``(section_tag, z_ordered, body)``.
+
+    Canonical path (tag ``"C"``): finds an atom ordering that is a pure
+    function of the geometry -- iterated WL refinement, then an
+    individualization-refinement search whose leaves are discrete
+    orderings, keeping the lexicographically smallest distance matrix --
+    and returns the upper triangle of the scaled distance matrix in that
+    order. Equal bodies then mean equal labeled distance matrices, so the
+    signature is a complete congruence invariant at the chosen precision.
+
+    Fallback path (tag ``"W"``): if the search tree exceeds
+    ``_NODE_BUDGET`` states (possible only when rounding makes many atoms
+    mutually indistinguishable), returns the stable-WL per-atom signature
+    multiset instead. The tree size is permutation-invariant, so the same
+    geometry always takes the same path; distinct tags keep the two paths
+    from ever colliding with each other.
     """
     n = atomic_nums.shape[0]
-    z_sorted = tuple(sorted(int(z) for z in atomic_nums))
+    z = atomic_nums.astype(np.int64)
+    if n == 1:
+        return "C", (int(z[0]),), ""
 
-    if n < 2:
-        return z_sorted, []
+    # Dense ranks of Z (initial colors) and of the scaled distances.
+    _, inv = np.unique(z, return_inverse=True)
+    colors0 = inv.reshape(-1).astype(np.int64)
+    _, invq = np.unique(qmat, return_inverse=True)
+    rank_q = invq.reshape(qmat.shape).astype(np.int64)
+    n_ranks = int(rank_q.max()) + 1
 
-    diff = coords[:, None, :] - coords[None, :, :]
-    dmat = np.linalg.norm(diff, axis=-1)
+    root = _refine_partition(colors0, rank_q, n_ranks)
     iu, ju = np.triu_indices(n, k=1)
-    dvals = np.round(dmat[iu, ju], decimals=decimals)
 
-    z_i = atomic_nums[iu].astype(int)
-    z_j = atomic_nums[ju].astype(int)
-    za = np.minimum(z_i, z_j)
-    zb = np.maximum(z_i, z_j)
+    best: bytes | None = None
+    best_order: np.ndarray | None = None
+    nodes = 0
 
-    pairs = [(int(a), int(b), float(d)) for a, b, d in zip(za, zb, dvals)]
-    pairs.sort()
-    return z_sorted, pairs
+    def visit(colors: np.ndarray) -> list | None:
+        """Count a search node; emit a leaf candidate or a branch frame."""
+        nonlocal best, best_order, nodes
+        nodes += 1
+        if nodes > _NODE_BUDGET:
+            raise _SearchBudgetExceeded
+        k = int(colors.max()) + 1
+        if k == n:  # discrete partition: colors are a full ordering
+            order = np.argsort(colors)
+            qc = qmat[np.ix_(order, order)]
+            # Big-endian bytes of non-negative int64 compare like numbers.
+            cand = np.ascontiguousarray(qc[iu, ju], dtype=">i8").tobytes()
+            if best is None or cand < best:
+                best, best_order = cand, order
+            return None
+        # Branch on the smallest non-singleton cell (ties: smallest color).
+        counts = np.bincount(colors, minlength=k)
+        nonsingle = np.flatnonzero(counts > 1)
+        target = int(nonsingle[np.argmin(counts[nonsingle])])
+        members = np.flatnonzero(colors == target)
+        return [colors, members, 0]
+
+    try:
+        # Iterative DFS; each frame is [colors, cell members, next index].
+        stack: list[list] = []
+        frame = visit(root)
+        if frame is not None:
+            stack.append(frame)
+        while stack:
+            colors, members, idx = stack[-1]
+            if idx >= len(members):
+                stack.pop()
+                continue
+            stack[-1][2] = idx + 1
+            # Individualize one cell member: it gets a color sorting just
+            # before its former cellmates, then refine.
+            child = colors * 2 + 1
+            child[members[idx]] -= 1
+            _, inv = np.unique(child, return_inverse=True)
+            child = _refine_partition(inv.reshape(-1).astype(np.int64), rank_q, n_ranks)
+            frame = visit(child)
+            if frame is not None:
+                stack.append(frame)
+    except _SearchBudgetExceeded:
+        colors = root
+        atoms = []
+        for i in range(n):
+            row = sorted((int(colors[j]), int(qmat[i, j])) for j in range(n) if j != i)
+            atoms.append((int(z[i]), int(colors[i]), tuple(row)))
+        atoms.sort()
+        body = ";".join(
+            f"{zi},{ci}:" + ",".join(f"{cj}-{d}" for cj, d in row) for zi, ci, row in atoms
+        )
+        return "W", tuple(sorted(int(v) for v in z)), body
+
+    assert best_order is not None
+    qc = qmat[np.ix_(best_order, best_order)][iu, ju]
+    body = ",".join(map(str, qc.tolist()))
+    return "C", tuple(int(v) for v in z[best_order]), body
 
 
 def _format_descriptor(
     version: str,
     precision: float,
-    decimals: int,
-    z_sorted: tuple[int, ...],
-    pairs: list[tuple[int, int, float]],
+    z_ordered: tuple[int, ...],
+    tag: str,
+    body: str,
 ) -> str:
     """Render the canonical descriptor string that is fed to SHA-256.
 
     Charge and multiplicity are *not* included: they are part of the
     readable prefix of the final identifier, not of the hashed payload.
+    Distances appear as exact integers on the precision grid (their scale
+    is fixed by the ``P:`` field).
     """
     prec_str = f"{precision:.1e}"
-    z_part = ",".join(str(z) for z in z_sorted)
-    fmt = f"{{:.{decimals}f}}"
-    d_part = ",".join(f"{a}-{b}:{fmt.format(d)}" for a, b, d in pairs)
+    z_part = ",".join(str(v) for v in z_ordered)
     return "|".join(
         [
             "V:" + version,
             "P:" + prec_str,
             "Z:" + z_part,
-            "D:" + d_part,
+            tag + ":" + body,
         ]
     )
 
@@ -294,8 +428,9 @@ def hash_molecule(
     decimals = _precision_to_decimals(precision)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
 
-    z_sorted, pairs = _pair_signature(atomic_nums, coords, decimals)
-    descriptor = _format_descriptor(DESCRIPTOR_VERSION, precision, decimals, z_sorted, pairs)
+    qmat = _scaled_distances(coords, decimals)
+    tag, z_ordered, body = _canonical_signature(atomic_nums, qmat)
+    descriptor = _format_descriptor(DESCRIPTOR_VERSION, precision, z_ordered, tag, body)
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
 
     formula = _hill_formula(atomic_nums)

@@ -1,8 +1,8 @@
-# HashMol3D Specification v0.6.0
+# HashMol3D Specification v0.7.0
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
-**Canonical version tag:** `4-GEOM-SHA256`
+**Canonical version tag:** `5-CANON-SHA256`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
@@ -14,7 +14,7 @@ A HashMol3D identifier is a single ASCII string with three parts:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8`.
+For example: `H2Oq0m1-a4ba9da41d888939961ef77dae43b297`.
 
 - **Hill formula** — carbon first if present, then hydrogen, then the
   remaining elements alphabetically by symbol. A count of 1 is omitted.
@@ -46,6 +46,13 @@ It is **not** invariant under:
 - changes in the descriptor version tag
 - geometric distortions larger than the chosen precision
 
+The signature is furthermore **complete**: two geometries share a
+geometry hash *only if* their element-labeled distance matrices are
+equal, after rounding, up to an atom relabeling — i.e. only if the
+geometries are congruent at the chosen precision (or if the truncated
+SHA-256 digests collide, §7). Homometric configurations — distinct
+geometries with the same distance *multiset* — receive distinct hashes.
+
 The **state tag** (and therefore the full identifier) additionally
 changes with charge or multiplicity. Two states of the same geometry
 share the same geometry hash but differ in their state tag, so they can
@@ -66,25 +73,77 @@ The reference implementation takes:
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
 
-## 4. Pair signature
+## 4. Canonical geometry signature
 
-Permutation, translation, rotation, and reflection invariance are all
-achieved together by reducing the geometry to a multiset of pairwise
-distances tagged by atomic numbers.
+Translation, rotation, and reflection invariance come from using only
+pairwise distances. Permutation invariance comes from writing the
+element-labeled distance matrix in a **canonical atom order** that is a
+pure function of the geometry. Because the full labeled distance matrix
+determines the point set up to congruence, two geometries receive the
+same signature **if and only if** they are congruent at the chosen
+precision — homometric configurations (distinct geometries sharing a
+distance multiset) do not collide.
 
-For every unordered pair of atoms `(i, j)` with `i < j`:
+### 4.1 Scaled distance matrix
 
-1. Compute the Euclidean distance `d_ij = ||r_i - r_j||`.
-2. Round to `decimals = max(0, round(-log10(precision)))` decimal places.
-3. Emit the triple `(min(Z_i, Z_j), max(Z_i, Z_j), d_ij_rounded)`.
+For every atom pair `(i, j)` compute the Euclidean distance
+`d_ij = ||r_i - r_j||` and quantize it to an integer number of grid
+units:
 
-The list of all such triples is sorted lexicographically. This sorted
-list is invariant under any relabeling of atoms (it is a multiset
-keyed only on Z and distance) and under any rigid motion or reflection
-of the geometry (it depends only on pairwise distances).
+    decimals = max(0, round(-log10(precision)))
+    q_ij     = rint(d_ij * 10^decimals)        # round-half-to-even
 
-The sorted list of atomic numbers is included as a separate component
-so single-atom corner cases still distinguish elements.
+`q` is a symmetric non-negative integer matrix with zero diagonal. All
+subsequent steps operate on exact integers. (If any scaled distance
+reaches 2^62 the input is rejected; choose a coarser precision.)
+
+### 4.2 Color refinement (Weisfeiler-Leman)
+
+Assign each atom an initial *color*: the rank of its atomic number
+among the distinct Z values present (ascending). Then refine until
+stable: in each round, recolor atom `i` by the pair
+
+    (color_i, sorted multiset of (color_j, q_ij) over all j != i)
+
+and replace colors by the lexicographic ranks of these signatures.
+Colors only ever split (the old color is the primary sort key), and the
+partition stabilizes in at most N rounds (1–3 in practice). The
+resulting colors are independent of the input atom order.
+
+### 4.3 Canonical order by individualization-refinement
+
+If the stable partition assigns every atom a distinct color, sorting
+atoms by color gives the canonical order directly. Otherwise, perform a
+depth-first search:
+
+1. Pick the target cell: the smallest color class with more than one
+   atom (ties: smallest color).
+2. For **each** atom in that cell, *individualize* it (give it a new
+   color ordered immediately before its former cellmates), re-run
+   refinement (§4.2), and recurse.
+3. Each leaf (discrete partition) yields an atom order; evaluate the
+   candidate string `upper-triangle of q in that order, row-major` and
+   keep the lexicographically smallest.
+
+The set of leaves explored is a function of the geometry alone, so the
+winning order — and therefore the signature — is permutation-invariant.
+The number of leaves equals the order of the geometry's rounded-distance
+symmetry group (1 for generic molecules, 24 for a perfect tetrahedral
+cluster, 2n for an ideal n-ring).
+
+### 4.4 Degenerate-rounding fallback
+
+The search visits at most **10,000** partition states (a normative
+constant of this version). The tree size is permutation-invariant, so
+exceeding the budget is a deterministic property of the geometry; it
+requires rounding so coarse that many atoms become mutually
+indistinguishable (e.g. a cluster hashed at a precision larger than its
+diameter). Such inputs fall back to hashing the stable-WL per-atom
+signature multiset: for each atom the triple
+`(Z_i, color_i, sorted multiset of (color_j, q_ij))` with the stable
+colors of §4.2, the triples sorted as a multiset. The fallback uses a
+distinct descriptor section tag (`W` instead of `C`, §6), so the two
+paths can never collide with each other.
 
 ## 5. Multiplicity inference
 
@@ -102,24 +161,36 @@ information is available. Callers that know better should pass
 The descriptor is a UTF-8 string with the following pipe-separated
 components, in this fixed order:
 
-    V:<version>|P:<precision>|Z:<z_sorted>|D:<pairs>
+    V:<version>|P:<precision>|Z:<z_ordered>|C:<distances>     (canonical path)
+    V:<version>|P:<precision>|Z:<z_sorted>|W:<atom sigs>      (fallback path, §4.4)
 
 Where:
 
-- `<version>` is a string, e.g. `4-GEOM-SHA256`.
+- `<version>` is a string, e.g. `5-CANON-SHA256`.
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
-- `<z_sorted>` is the sorted list of atomic numbers, comma-separated.
-- `<pairs>` is the sorted list of triples, formatted as
-  `Za-Zb:d.dddd`, comma-separated.
+- `<z_ordered>` is the list of atomic numbers in canonical atom order,
+  comma-separated (this always coincides with the ascending-sorted
+  multiset, because the initial colors of §4.2 rank atoms by Z).
+- `<distances>` is the upper triangle of the scaled integer distance
+  matrix `q` (§4.1) in canonical atom order, row-major
+  (`q_12, q_13, ..., q_1N, q_23, ...`), comma-separated. Empty for a
+  single atom.
+- `<atom sigs>` (fallback only) is the sorted multiset of per-atom
+  signatures, each formatted as `Z,color:c1-q1,c2-q2,...` with the
+  atom's stable color and its sorted `(color, q)` row, joined by `;`.
 
 Charge and multiplicity are **not** part of the descriptor; they are
 written into the readable prefix of the identifier instead.
 
 Example (water, `precision = 1e-4`); this descriptor's SHA-256 digest,
 truncated to the default 32 hex characters, is the geometry hash
-`68936c504bf5fa3b4d931f828ee168b8`:
+`a4ba9da41d888939961ef77dae43b297`:
 
-    V:4-GEOM-SHA256|P:1.0e-04|Z:1,1,8|D:1-1:1.5144,1-8:0.9575,1-8:0.9575
+    V:5-CANON-SHA256|P:1.0e-04|Z:1,1,8|C:15144,9575,9575
+
+(The two hydrogens precede the oxygen; the first two entries are the
+H–H and H–O rows: `q_HH = 15144`, `q_HO = q_H'O = 9575` grid units of
+1e-4 Å.)
 
 ## 7. Hashing
 
@@ -143,8 +214,10 @@ To guarantee identical identifiers across machines:
 
 - Use the same descriptor version tag.
 - Use the same precision.
-- Format atomic numbers as decimal integers.
-- Format distances with exactly `decimals` fractional digits.
+- Format atomic numbers and scaled distances as decimal integers with
+  no leading zeros or sign.
+- Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1.
+- Use the search-node budget of 10,000 exactly (§4.4).
 - Encode the descriptor in UTF-8 before hashing.
 - Use SHA-256 as defined in FIPS 180-4.
 - Render the formula in Hill order and the state tag exactly as in §1.
@@ -171,8 +244,8 @@ result = hash_molecule(
     multiplicity=None,   # inferred if None
     length=None,         # 32 hex (128-bit) if None
 )
-print(result.hash_str)        # H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
-print(result.geometry_hash)   # 68936c504bf5fa3b4d931f828ee168b8
+print(result.hash_str)        # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+print(result.geometry_hash)   # a4ba9da41d888939961ef77dae43b297
 ```
 
 A file-based convenience wrapper is also provided:

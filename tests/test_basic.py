@@ -21,7 +21,7 @@ def test_returns_result(water):
 def test_descriptor_contains_geometry_fields(water):
     z, coords = water
     res = hash_molecule(z, coords)
-    for tag in ("V:", "P:", "Z:", "D:"):
+    for tag in ("V:", "P:", "Z:", "C:"):
         assert tag in res.descriptor
     # Charge/multiplicity no longer hashed.
     assert "Q:" not in res.descriptor
@@ -63,7 +63,6 @@ def test_hash_length_for():
         assert 1 <= L <= 64
     # A hashed length actually satisfies the requested bound: with L hex chars
     # (b = 4L bits), n^2 / 2^(b+1) <= target_prob.
-    import math
     for n, p in [(10**6, 1e-9), (10**9, 1e-9), (10**6, 1e-12)]:
         L = hash_length_for(n, p)
         assert n**2 / 2 ** (4 * L + 1) <= p

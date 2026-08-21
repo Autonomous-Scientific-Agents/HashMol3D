@@ -7,7 +7,7 @@ It produces a **readable** identifier of the form
 
     <Hill formula><state tag>-<geometry hash>
 
-e.g. `H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8` for neutral singlet water. The trailing
+e.g. `H2Oq0m1-a4ba9da41d888939961ef77dae43b297` for neutral singlet water. The trailing
 geometry hash is **rotation-, translation-, permutation-, and
 parity-invariant** (matching the invariances of the eigenvalues of the
 non-relativistic molecular Hamiltonian), and depends on:
@@ -16,13 +16,22 @@ non-relativistic molecular Hamiltonian), and depends on:
 - pairwise distances rounded to a user-specified precision
 - a descriptor version tag
 
+The hash is built from the element-labeled distance matrix written in a
+**canonical atom order** (Weisfeiler-Leman refinement plus an
+individualization-refinement search), which makes it a **complete**
+congruence invariant: two geometries share a geometry hash only if they
+are actually congruent at the chosen precision. In particular,
+*homometric* structures — distinct geometries that share the same
+distance multiset and collided in descriptor versions ≤ 4 — receive
+distinct hashes.
+
 Charge and spin multiplicity live in the readable prefix, **not** in
 the hash, so two states of the same geometry share the same hex tail
 and can be grouped by suffix matching:
 
 ```text
-H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8     # neutral singlet water
-H2Oq1m2-68936c504bf5fa3b4d931f828ee168b8     # water cation, same geometry → same hex tail
+H2Oq0m1-a4ba9da41d888939961ef77dae43b297     # neutral singlet water
+H2Oq1m2-a4ba9da41d888939961ef77dae43b297     # water cation, same geometry → same hex tail
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -99,11 +108,11 @@ uv pip install -e .  # Or: pip install -e .
 
 ```bash
 $ hashmol3d water.xyz
-H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
+H2Oq0m1-a4ba9da41d888939961ef77dae43b297
 
 # Cation with explicit multiplicity — only the prefix changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-H2Oq1m2-68936c504bf5fa3b4d931f828ee168b8
+H2Oq1m2-a4ba9da41d888939961ef77dae43b297
 
 # Pin a fixed hash length and a coarser precision.
 $ hashmol3d -p 1e-3 -l 32 benzene.xyz
@@ -132,9 +141,9 @@ coords = np.array([
     [-0.7572, 0.5860, 0.0],
 ])
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)        # H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
+print(res.hash_str)        # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
 print(res.formula)         # H2O
-print(res.geometry_hash)   # 68936c504bf5fa3b4d931f828ee168b8
+print(res.geometry_hash)   # a4ba9da41d888939961ef77dae43b297
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
@@ -146,9 +155,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)        # H2Oq0m1-68936c504bf5fa3b4d931f828ee168b8
+print(hash_xyz("water.xyz").hash_str)        # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# H2Oq1m2-68936c504bf5fa3b4d931f828ee168b8
+# H2Oq1m2-a4ba9da41d888939961ef77dae43b297
 ```
 
 See [`docs/`](docs/) for the full

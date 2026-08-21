@@ -7,10 +7,11 @@ import pytest
 
 from hashmol3d import generate_hashmol3d, hash_length_for, hash_molecule
 from hashmol3d.core import (
+    _canonical_signature,
     _hill_formula,
     _infer_multiplicity,
-    _pair_signature,
     _precision_to_decimals,
+    _scaled_distances,
     _state_tag,
 )
 
@@ -88,17 +89,17 @@ class TestStateTag:
 
 class TestHashLengthFor:
     def test_monotonic_in_corpus_and_stringency(self):
-        assert hash_length_for(10) <= hash_length_for(10 ** 9)
-        assert hash_length_for(10 ** 9, 1e-6) <= hash_length_for(10 ** 9, 1e-12)
+        assert hash_length_for(10) <= hash_length_for(10**9)
+        assert hash_length_for(10**9, 1e-6) <= hash_length_for(10**9, 1e-12)
 
     def test_within_range(self):
-        for n in (1, 10, 10 ** 6, 10 ** 12, 10 ** 30):
+        for n in (1, 10, 10**6, 10**12, 10**30):
             assert 1 <= hash_length_for(n) <= 64
 
     def test_satisfies_birthday_bound(self):
-        for n, p in [(10 ** 6, 1e-9), (10 ** 9, 1e-9), (10 ** 6, 1e-12)]:
+        for n, p in [(10**6, 1e-9), (10**9, 1e-9), (10**6, 1e-12)]:
             L = hash_length_for(n, p)
-            assert n ** 2 / 2 ** (4 * L + 1) <= p
+            assert n**2 / 2 ** (4 * L + 1) <= p
 
     def test_edge_cases(self):
         assert hash_length_for(1) == 1
@@ -106,18 +107,51 @@ class TestHashLengthFor:
             hash_length_for(10, target_prob=1.0)
 
 
-class TestPairSignature:
-    def test_water_pairs(self, water):
-        z, coords = water
-        z_sorted, pairs = _pair_signature(z, coords, decimals=4)
-        assert z_sorted == (1, 1, 8)
-        assert len(pairs) == 3
-        elements = sorted({(a, b) for a, b, _ in pairs})
-        assert elements == [(1, 1), (1, 8)]
+class TestScaledDistances:
+    def test_water_grid_values(self, water):
+        _, coords = water
+        q = _scaled_distances(coords, decimals=4)
+        assert q.dtype == np.int64
+        assert np.array_equal(q, q.T)
+        assert np.all(np.diag(q) == 0)
+        # O-H distance 0.9575 A -> 9575 grid units at 1e-4 precision.
+        assert q[0, 1] == 9575
+        assert q[0, 2] == 9575
+        assert q[1, 2] == 15144
 
-    def test_single_atom_has_no_pairs(self):
-        z, _ = _pair_signature(np.array([6]), np.zeros((1, 3)), decimals=4)
-        assert z == (6,)
+    def test_overflow_guard(self):
+        coords = np.array([[0.0, 0.0, 0.0], [1e6, 0.0, 0.0]])
+        with pytest.raises(ValueError):
+            _scaled_distances(coords, decimals=15)
+
+
+class TestCanonicalSignature:
+    def test_water(self, water):
+        z, coords = water
+        q = _scaled_distances(coords, decimals=4)
+        tag, z_ordered, body = _canonical_signature(z, q)
+        assert tag == "C"
+        # Canonical order groups atoms by ascending Z.
+        assert z_ordered == (1, 1, 8)
+        # Three pair distances on the 1e-4 grid.
+        assert body == "15144,9575,9575"
+
+    def test_single_atom(self):
+        q = _scaled_distances(np.zeros((1, 3)), decimals=4)
+        tag, z_ordered, body = _canonical_signature(np.array([6]), q)
+        assert tag == "C"
+        assert z_ordered == (6,)
+        assert body == ""
+
+    def test_permutation_invariant_including_symmetric(self, benzene):
+        z, coords = benzene
+        q = _scaled_distances(coords, decimals=4)
+        base = _canonical_signature(z, q)
+        rng = np.random.default_rng(1)
+        for _ in range(20):
+            perm = rng.permutation(len(z))
+            qp = _scaled_distances(coords[perm], decimals=4)
+            assert _canonical_signature(z[perm], qp) == base
 
 
 class TestInputValidation:

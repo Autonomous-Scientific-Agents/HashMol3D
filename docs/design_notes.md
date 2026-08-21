@@ -7,25 +7,112 @@ invariant identifier for 3D molecular conformers. The invariance set
 matches the eigenvalues of the non-relativistic molecular Hamiltonian:
 if those eigenvalues don't change, the hash doesn't change.
 
-## Why a sorted multiset of `(Z_min, Z_max, d)` triples
+## Why a canonical labeled distance matrix (v5)
 
-Building a "canonical atom ordering" for a symmetric molecule is the
-classical hard problem behind canonical SMILES / InChI. Naive greedy
-schemes (sort by atomic number, then by sorted distance row, then by
-some tiebreaker) silently fail for benzene, cubane, C60, and similar
-high-symmetry geometries: equivalent atoms produce equal sort keys, and
-the order chosen among them changes which distances appear at which
-position of the flattened upper-triangular matrix.
+Versions up to 4 hashed the sorted multiset of `(Z_min, Z_max, d)`
+triples. That object is invariant by construction, but it discards
+*which distances share an atom*, so **homometric** configurations —
+distinct geometries with the same distance multiset (the Patterson
+ambiguity of crystallography) — collided. Boutin & Kemper (2004) proved
+the distance multiset is a complete invariant only for *generic* point
+clouds; the exceptions are measure-zero but structured: symmetric,
+linear, and lattice-like arrangements. Concretely:
 
-Instead of canonicalizing the atom order at all, we hash a fingerprint
-that is invariant under any relabeling **by construction**:
+- the classic pair `{0,1,4,10,12,17}` / `{0,1,8,11,13,17}` on a line,
+  and 3D grid products built from it, collide under v4
+  (`tests/test_collisions.py` keeps these as fixtures);
+- a scan of a 369,595-record THEMol shard found 5 v4 hash-collision
+  groups; geometry-level verification showed all 5 to be *duplicate
+  entries* (same coordinates to ~1e-6 Å under different SMILES
+  annotations), i.e. **zero genuine homometric collisions** in that
+  organic-conformer corpus — generic chemistry really is generic.
 
-  * the sorted multiset of atomic numbers, and
-  * the sorted multiset of `(Z_min, Z_max, distance)` triples
-    over all unordered pairs of atoms.
+The practical risk therefore concentrates exactly where the theory says:
+high-symmetry clusters, linear chains, lattice fragments, and
+adversarial or machine-generated geometries. The v5 upgrade buys the
+*guarantee* — "no geometric collisions by construction" is a theorem one
+can cite for an archival identifier, where v4 could only say "none
+observed so far".
 
-Both objects depend only on Z and pairwise distances, so they inherit
-translation, rotation, and parity invariance for free.
+The v5 descriptor removes the weakness at its root instead of patching
+around it. It writes the **full element-labeled distance matrix in a
+canonical atom order**:
+
+1. **Quantize** all pairwise distances to integers on the precision
+   grid (`q_ij = rint(d_ij · 10^decimals)`), so every later step is
+   exact integer arithmetic.
+2. **Color refinement** (Weisfeiler-Leman): iteratively recolor each
+   atom by `(own color, sorted multiset of (neighbor color, q))` until
+   the partition stabilizes. Converges in 1–3 rounds in practice.
+3. **Individualization-refinement**: if symmetry-equivalent atoms
+   remain, branch over the members of the smallest ambiguous cell,
+   refine, recurse, and keep the lexicographically smallest distance
+   matrix over all leaves. The leaf set is a function of the geometry
+   alone, so the winner is permutation-invariant; the number of leaves
+   equals the order of the rounded-distance symmetry group (1 for
+   generic molecules, 12 for benzene, 24 for a perfect tetrahedral
+   cluster).
+
+A labeled distance matrix in a well-defined order determines the point
+set up to congruence, so **equal descriptors now occur if and only if
+the geometries are congruent at the chosen precision**: zero geometric
+collisions by construction, rather than "no known collisions".
+
+### Why not stop at per-atom distance signatures (1-WL)?
+
+One round of refinement — hashing the multiset of per-atom sorted
+`(Z_j, d_ij)` rows — already kills every classical homometric pair at
+essentially the same cost as v4, and was the strongest cheap upgrade.
+We went to the full canonical form because 1-WL is measurably not
+complete: a 30,000-sample random search over small integer lattices
+found two 5-point configurations with identical per-atom signature
+multisets that are provably non-congruent (verified by exhaustive
+search over all 120 atom pairings). Both are regression fixtures in
+`tests/test_collisions.py`, and both are distinguished by the canonical
+matrix. Since the canonical scheme subsumes the 1-WL scheme (refinement
+is its first stage), shipping it directly also avoids a second hash
+migration later.
+
+### Rejected alternatives
+
+- **Canonical inertia frame** (translate to centroid, rotate to
+  principal axes, sort atoms, hash coordinates): O(N) after a 3×3
+  eigendecomposition and a complete invariant *when it works*, but the
+  axes are undefined exactly where chemistry is interesting. In our
+  battery it failed permutation/rotation invariance outright for
+  benzene, methane, cubane, and rings (degenerate inertia tensors), and
+  near-degeneracy is numerically explosive: a distorted benzene with a
+  2·10⁻⁴ Å symmetry break flipped hashes for 97% of 10⁻⁷ Å
+  perturbations. Distance noise stays local; frame noise is global.
+- **Eigenvalue spectra** (distance/Coulomb matrix): permutation-
+  invariant but O(N³), provably lossy (N eigenvalues cannot encode
+  N(N−1)/2 distances), and noise is globalized — every eigenvalue moves
+  when one atom moves, tripling the observed flip rate at 10⁻⁶ Å noise
+  in our tests.
+- **Moment/USR-style summaries**: built for similarity screening;
+  collisions by design.
+
+### Cost
+
+The canonical search is pure NumPy and is *faster* than the v4 Python
+tuple sort for generic molecules (≈1.6 ms vs 2.4 ms at N=100; 170 ms vs
+486 ms at N=1000 on a laptop). Symmetric molecules pay for orbit
+branching (benzene ≈1.4 ms, cubane ≈8 ms, a perfect 120-atom
+monoelemental ring ≈300 ms) — acceptable for a per-geometry hash, and
+real conformers rarely have exact rounded symmetry.
+
+### Degenerate-rounding fallback
+
+If rounding is so coarse that many atoms become mutually
+indistinguishable (e.g. a cluster hashed at a precision exceeding its
+diameter), the branching tree can explode combinatorially. The search
+therefore visits at most 10,000 partition states — a normative constant
+of the descriptor version. The tree size is permutation-invariant, so
+the cutoff is a deterministic property of the geometry, and such inputs
+fall back to hashing the stable-WL per-atom signature multiset under a
+distinct descriptor tag (`W:` instead of `C:`), which prevents any
+cross-path collision. The fallback is still strictly stronger than the
+v4 multiset.
 
 ## Why we do not encode chirality
 
@@ -43,24 +130,20 @@ dependent volume signs in greedy quartet pickers.
 
 ## Precision and rounding
 
-Distances are rounded to `max(0, round(-log10(precision)))` decimal
-places before hashing. This gives stable hashes under noise smaller
-than `precision / 2`. Two conformers that differ by less than
-`precision` may collide; two that differ by more will usually not.
+Distances are quantized to `max(0, round(-log10(precision)))` decimal
+places before anything else happens. This gives stable hashes under
+noise smaller than `precision / 2`. Two conformers that differ by less
+than `precision` may collide; two that differ by more will usually not.
 
 There is a residual rounding-boundary risk: a distance of exactly
 `x.xxxx5` may round to two different values depending on numerical
 noise. Choose `precision` generously larger than the geometric noise
-floor of your pipeline.
-
-## Distance-multiset uniqueness ("homometric" sets)
-
-In principle, two distinct geometries can share a distance multiset
-(this is the "Patterson ambiguity" in crystallography, equivalently the
-turnpike-problem non-uniqueness). For real molecular geometries with
-atomic-number-tagged pairs and ~10–100 atoms, collisions are
-vanishingly unlikely; we accept this as a tradeoff for rigorous
-invariance and a dependency-free implementation.
+floor of your pipeline. Working from pair distances keeps this damage
+local — only distances sitting near a bin edge are at risk — which is a
+further reason the descriptor is built from distances rather than from
+frames or spectra, where one perturbed atom moves every hashed number
+at once. (Empirically, the v5 flip-rate-vs-noise curves coincide with
+v4's: completeness cost us no rounding robustness.)
 
 ## Dependencies
 

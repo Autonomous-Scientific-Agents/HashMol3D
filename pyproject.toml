@@ -1,6 +1,6 @@
 [project]
 name = "hashmol3d"
-version = "0.6.0"
+version = "0.7.0"
 description = "Deterministic 3D molecular geometry hashing standard"
 authors = [{name = "Murat Keçeli"}]
 readme = "README.md"

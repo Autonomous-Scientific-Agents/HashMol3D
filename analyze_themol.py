@@ -5,16 +5,25 @@ shard, computes the HashMol3D geometry hash, and reports collisions.
 
 We hash at length=64 (full SHA-256) so that hash truncation can never
 manufacture a collision; identical 64-hex tails therefore mean identical
-*descriptors* (same Z-multiset + same distance multiset at the chosen
-precision). We separately count collisions at the shipped default
-length=32 (128-bit).
+*descriptors*. Under descriptor version 4 that meant equal Z-multiset +
+distance multiset, which admits homometric collisions in principle. The
+v4 scan of shard mbis_6 found 5 colliding groups, all of which geometry-
+level verification (verify_collisions.py) later showed to be duplicate
+entries: same coordinates to ~1e-6 A, differing only in SMILES
+annotation (resonance / atom mapping). Under version 5 (canonical
+labeled distance matrix) identical descriptors mean congruent
+geometries, so every colliding group must be such a duplicate. We
+separately count collisions at the shipped default length=32 (128-bit).
 
-For each colliding group we inspect the SMILES to classify it:
+The SMILES-based classification below is only a first-pass triage
+(duplicate entries can carry different SMILES strings); trust the
+geometry check in verify_collisions.py over it:
   - one distinct non-isomeric SMILES  -> same constitution (legit duplicate
     structure, or enantiomer/geometry re-run)
-  - several distinct non-isomeric SMILES -> genuine homometric collision:
-    chemically different molecules with the same fingerprint.
+  - several distinct non-isomeric SMILES -> either a re-annotated duplicate
+    geometry or (v4 only, never observed) a genuine homometric collision.
 """
+
 from __future__ import annotations
 
 import json
@@ -79,7 +88,7 @@ def main() -> None:
 
         if (i + 1) % 20000 == 0:
             rate = (i + 1) / (time.time() - t0)
-            print(f"  {i+1}/{n}  ({rate:.0f}/s)", flush=True)
+            print(f"  {i + 1}/{n}  ({rate:.0f}/s)", flush=True)
     h.close()
 
     n_total = len(uuids)
@@ -87,8 +96,8 @@ def main() -> None:
     colliding = {hh: idxs for hh, idxs in groups64.items() if len(idxs) > 1}
 
     # Classify colliding groups.
-    same_constitution = []   # 1 distinct non-isomeric SMILES
-    homometric = []          # >1 distinct non-isomeric SMILES (true collision)
+    same_constitution = []  # 1 distinct non-isomeric SMILES
+    homometric = []  # >1 distinct non-isomeric SMILES (true collision)
     for hh, idxs in colliding.items():
         noniso = {smi_noniso[j] for j in idxs}
         iso = {smi_iso[j] for j in idxs}
@@ -129,9 +138,7 @@ def main() -> None:
     out = {
         "summary": summary,
         "homometric_true_collisions": sorted(homometric, key=lambda r: -r["count"]),
-        "same_constitution_examples": sorted(
-            same_constitution, key=lambda r: -r["count"]
-        )[:50],
+        "same_constitution_examples": sorted(same_constitution, key=lambda r: -r["count"])[:50],
     }
     with open("themol_collision_report.json", "w") as f:
         json.dump(out, f, indent=2)
@@ -141,8 +148,10 @@ def main() -> None:
     if homometric:
         print("\n-- true collision examples (up to 10) --")
         for r in sorted(homometric, key=lambda r: -r["count"])[:10]:
-            print(f"  hash={r['hash'][:16]}.. formulas={r['formulas']} "
-                  f"smiles={r['nonisomeric_smiles']}")
+            print(
+                f"  hash={r['hash'][:16]}.. formulas={r['formulas']} "
+                f"smiles={r['nonisomeric_smiles']}"
+            )
 
 
 if __name__ == "__main__":
