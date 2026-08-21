@@ -40,3 +40,5 @@ select = ["E", "W", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]  # tolerate long lines in test fixtures
+# Paper harnesses: sys.path setup precedes imports; compact one-liner style.
+"paper/*" = ["E402", "E501", "E702", "E731"]
