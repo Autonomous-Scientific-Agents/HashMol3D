@@ -85,6 +85,15 @@ _NODE_BUDGET = 10_000
 # Scaled distances must stay below 2^62 so they fit int64 with headroom.
 _MAX_SCALED = float(2**62)
 
+# Minimum relative gap between principal-moment eigenvalues for the O(N)
+# frame method (normative for the "F" descriptor section). Below this the
+# principal axes are degenerate or nearly so (symmetric tops, linear and
+# near-linear molecules), the frame reorients under tiny perturbations, and
+# hash_molecule(method="frame") warns and falls back to the canonical
+# method. Frame noise amplification is bounded by ~1/gap, so 0.05 keeps it
+# within the same order as the distance-based paths.
+_FRAME_GAP_MIN = 0.05
+
 
 def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
     """Hash length (hex chars) keeping collision risk below ``target_prob``.
@@ -334,6 +343,78 @@ def _canonical_signature(
     return "C", tuple(int(v) for v in z[best_order]), body
 
 
+def _lex_less(a: np.ndarray, b: np.ndarray) -> bool:
+    """Row-major lexicographic '<' for equal-shape integer arrays."""
+    af, bf = a.ravel(), b.ravel()
+    neq = np.flatnonzero(af != bf)
+    if neq.size == 0:
+        return False
+    i = int(neq[0])
+    return bool(af[i] < bf[i])
+
+
+def _frame_signature(
+    atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
+) -> tuple[str, tuple[int, ...], str] | None:
+    """O(N) principal-axes signature, or ``None`` when the frame is unreliable.
+
+    Coordinates are expressed in the eigenbasis of the Z-weighted gyration
+    tensor (axes ordered by ascending eigenvalue), quantized to the
+    precision grid, and serialized as sorted ``(Z, x, y, z)`` rows. Axis
+    *sign* conventions are not needed: all eight sign combinations are
+    evaluated and the lexicographically smallest row list wins, which makes
+    the signature reflection-invariant by construction. Tensor sums are
+    computed over sorted addends so the result is exactly independent of
+    the input atom order.
+
+    The frame is reliable only when the eigenvalues are well separated:
+    if any relative gap falls below :data:`_FRAME_GAP_MIN` (degenerate or
+    nearly degenerate principal moments -- symmetric tops, linear
+    molecules), the axes are ill-defined and ``None`` is returned so the
+    caller can fall back to the canonical method.
+    """
+    n = atomic_nums.shape[0]
+    z = atomic_nums.astype(np.int64)
+    w = z.astype(float)
+
+    def ksum(a: np.ndarray) -> float:
+        # Permutation-invariant summation: sort addends first.
+        return float(np.sum(np.sort(a)))
+
+    centroid = np.array([ksum(w * coords[:, k]) for k in range(3)]) / ksum(w)
+    c = coords - centroid
+    t = np.empty((3, 3))
+    for a in range(3):
+        for b in range(a, 3):
+            t[a, b] = t[b, a] = ksum(w * c[:, a] * c[:, b])
+    lam, vec = np.linalg.eigh(t)
+    if not lam[2] > 0.0:
+        return None  # single atom or all atoms coincident
+    if float(np.min(np.diff(lam)) / lam[2]) < _FRAME_GAP_MIN:
+        return None
+
+    scaled = (c @ vec) * (10.0**decimals)
+    if float(np.abs(scaled).max()) >= _MAX_SCALED:
+        raise ValueError(
+            "precision too fine for this geometry's extent: scaled coordinates "
+            "exceed the exact-integer range; use a coarser precision"
+        )
+    q = np.rint(scaled).astype(np.int64)
+
+    best: np.ndarray | None = None
+    for sx in (1, -1):
+        for sy in (1, -1):
+            for sz in (1, -1):
+                rows = np.column_stack([z, q * np.array([sx, sy, sz])])
+                order = np.lexsort((rows[:, 3], rows[:, 2], rows[:, 1], rows[:, 0]))
+                cand = rows[order]
+                if best is None or _lex_less(cand, best):
+                    best = cand
+    assert best is not None and best.shape == (n, 4)
+    body = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in best.tolist())
+    return "F", tuple(int(v) for v in best[:, 0].tolist()), body
+
+
 def _format_descriptor(
     version: str,
     precision: float,
@@ -368,6 +449,7 @@ def hash_molecule(
     charge: int = 0,
     multiplicity: int | None = None,
     length: int | None = None,
+    method: str = "canonical",
 ) -> HashMol3DResult:
     """Compute the HashMol3D identifier for a 3D molecular geometry.
 
@@ -393,6 +475,20 @@ def hash_molecule(
             depends on how many distinct geometries share a namespace, not on
             molecule size; use :func:`hash_length_for` to size the hash to a
             target corpus and probability.
+        method: ``"canonical"`` (default) or ``"frame"``. The canonical
+            method hashes the labeled distance matrix in a canonical atom
+            order (complete, but O(N^2) time and memory). The frame method
+            hashes coordinates in the principal-axes frame of the Z-weighted
+            gyration tensor -- O(N log N) time and O(N) memory, suited to
+            proteins and other large systems -- and is equally complete
+            *when the frame is well-defined*. If the principal moments are
+            degenerate or nearly so (relative eigenvalue gap below
+            :data:`_FRAME_GAP_MIN`; symmetric tops, linear molecules), the
+            frame is unreliable: a :class:`UserWarning` is emitted and the
+            canonical method is used instead (detectable via the ``C:`` or
+            ``W:`` section in ``result.descriptor`` instead of ``F:``).
+            Identifiers from different methods are **not comparable**; pick
+            one method per corpus.
 
     Returns:
         :class:`HashMol3DResult`.
@@ -424,12 +520,30 @@ def hash_molecule(
         if not (1 <= length <= 64):
             raise ValueError("length must be an int in [1, 64]")
 
+    if method not in ("canonical", "frame"):
+        raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
+
     charge = int(charge)
     decimals = _precision_to_decimals(precision)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
 
-    qmat = _scaled_distances(coords, decimals)
-    tag, z_ordered, body = _canonical_signature(atomic_nums, qmat)
+    signature = None
+    if method == "frame":
+        signature = _frame_signature(atomic_nums, coords, decimals)
+        if signature is None:
+            warnings.warn(
+                "principal moments are degenerate or nearly degenerate "
+                f"(relative eigenvalue gap < {_FRAME_GAP_MIN}); the inertia "
+                "frame is unreliable for this geometry, falling back to "
+                "method='canonical'. The returned hash is a canonical-method "
+                "hash and will not match frame-method hashes.",
+                UserWarning,
+                stacklevel=2,
+            )
+    if signature is None:
+        qmat = _scaled_distances(coords, decimals)
+        signature = _canonical_signature(atomic_nums, qmat)
+    tag, z_ordered, body = signature
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, precision, z_ordered, tag, body)
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
 

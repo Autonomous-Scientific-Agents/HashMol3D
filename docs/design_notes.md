@@ -114,6 +114,24 @@ distinct descriptor tag (`W:` instead of `C:`), which prevents any
 cross-path collision. The fallback is still strictly stronger than the
 v4 multiset.
 
+## The opt-in O(N) frame method
+
+Version 0.8 adds `hash_molecule(method="frame")` for systems too large
+for the O(N²) distance matrix (a 100,000-atom structure hashes in ~0.3 s
+versus an infeasible 80 GB matrix). It projects Z-weighted centered
+coordinates onto the gyration-tensor eigenbasis, quantizes, and takes the
+lexicographically smallest of the eight axis-sign choices — which makes
+it parity-invariant with no fragile sign conventions, and complete when
+the frame is defined. The known failure mode of frame methods (axes
+undefined or numerically explosive for symmetric tops and linear
+molecules, see the rejected-alternatives analysis above) is *detected*
+rather than risked: a normative relative eigenvalue-gap threshold (0.05)
+rejects degenerate and near-degenerate frames, emitting a warning and
+falling back to the canonical method. Tensor sums use sorted addends so
+the result is exactly permutation-invariant. Frame hashes carry a
+distinct descriptor tag (`F:`), so they can never collide with — and are
+not comparable to — canonical hashes; a corpus must pick one method.
+
 ## Why we do not encode chirality
 
 The non-relativistic Born-Oppenheimer molecular Hamiltonian commutes

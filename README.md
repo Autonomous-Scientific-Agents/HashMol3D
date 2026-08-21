@@ -61,6 +61,28 @@ It deliberately does **not** distinguish enantiomers (which share their
 Hamiltonian eigenvalues). The reference implementation depends only on
 NumPy.
 
+## Fast O(N) mode for large systems
+
+For proteins and other large systems where the O(N²) distance matrix is
+prohibitive, `method="frame"` hashes coordinates in the principal-axes
+frame of the Z-weighted gyration tensor — O(N log N) time, O(N) memory
+(a 100,000-atom system hashes in ~0.3 s where the default method would
+need an 80 GB matrix):
+
+```python
+hash_molecule(z, coords, method="frame")
+```
+
+The frame is reliable only when the principal moments are well separated.
+If they are degenerate or nearly so (symmetric tops, linear molecules —
+detected by a normative relative eigenvalue-gap threshold of 0.05), a
+`UserWarning` is emitted and the call falls back to the canonical method;
+the path taken is visible in `result.descriptor` (`F:` vs `C:`/`W:`).
+Hashes from different methods are **not comparable** — pick one method
+per corpus. Typical proteins and other asymmetric structures pass the
+check; ideal symmetric molecules do not (and are exactly the cases the
+default method handles).
+
 HashMol3D IDs are **stable across machines**, **reproducible**, and ideal for:
 - workflow deduplication  
 - caching  

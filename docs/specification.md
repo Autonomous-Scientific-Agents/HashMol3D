@@ -145,6 +145,40 @@ colors of §4.2, the triples sorted as a multiset. The fallback uses a
 distinct descriptor section tag (`W` instead of `C`, §6), so the two
 paths can never collide with each other.
 
+### 4.5 Optional O(N) frame method (`method="frame"`)
+
+For very large systems (proteins, clusters) where the O(N²) distance
+matrix is prohibitive, an opt-in O(N log N) method hashes coordinates in
+a canonical principal-axes frame instead:
+
+1. Compute the Z-weighted centroid and the Z-weighted **gyration tensor**
+   `T_ab = Σ_i Z_i (r_i − c)_a (r_i − c)_b`. All sums are computed over
+   *sorted* addends so the result is exactly independent of the input
+   atom order.
+2. **Reliability check (normative):** with eigenvalues
+   `λ1 ≤ λ2 ≤ λ3`, require `λ3 > 0` and both relative gaps
+   `(λ2−λ1)/λ3` and `(λ3−λ2)/λ3` to be at least **0.05**. Below this the
+   axes are degenerate or nearly so (symmetric tops, linear molecules)
+   and reorient under arbitrarily small perturbations; the implementation
+   emits a warning and falls back to the canonical method of §4.2–4.4.
+3. Project the centered coordinates onto the eigenvectors (ascending
+   eigenvalue order) and quantize each coordinate to the precision grid,
+   `q = rint(u · 10^decimals)` (same overflow bound as §4.1).
+4. **Axis signs need no convention:** evaluate all eight sign
+   combinations of the three axes; for each, sort the `(Z, x, y, z)`
+   rows lexicographically; keep the lexicographically smallest row list.
+   Because the eight combinations include both parities, the signature is
+   reflection-invariant by construction.
+
+The result is serialized under a distinct section tag (`F`, §6), so
+frame-method hashes can never collide with canonical-method hashes; the
+two methods are, by the same token, **not comparable** — a corpus must
+choose one method. When the frame is reliable, equal `F` descriptors
+certify identical quantized coordinates in a canonical frame, i.e. the
+method is complete in the same sense as §4. The gap threshold bounds the
+frame's noise amplification (≈ 1/gap), and the residual floating-point
+caveats of §8 apply with that factor.
+
 ## 5. Multiplicity inference
 
 If `multiplicity` is not supplied:
@@ -163,6 +197,7 @@ components, in this fixed order:
 
     V:<version>|P:<precision>|Z:<z_ordered>|C:<distances>     (canonical path)
     V:<version>|P:<precision>|Z:<z_sorted>|W:<atom sigs>      (fallback path, §4.4)
+    V:<version>|P:<precision>|Z:<z_rows>|F:<coordinates>      (frame method, §4.5)
 
 Where:
 
@@ -178,6 +213,10 @@ Where:
 - `<atom sigs>` (fallback only) is the sorted multiset of per-atom
   signatures, each formatted as `Z,color:c1-q1,c2-q2,...` with the
   atom's stable color and its sorted `(color, q)` row, joined by `;`.
+- `<coordinates>` (frame method only) is the winning sorted row list of
+  §4.5, each row formatted as `Z:x,y,z` with quantized integer
+  coordinates, joined by `;`; `<z_rows>` lists the atomic numbers in
+  that row order.
 
 Charge and multiplicity are **not** part of the descriptor; they are
 written into the readable prefix of the identifier instead.
@@ -217,7 +256,8 @@ To guarantee identical identifiers across machines:
 - Format atomic numbers and scaled distances as decimal integers with
   no leading zeros or sign.
 - Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1.
-- Use the search-node budget of 10,000 exactly (§4.4).
+- Use the search-node budget of 10,000 exactly (§4.4) and, for the frame
+  method, the relative eigenvalue-gap threshold of 0.05 exactly (§4.5).
 - Encode the descriptor in UTF-8 before hashing.
 - Use SHA-256 as defined in FIPS 180-4.
 - Render the formula in Hill order and the state tag exactly as in §1.
