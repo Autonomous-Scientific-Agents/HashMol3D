@@ -177,16 +177,26 @@ def main():
         for L, nU, nP, c in sweep:
             w.writerow([L, 4 * L, nU, nP, c])
 
-    # ---- figure: collisions vs hash length ----
-    Ls = [L for L, *_ in sweep]
-    cs = [max(c, 0) for *_, c in sweep]
+    make_figure([(L, 4 * L, c) for L, _, _, c in sweep], len(U_all))
+
+
+def make_figure(rows, n_distinct):
+    """Plot observed truncation collisions against the birthday estimate.
+
+    rows: list of (length_hex, bits, collisions).
+    """
+    bits = [b for _, b, _ in rows]
+    cs = [max(c, 0) for *_, c in rows]
+    expected = [n_distinct**2 / 2 ** (b + 1) for b in bits]
     plt.figure(figsize=(6.4, 4.2))
-    plt.plot([4 * L for L in Ls], [c + 0.1 for c in cs], "o-")  # +0.1 to show 0 on log
-    plt.axhline(0.9, ls=":", color="gray")
+    plt.plot(bits, [c + 0.1 for c in cs], "o-", label="observed ($+0.1$ to show zero)")
+    plt.plot(bits, expected, "s--", color="gray", label="birthday estimate $n^2/2^{b+1}$")
+    plt.axhline(1.0, ls=":", color="gray", lw=1)
+    plt.text(52, 1.35, "one collision", color="gray", fontsize=8)
     plt.axvline(128, ls="--", color="crimson")
     plt.text(
         125,
-        max(cs) if max(cs) > 0 else 1,
+        1e5,
         "default 128-bit ",
         color="crimson",
         rotation=90,
@@ -195,10 +205,12 @@ def main():
         fontsize=9,
     )
     plt.xlim(10, 136)
+    plt.ylim(5e-2, 4e6)
     plt.xlabel("hash length (bits)")
     plt.ylabel("collisions among distinct geometries")
     plt.yscale("log")
-    plt.title(f"Truncation collisions vs hash length ({len(U_all):,} distinct geometries)")
+    plt.title(f"Truncation collisions vs hash length ({n_distinct:,} distinct geometries)")
+    plt.legend(loc="center right", fontsize=8, frameon=False)
     plt.grid(True, which="both", ls=":", alpha=0.5)
     plt.tight_layout()
     fp = os.path.join(_here, "fig_collisions.pdf")
@@ -206,5 +218,16 @@ def main():
     print(f"\nWrote {fp}")
 
 
+def replot_from_csv():
+    """Regenerate the figure from collision_results.csv (no datasets needed)."""
+    with open(os.path.join(_here, "collision_results.csv")) as f:
+        r = list(csv.DictReader(f))
+    rows = [(int(x["length_hex"]), int(x["bits"]), int(x["collisions"])) for x in r]
+    make_figure(rows, int(r[0]["distinct_geometries"]))
+
+
 if __name__ == "__main__":
-    main()
+    if "--replot" in sys.argv:
+        replot_from_csv()
+    else:
+        main()

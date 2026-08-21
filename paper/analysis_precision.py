@@ -212,10 +212,11 @@ def main():
     # storage for figures
     fig_N, fig_rand_dmax, fig_lever_dmax = [], [], []
     fig_rand_dNRE, fig_lever_dNRE = [], []
-    fig_lever_dE = []
+    fig_lever_dE, fig_rand_dE = [], []
 
     SIGMA = 1e-4  # random noise magnitude (Ang), ~ tight-opt noise floor
     N_TRIALS = 200
+    N_E_TRIALS = 5  # HF evaluations under noise (costly; enough for a mean)
     DTHETA = np.deg2rad(0.5)  # small soft-mode torsion (degrees)
 
     for nd in n_doubles:
@@ -229,18 +230,24 @@ def main():
         print(f"{name:>16} {n:>4} {nC:>3} {nre0:>12.4f} {e0:>14.6f} {d0.max():>10.3f}")
 
         # ---- Experiment 1: random per-atom Gaussian noise ----
-        rand_dmax, rand_dnre = [], []
+        rand_dmax, rand_dnre, rand_dE = [], [], []
         flip_frac = {p: 0 for p in PRECISIONS}
-        for _ in range(N_TRIALS):
+        for t in range(N_TRIALS):
             Xn = X0 + rng.normal(0.0, SIGMA, X0.shape)
             dn = pair_distances(Xn)
             rand_dmax.append(np.abs(dn - d0).max())
             rand_dnre.append(abs(nuclear_repulsion(Z, Xn) - nre0))
+            if t < N_E_TRIALS:
+                # HF is costly; a few draws suffice for the mean. Computed
+                # after the rng draw, so the seeded noise stream (and every
+                # previously published number) is unchanged.
+                rand_dE.append(abs(hf_energy(Z, Xn) - e0))
             for p in PRECISIONS:
                 if hash_at(Z, Xn, p) != hash_at(Z, X0, p):
                     flip_frac[p] += 1
         rand_dmax_mean = float(np.mean(rand_dmax))
         rand_dnre_mean = float(np.mean(rand_dnre))
+        rand_dE_mean = float(np.mean(rand_dE))
         flip_frac = {p: flip_frac[p] / N_TRIALS for p in PRECISIONS}
 
         # ---- Experiment 2: soft end-hinged bend (lever arm) ----
@@ -302,6 +309,7 @@ def main():
                 dmax0=float(d0.max()),
                 rand_dmax=rand_dmax_mean,
                 rand_dnre=rand_dnre_mean,
+                rand_dE=rand_dE_mean,
                 flip_1e2=flip_frac[1e-2],
                 flip_1e3=flip_frac[1e-3],
                 flip_1e4=flip_frac[1e-4],
@@ -322,6 +330,7 @@ def main():
         fig_rand_dmax.append(rand_dmax_mean)
         fig_lever_dmax.append(lever_disp)
         fig_rand_dNRE.append(rand_dnre_mean)
+        fig_rand_dE.append(rand_dE_mean)
         fig_lever_dNRE.append(lever_dnre)
         fig_lever_dE.append(lever_dE)
 
@@ -405,6 +414,7 @@ def main():
     plt.figure(figsize=(6.4, 4.2))
     plt.plot(fig_N, fig_rand_dNRE, "o-", label="|$\\Delta V_{NN}$| random noise")
     plt.plot(fig_N, fig_lever_dNRE, "s-", label="|$\\Delta V_{NN}$| soft bend")
+    plt.plot(fig_N, fig_rand_dE, "v--", label="|$\\Delta E_{HF}$| random noise")
     plt.plot(fig_N, fig_lever_dE, "^-", label="|$\\Delta E_{HF}$| soft bend")
     plt.axhline(1.6e-3, ls="--", color="crimson", lw=1, label="chemical accuracy (1.6 mHa)")
     plt.xlabel("number of atoms $N$")
