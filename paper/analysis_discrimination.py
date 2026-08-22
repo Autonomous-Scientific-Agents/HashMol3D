@@ -35,8 +35,10 @@ from hashmol3d.core import hash_molecule
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# eps grid from coarse to fine (coarse end wide enough to trigger saturation)
-EPS = [1.0, 5e-1, 3e-1, 2e-1, 1e-1, 3e-2, 1e-2, 3e-3, 1e-3, 1e-4, 1e-5]
+# eps grid from coarse to fine, powers of ten only (HashMol3D requires the
+# precision to be a power of ten <= 1 Å); coarse end wide enough to trigger
+# saturation, and 1e-4 is the shipped default checked in the interpretation.
+EPS = [1.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
 TAU_SAME = 1e-3  # two geometries with class-gap below this are the "same"
 K_CONF = 120  # conformers embedded per chain
 
