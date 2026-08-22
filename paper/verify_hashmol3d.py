@@ -11,13 +11,16 @@ sys.path.insert(0, os.path.join(_here, "..", "src"))
 sys.path.insert(0, os.path.join(_here, "src"))
 import numpy as np
 
+from hashmol3d import __version__
 from hashmol3d.core import DESCRIPTOR_VERSION, hash_molecule
 
 rng = np.random.default_rng(0)
+print(f"HashMol3D package version: {__version__}")
 print(f"descriptor version: {DESCRIPTOR_VERSION}")
 
 
 def h(z, xyz, **kw):
+    kw.setdefault("method", "canonical")
     return hash_molecule(z, xyz, **kw).geometry_hash
 
 
@@ -174,12 +177,14 @@ check("benzene (D6h) permutation+rotation invariance (50x)", ok)
 #     deterministically and stay permutation-invariant.
 xd = rng.uniform(0, 0.01, size=(12, 3))
 zd = np.full(12, 6)
-rd = hash_molecule(zd, xd, precision=1.0)
+rd = hash_molecule(zd, xd, precision=1.0, method="canonical")
 ok = "|W:" in rd.descriptor
 for _ in range(10):
     p = rng.permutation(12)
     if (
-        hash_molecule(zd[p], (xd @ rand_rot().T)[p], precision=1.0).geometry_hash
+        hash_molecule(
+            zd[p], (xd @ rand_rot().T)[p], precision=1.0, method="canonical"
+        ).geometry_hash
         != rd.geometry_hash
     ):
         ok = False

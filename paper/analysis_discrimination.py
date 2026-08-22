@@ -30,14 +30,14 @@ import matplotlib
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from hashmol3d.core import hash_molecule
+from hashmol3d import __version__
+from hashmol3d.core import DESCRIPTOR_VERSION, hash_molecule
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# eps grid from coarse to fine, powers of ten only (HashMol3D requires the
-# precision to be a power of ten <= 1 Å); coarse end wide enough to trigger
-# saturation, and 1e-4 is the shipped default checked in the interpretation.
+# HashMol3D v0.8.0 accepts powers of ten no greater than 1 Å.  The coarse
+# end is wide enough to trigger saturation, and 1e-4 is the shipped default.
 EPS = [1.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
 TAU_SAME = 1e-3  # two geometries with class-gap below this are the "same"
 K_CONF = 120  # conformers embedded per chain
@@ -102,6 +102,8 @@ def distinct_clusters(mss, tau=TAU_SAME):
 
 
 def main():
+    print(f"HashMol3D package version: {__version__}")
+    print(f"descriptor version: {DESCRIPTOR_VERSION}")
     n_doubles = [2, 3, 4, 6, 8, 12, 16, 20, 24]
     rows = []
     print(
@@ -144,7 +146,10 @@ def main():
         # unique full-length hashes among distinct reps at each precision
         uniq = {}
         for e in EPS:
-            hs = {hash_molecule(Z, X, precision=e, length=64).geometry_hash for X in rep_conf}
+            hs = {
+                hash_molecule(Z, X, precision=e, length=64, method="canonical").geometry_hash
+                for X in rep_conf
+            }
             uniq[e] = len(hs)
 
         rows.append(

@@ -30,13 +30,13 @@ from pyscf import gto, scf
 from pyscf.data.nist import BOHR
 from pyscf.geomopt.geometric_solver import optimize
 
-from hashmol3d import hash_molecule
+from hashmol3d import DESCRIPTOR_VERSION, __version__, hash_molecule
 
 rng = np.random.default_rng(0)
 
 
 def gh(Z, X, precision=1e-4):
-    return hash_molecule(Z, X, precision=precision).geometry_hash
+    return hash_molecule(Z, X, precision=precision, method="canonical").geometry_hash
 
 
 Z = np.array([6, 6, 8, 1, 1, 1, 1, 1, 1], dtype=int)
@@ -118,5 +118,7 @@ def opt_test():
 
 
 if __name__ == "__main__":
+    print(f"HashMol3D package version: {__version__}")
+    print(f"descriptor version: {DESCRIPTOR_VERSION}")
     fd_test()
     opt_test()

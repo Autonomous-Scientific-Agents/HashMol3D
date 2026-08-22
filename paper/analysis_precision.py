@@ -41,7 +41,8 @@ import matplotlib
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from hashmol3d.core import hash_molecule
+from hashmol3d import __version__
+from hashmol3d.core import DESCRIPTOR_VERSION, hash_molecule
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -119,7 +120,7 @@ def pair_distances(coords):
 
 
 def hash_at(Z, coords, precision):
-    return hash_molecule(Z, coords, precision=precision).geometry_hash
+    return hash_molecule(Z, coords, precision=precision, method="canonical").geometry_hash
 
 
 # --------------------------------------------------------------------------
@@ -205,6 +206,8 @@ def rotate_about_axis(coords, pivot, axis, moving, angle_rad):
 # Main analysis
 # --------------------------------------------------------------------------
 def main():
+    print(f"HashMol3D package version: {__version__}")
+    print(f"descriptor version: {DESCRIPTOR_VERSION}")
     n_doubles = list(range(1, 9))  # ethene ... hexadecaoctaene (C16H18)
     rows = []
     print(f"{'chain':>16} {'N':>4} {'C':>3} {'NRE(Ha)':>12} {'E_HF(Ha)':>14} {'maxD(Ang)':>10}")
@@ -357,7 +360,7 @@ def main():
             f"{r['flip_1e4']:>10.2f}"
         )
 
-    print(f"\n=== Experiment 2: soft end-hinged bend, dtheta = {np.rad2deg(DTHETA):.2f} deg ===")
+    print(f"\n=== Experiment 2: constructed rigid bend, dtheta = {np.rad2deg(DTHETA):.2f} deg ===")
     print(
         f"{'mol':>10} {'N':>4} {'maxDisp(Ang)':>13} {'max|dd|(Ang)':>13} "
         f"{'|dE_HF|(Ha)':>12} {'flip@1e-2':>10} {'flip@1e-3':>10}"
@@ -370,17 +373,18 @@ def main():
         )
 
     print(
-        f"\n=== Experiment 3: single central C-C bond stretch, "
-        f"dr = {rows[0]['stretch_dr']:.0e} Ang ==="
+        f"\n=== Experiment 3 (raw stretch datum): single central C-C bond "
+        f"stretch, dr = {rows[0]['stretch_dr']:.0e} Ang ==="
     )
-    print(f"{'mol':>10} {'N':>4} {'|dE_HF|(Ha)':>12} {'|dNRE|(Ha)':>12} {'E-res@1e-4(Ha)':>15}")
+    print("    NOTE: the energy resolution at eps=1e-4 A is obtained from a")
+    print("    symmetric +/-delta force-constant fit in analysis_energy.py.")
+    print("    The one-sided finite difference below is reported only as a raw")
+    print("    geometry->energy sensitivity, not an energy-resolution estimate.")
+    print(f"{'mol':>10} {'N':>4} {'|dE_HF|(Ha)':>12} {'|dNRE|(Ha)':>12}")
     for r in rows:
-        # energy resolution implied by precision 1e-4: quadratic scaling of a
-        # stretch, dE(eps) ~ dE(DR) * (eps/DR)^2
-        eres = r["stretch_dE"] * (1e-4 / r["stretch_dr"]) ** 2
         print(
             f"{r['name']:>10} {r['n']:>4} {r['stretch_dE']:>12.2e} "
-            f"{r['stretch_dnre']:>12.2e} {eres:>15.2e}"
+            f"{r['stretch_dnre']:>12.2e}"
         )
 
     # ---- Figure 1: distance-change amplification vs chain length ----
@@ -395,7 +399,7 @@ def main():
         fig_N,
         fig_lever_dmax,
         "s-",
-        label=f"soft bend ({np.rad2deg(DTHETA):.1f}$^\\circ$): max atomic displacement",
+        label=f"constructed bend ({np.rad2deg(DTHETA):.1f}$^\\circ$): max atomic displacement",
     )
     plt.axhline(1e-4, ls="--", color="gray", lw=1)
     plt.text(fig_N[0], 1.15e-4, "precision $=10^{-4}$ Å", color="gray", fontsize=9)
@@ -413,9 +417,9 @@ def main():
     # ---- Figure 2: energy significance vs chain length ----
     plt.figure(figsize=(6.4, 4.2))
     plt.plot(fig_N, fig_rand_dNRE, "o-", label="|$\\Delta V_{NN}$| random noise")
-    plt.plot(fig_N, fig_lever_dNRE, "s-", label="|$\\Delta V_{NN}$| soft bend")
+    plt.plot(fig_N, fig_lever_dNRE, "s-", label="|$\\Delta V_{NN}$| constructed bend")
     plt.plot(fig_N, fig_rand_dE, "v--", label="|$\\Delta E_{HF}$| random noise")
-    plt.plot(fig_N, fig_lever_dE, "^-", label="|$\\Delta E_{HF}$| soft bend")
+    plt.plot(fig_N, fig_lever_dE, "^-", label="|$\\Delta E_{HF}$| constructed bend")
     plt.axhline(1.6e-3, ls="--", color="crimson", lw=1, label="chemical accuracy (1.6 mHa)")
     plt.xlabel("number of atoms $N$")
     plt.ylabel("energy change (Hartree)")
