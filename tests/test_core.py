@@ -45,6 +45,15 @@ class TestPrecisionToDecimals:
         with pytest.raises(ValueError):
             hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.1]], precision=True)
 
+    def test_rejects_numpy_bool(self):
+        # np.bool_ is NOT a bool subclass, so it needs its own guard; it also
+        # coerces to 1.0, which would otherwise be accepted as a 1.0 Å grid.
+        for value in (np.bool_(True), np.bool_(False), np.True_, np.False_):
+            with pytest.raises(ValueError, match="bool"):
+                _precision_to_decimals(value)
+        with pytest.raises(ValueError):
+            hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.1]], precision=np.bool_(True))
+
     def test_rejects_precision_too_fine(self):
         # A clean ValueError, not a raw OverflowError from 10**decimals.
         with pytest.raises(ValueError, match="too fine"):

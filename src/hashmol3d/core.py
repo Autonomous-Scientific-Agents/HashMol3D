@@ -154,15 +154,19 @@ def _precision_to_decimals(precision: float) -> tuple[int, float]:
     both the hashed ``P:`` field and :attr:`HashMol3DResult.precision`. For
     example, ``1e-4`` -> ``(4, 1e-4)``.
 
-    ``bool`` is rejected (it is an ``int`` subclass that would otherwise be
-    read as ``precision=1.0``), and the scalar math uses the ``math`` module
-    so validation is dtype-independent -- a ``numpy`` float is coerced to a
-    plain ``float`` first rather than taking a value-based-casting shortcut.
-    The power-of-ten test tolerates ``1e-6`` relative error so any float
-    representation of a valid grid (float32 round-off included) is accepted
-    and canonicalized; genuine non-powers-of-ten are >=3x away and rejected.
+    ``bool`` and ``numpy.bool_`` are rejected: ``bool`` is an ``int``
+    subclass and ``numpy.bool_`` coerces to ``1.0`` the same way, so either
+    would otherwise be read as ``precision=1.0``. The scalar math uses the
+    ``math`` module so validation is dtype-independent -- a ``numpy`` float
+    is coerced to a plain ``float`` first rather than taking a value-based
+    casting shortcut. The ``1e-6`` relative tolerance absorbs floating-point
+    round-off (a float32 spelling of ``1e-4`` is ~3e-8 off), so any float
+    representation of a power of ten is accepted and canonicalized to the
+    exact grid; inputs farther than that from every power of ten -- the
+    ambiguous mid-decade values this contract forbids (``0.05``, ``3.16e-4``,
+    ...) included -- are rejected.
     """
-    if isinstance(precision, bool):
+    if isinstance(precision, (bool, np.bool_)):
         raise ValueError(f"precision must be a real number, not bool; got {precision!r}")
     precision = float(precision)
     if not math.isfinite(precision) or precision <= 0:
