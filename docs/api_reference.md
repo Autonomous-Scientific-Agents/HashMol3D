@@ -31,7 +31,8 @@ All optional arguments are **keyword-only**.
 
 - `atomic_nums`: integer array-like of atomic numbers, shape `(N,)`
 - `coords`: float array-like of Cartesian coordinates in Å, shape `(N, 3)`
-- `precision`: distance precision in Å (default `1e-4`)
+- `precision`: distance precision in Å (default `1e-4`); must be a power
+  of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
 - `charge`: total formal charge (default `0`)
 - `multiplicity`: spin multiplicity. If `None`, inferred as singlet/doublet
   from electron parity.
@@ -50,7 +51,8 @@ bits. The result is clamped to `[1, 64]`.
 
 ```python
 from hashmol3d import hash_length_for, hash_molecule
-L = hash_length_for(10**9)                 # 23 hex chars (1e9 items, p=1e-9)
+
+L = hash_length_for(10**9)  # 23 hex chars (1e9 items, p=1e-9)
 res = hash_molecule(z, coords, length=L)
 ```
 
@@ -82,8 +84,8 @@ arguments to `hash_molecule`.
 from hashmol3d import hash_xyz
 
 result = hash_xyz("water.xyz", precision=1e-3, charge=0)
-print(result.hash_str)         # H2Oq0m1-...
-print(result.geometry_hash)    # ...
+print(result.hash_str)  # H2Oq0m1-...
+print(result.geometry_hash)  # ...
 ```
 
 ## `read_xyz(path)`

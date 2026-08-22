@@ -34,10 +34,19 @@ from collections import defaultdict
 import h5py
 import numpy as np
 
-from hashmol3d.core import hash_molecule
+from hashmol3d.core import _precision_to_decimals, hash_molecule
 
 PATH = sys.argv[1] if len(sys.argv) > 1 else "data/MBIS/mbis_6.h5"
 PRECISION = float(sys.argv[2]) if len(sys.argv) > 2 else 1e-4
+# HashMol3D requires precision to be a power of ten <= 1 Å. Validate the CLI
+# argument up front so a bad value fails with a clear message instead of an
+# uncaught ValueError deep in the per-record loop. Bind PRECISION to the
+# canonical grid value so the JSON summary reports exactly what the hashes
+# used, not the raw (possibly near-power) CLI input.
+try:
+    _, PRECISION = _precision_to_decimals(PRECISION)
+except ValueError as exc:
+    sys.exit(f"analyze_themol: {exc}")
 
 
 def decode(v):

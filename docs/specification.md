@@ -69,7 +69,8 @@ The reference implementation takes:
 
 1. `atomic_nums`: integer array of atomic numbers, shape `(N,)`
 2. `coords`: float array of Cartesian coordinates in Å, shape `(N, 3)`
-3. `precision`: distance precision in Å (default `1e-4`)
+3. `precision`: distance precision in Å (default `1e-4`); it must be a
+   power of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
 
@@ -90,8 +91,8 @@ For every atom pair `(i, j)` compute the Euclidean distance
 `d_ij = ||r_i - r_j||` and quantize it to an integer number of grid
 units:
 
-    decimals = max(0, round(-log10(precision)))
-    q_ij     = rint(d_ij * 10^decimals)        # round-half-to-even
+    decimals = round(-log10(precision))         # non-negative integer (precision is a power of ten)
+    q_ij     = rint(d_ij * 10^decimals)         # round-half-to-even
 
 `q` is a symmetric non-negative integer matrix with zero diagonal. All
 subsequent steps operate on exact integers. (If any scaled distance
@@ -281,11 +282,11 @@ result = hash_molecule(
     coords,
     precision=1e-4,
     charge=0,
-    multiplicity=None,   # inferred if None
-    length=None,         # 32 hex (128-bit) if None
+    multiplicity=None,  # inferred if None
+    length=None,  # 32 hex (128-bit) if None
 )
-print(result.hash_str)        # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
-print(result.geometry_hash)   # a4ba9da41d888939961ef77dae43b297
+print(result.hash_str)  # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+print(result.geometry_hash)  # a4ba9da41d888939961ef77dae43b297
 ```
 
 A file-based convenience wrapper is also provided:

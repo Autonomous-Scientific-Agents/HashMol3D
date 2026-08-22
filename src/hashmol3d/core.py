@@ -85,6 +85,11 @@ _NODE_BUDGET = 10_000
 # Scaled distances must stay below 2^62 so they fit int64 with headroom.
 _MAX_SCALED = float(2**62)
 
+# Finer precisions overflow ``10.0 ** decimals`` (a double caps out near
+# 10^308) before the geometry-dependent ``_MAX_SCALED`` guard can fire, so
+# reject them up front with a clear message instead of a raw OverflowError.
+_MAX_DECIMALS = 300
+
 # Minimum relative gap between principal-moment eigenvalues for the O(N)
 # frame method (normative for the "F" descriptor section). Below this the
 # principal axes are degenerate or nearly so (symmetric tops, linear and
@@ -138,18 +143,49 @@ class HashMol3DResult:
         return self.hash_str
 
 
-def _precision_to_decimals(precision: float) -> int:
-    """Number of decimal places implied by a distance precision in Å.
+def _precision_to_decimals(precision: float) -> tuple[int, float]:
+    """Grid resolution implied by a distance precision in Å.
 
-    The precision is snapped to the nearest power of ten:
-    ``decimals = round(-log10(precision))``. So ``1e-4`` -> 4 decimals, but
-    an intermediate value such as ``0.05`` also maps to the nearest decade
-    (here 1 decimal, i.e. a 0.1 Å grid), not to a 0.05 Å grid. Pass a power
-    of ten to make the rounding grid unambiguous.
+    ``precision`` must be a power of ten no greater than 1 Å, so the
+    descriptor's precision field uniquely identifies the integer grid used
+    for quantization. Returns ``(decimals, effective_precision)`` where
+    ``effective_precision == 10.0 ** (-decimals)`` is the canonical grid
+    spacing serialized into the descriptor -- the single source of truth for
+    both the hashed ``P:`` field and :attr:`HashMol3DResult.precision`. For
+    example, ``1e-4`` -> ``(4, 1e-4)``.
+
+    ``bool`` and ``numpy.bool_`` are rejected: ``bool`` is an ``int``
+    subclass and ``numpy.bool_`` coerces to ``1.0`` the same way, so either
+    would otherwise be read as ``precision=1.0``. The scalar math uses the
+    ``math`` module so validation is dtype-independent -- a ``numpy`` float
+    is coerced to a plain ``float`` first rather than taking a value-based
+    casting shortcut. The ``1e-6`` relative tolerance absorbs floating-point
+    round-off (a float32 spelling of ``1e-4`` is ~3e-8 off), so any float
+    representation of a power of ten is accepted and canonicalized to the
+    exact grid; inputs farther than that from every power of ten -- the
+    ambiguous mid-decade values this contract forbids (``0.05``, ``3.16e-4``,
+    ...) included -- are rejected.
     """
-    if not np.isfinite(precision) or precision <= 0:
+    if isinstance(precision, (bool, np.bool_)):
+        raise ValueError(f"precision must be a real number, not bool; got {precision!r}")
+    precision = float(precision)
+    if not math.isfinite(precision) or precision <= 0:
         raise ValueError(f"precision must be a positive finite number, got {precision!r}")
-    return int(max(0, round(-np.log10(precision))))
+    # ``decimals < 0`` catches powers of ten greater than 1 Å (e.g. 10.0,
+    # which is close to 10**-(-1)); ``isclose`` catches everything that is
+    # not a power of ten at all. Both share one message.
+    decimals = round(-math.log10(precision))
+    if decimals < 0 or not math.isclose(precision, 10.0 ** (-decimals), rel_tol=1e-6, abs_tol=0.0):
+        raise ValueError(
+            "precision must be a power of ten no greater than 1.0 Å "
+            f"(1.0, 1e-1, 1e-2, ...); got {precision!r}"
+        )
+    if decimals > _MAX_DECIMALS:
+        raise ValueError(
+            f"precision too fine: at most {_MAX_DECIMALS} decimal places are "
+            f"supported, got {precision!r}"
+        )
+    return decimals, 10.0 ** (-decimals)
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
@@ -461,10 +497,9 @@ def hash_molecule(
         atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
         coords: float array-like of Cartesian coordinates in Å, shape
             ``(N, 3)``.
-        precision: distance precision in Å (default ``1e-4``). Snapped to
-            the nearest power of ten before rounding distances, so passing a
-            power of ten (``1e-3``, ``1e-4``, ...) is recommended; see
-            :func:`_precision_to_decimals`.
+        precision: distance precision in Å (default ``1e-4``). Must be a
+            power of ten no greater than 1 Å (``1.0``, ``1e-1``,
+            ``1e-2``, ...); see :func:`_precision_to_decimals`.
         charge: total formal charge (default ``0``).
         multiplicity: spin multiplicity (``1`` = singlet, ``2`` = doublet,
             ...). If ``None``, inferred as singlet/doublet from the
@@ -524,7 +559,10 @@ def hash_molecule(
         raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
 
     charge = int(charge)
-    decimals = _precision_to_decimals(precision)
+    # ``precision`` is validated (power of ten <= 1 Å, no bool) and
+    # canonicalized in one place; ``effective_precision`` is what gets hashed
+    # and reported, so the descriptor grid can never drift from the value.
+    decimals, effective_precision = _precision_to_decimals(precision)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
 
     signature = None
@@ -544,7 +582,7 @@ def hash_molecule(
         qmat = _scaled_distances(coords, decimals)
         signature = _canonical_signature(atomic_nums, qmat)
     tag, z_ordered, body = signature
-    descriptor = _format_descriptor(DESCRIPTOR_VERSION, precision, z_ordered, tag, body)
+    descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
 
     formula = _hill_formula(atomic_nums)
@@ -555,7 +593,7 @@ def hash_molecule(
         formula=formula,
         geometry_hash=digest,
         version=DESCRIPTOR_VERSION,
-        precision=precision,
+        precision=effective_precision,
         charge=charge,
         multiplicity=used_mult,
         descriptor=descriptor,

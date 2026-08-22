@@ -31,7 +31,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1e-4,
         metavar="Å",
-        help="Distance precision in angstroms (default: 1e-4)",
+        help="Distance precision in angstroms; must be a power of ten <= 1 (default: 1e-4)",
     )
     parser.add_argument(
         "-c",

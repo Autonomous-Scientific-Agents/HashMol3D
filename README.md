@@ -44,7 +44,8 @@ your corpus:
 
 ```python
 from hashmol3d import hash_length_for
-hash_length_for(10**9)            # -> 23 hex chars for 1e9 items at p=1e-9
+
+hash_length_for(10**9)  # -> 23 hex chars for 1e9 items at p=1e-9
 hash_molecule(z, coords, length=hash_length_for(10**9))
 ```
 
@@ -157,27 +158,33 @@ import numpy as np
 from hashmol3d import hash_molecule
 
 atomic_nums = np.array([8, 1, 1])
-coords = np.array([
-    [ 0.0000, 0.0000, 0.0],
-    [ 0.7572, 0.5860, 0.0],
-    [-0.7572, 0.5860, 0.0],
-])
+coords = np.array(
+    [
+        [0.0000, 0.0000, 0.0],
+        [0.7572, 0.5860, 0.0],
+        [-0.7572, 0.5860, 0.0],
+    ]
+)
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)        # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
-print(res.formula)         # H2O
-print(res.geometry_hash)   # a4ba9da41d888939961ef77dae43b297
+print(res.hash_str)  # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+print(res.formula)  # H2O
+print(res.geometry_hash)  # a4ba9da41d888939961ef77dae43b297
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
 All optional arguments are keyword-only: `precision`, `charge`,
 `multiplicity`, `length`.
 
+`precision` must be a power of ten no greater than 1 Å (`1.0`, `1e-1`,
+`1e-2`, ...). Restricting the grid to powers of ten keeps its descriptor
+representation unambiguous and portable.
+
 Or read straight from a file:
 
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)        # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
 # H2Oq1m2-a4ba9da41d888939961ef77dae43b297
 ```
@@ -186,4 +193,3 @@ See [`docs/`](docs/) for the full
 [specification](docs/specification.md),
 [API reference](docs/api_reference.md), and
 [CLI guide](docs/cli_usage.md).
-
