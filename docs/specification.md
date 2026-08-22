@@ -91,8 +91,8 @@ For every atom pair `(i, j)` compute the Euclidean distance
 `d_ij = ||r_i - r_j||` and quantize it to an integer number of grid
 units:
 
-    decimals = -log10(precision)                # a non-negative integer
-    q_ij     = rint(d_ij * 10^decimals)        # round-half-to-even
+    decimals = round(-log10(precision))         # non-negative integer (precision is a power of ten)
+    q_ij     = rint(d_ij * 10^decimals)         # round-half-to-even
 
 `q` is a symmetric non-negative integer matrix with zero diagonal. All
 subsequent steps operate on exact integers. (If any scaled distance

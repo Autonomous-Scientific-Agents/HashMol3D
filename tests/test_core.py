@@ -18,11 +18,12 @@ from hashmol3d.core import (
 
 class TestPrecisionToDecimals:
     def test_standard(self):
-        assert _precision_to_decimals(1e-4) == 4
-        assert _precision_to_decimals(1e-3) == 3
-        assert _precision_to_decimals(1e-2) == 2
-        assert _precision_to_decimals(1e-1) == 1
-        assert _precision_to_decimals(1.0) == 0
+        # Returns (decimals, effective_precision) -- the canonical grid.
+        assert _precision_to_decimals(1e-4) == (4, 1e-4)
+        assert _precision_to_decimals(1e-3) == (3, 1e-3)
+        assert _precision_to_decimals(1e-2) == (2, 1e-2)
+        assert _precision_to_decimals(1e-1) == (1, 1e-1)
+        assert _precision_to_decimals(1.0) == (0, 1.0)
 
     def test_invalid(self):
         with pytest.raises(ValueError):
@@ -36,6 +37,29 @@ class TestPrecisionToDecimals:
     def test_rejects_ambiguous_grid_precision(self, precision):
         with pytest.raises(ValueError, match="power of ten"):
             _precision_to_decimals(precision)
+
+    def test_rejects_bool(self):
+        # bool is an int subclass; without a guard True would read as 1.0 Å.
+        with pytest.raises(ValueError, match="bool"):
+            _precision_to_decimals(True)
+        with pytest.raises(ValueError):
+            hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.1]], precision=True)
+
+    def test_rejects_precision_too_fine(self):
+        # A clean ValueError, not a raw OverflowError from 10**decimals.
+        with pytest.raises(ValueError, match="too fine"):
+            _precision_to_decimals(1e-301)
+        with pytest.raises(ValueError):
+            hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.1]], precision=1e-309)
+
+    def test_dtype_independent(self):
+        # numpy floats validate the same as plain floats (no value-based
+        # casting shortcut). float32 round-off (~6e-8) is within tolerance,
+        # so a valid grid is accepted and canonicalized regardless of dtype.
+        assert _precision_to_decimals(np.float64(1e-3)) == (3, 1e-3)
+        decimals, effective = _precision_to_decimals(np.float32(1e-4))
+        assert decimals == 4
+        assert effective == 1e-4
 
     def test_normalizes_floating_point_roundoff(self):
         precision = np.nextafter(1e-4, np.inf)

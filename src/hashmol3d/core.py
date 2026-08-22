@@ -85,6 +85,11 @@ _NODE_BUDGET = 10_000
 # Scaled distances must stay below 2^62 so they fit int64 with headroom.
 _MAX_SCALED = float(2**62)
 
+# Finer precisions overflow ``10.0 ** decimals`` (a double caps out near
+# 10^308) before the geometry-dependent ``_MAX_SCALED`` guard can fire, so
+# reject them up front with a clear message instead of a raw OverflowError.
+_MAX_DECIMALS = 300
+
 # Minimum relative gap between principal-moment eigenvalues for the O(N)
 # frame method (normative for the "F" descriptor section). Below this the
 # principal axes are degenerate or nearly so (symmetric tops, linear and
@@ -138,28 +143,45 @@ class HashMol3DResult:
         return self.hash_str
 
 
-def _precision_to_decimals(precision: float) -> int:
-    """Number of decimal places implied by a distance precision in Å.
+def _precision_to_decimals(precision: float) -> tuple[int, float]:
+    """Grid resolution implied by a distance precision in Å.
 
     ``precision`` must be a power of ten no greater than 1 Å, so the
     descriptor's precision field uniquely identifies the integer grid used
-    for quantization. For example, ``1e-4`` -> 4 decimals.
+    for quantization. Returns ``(decimals, effective_precision)`` where
+    ``effective_precision == 10.0 ** (-decimals)`` is the canonical grid
+    spacing serialized into the descriptor -- the single source of truth for
+    both the hashed ``P:`` field and :attr:`HashMol3DResult.precision`. For
+    example, ``1e-4`` -> ``(4, 1e-4)``.
+
+    ``bool`` is rejected (it is an ``int`` subclass that would otherwise be
+    read as ``precision=1.0``), and the scalar math uses the ``math`` module
+    so validation is dtype-independent -- a ``numpy`` float is coerced to a
+    plain ``float`` first rather than taking a value-based-casting shortcut.
+    The power-of-ten test tolerates ``1e-6`` relative error so any float
+    representation of a valid grid (float32 round-off included) is accepted
+    and canonicalized; genuine non-powers-of-ten are >=3x away and rejected.
     """
-    if not np.isfinite(precision) or precision <= 0:
+    if isinstance(precision, bool):
+        raise ValueError(f"precision must be a real number, not bool; got {precision!r}")
+    precision = float(precision)
+    if not math.isfinite(precision) or precision <= 0:
         raise ValueError(f"precision must be a positive finite number, got {precision!r}")
-    decimals = int(round(-np.log10(precision)))
-    if decimals < 0:
+    # ``decimals < 0`` catches powers of ten greater than 1 Å (e.g. 10.0,
+    # which is close to 10**-(-1)); ``isclose`` catches everything that is
+    # not a power of ten at all. Both share one message.
+    decimals = round(-math.log10(precision))
+    if decimals < 0 or not math.isclose(precision, 10.0 ** (-decimals), rel_tol=1e-6, abs_tol=0.0):
         raise ValueError(
             "precision must be a power of ten no greater than 1.0 Å "
             f"(1.0, 1e-1, 1e-2, ...); got {precision!r}"
         )
-    effective_precision = 10.0 ** (-decimals)
-    if not np.isclose(precision, effective_precision, rtol=1e-12, atol=0.0):
+    if decimals > _MAX_DECIMALS:
         raise ValueError(
-            "precision must be a power of ten no greater than 1.0 Å "
-            f"(1.0, 1e-1, 1e-2, ...); got {precision!r}"
+            f"precision too fine: at most {_MAX_DECIMALS} decimal places are "
+            f"supported, got {precision!r}"
         )
-    return decimals
+    return decimals, 10.0 ** (-decimals)
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
@@ -533,8 +555,10 @@ def hash_molecule(
         raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
 
     charge = int(charge)
-    decimals = _precision_to_decimals(precision)
-    effective_precision = 10.0 ** (-decimals)
+    # ``precision`` is validated (power of ten <= 1 Å, no bool) and
+    # canonicalized in one place; ``effective_precision`` is what gets hashed
+    # and reported, so the descriptor grid can never drift from the value.
+    decimals, effective_precision = _precision_to_decimals(precision)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
 
     signature = None
