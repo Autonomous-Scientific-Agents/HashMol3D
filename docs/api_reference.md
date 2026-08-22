@@ -51,7 +51,8 @@ bits. The result is clamped to `[1, 64]`.
 
 ```python
 from hashmol3d import hash_length_for, hash_molecule
-L = hash_length_for(10**9)                 # 23 hex chars (1e9 items, p=1e-9)
+
+L = hash_length_for(10**9)  # 23 hex chars (1e9 items, p=1e-9)
 res = hash_molecule(z, coords, length=L)
 ```
 
@@ -83,8 +84,8 @@ arguments to `hash_molecule`.
 from hashmol3d import hash_xyz
 
 result = hash_xyz("water.xyz", precision=1e-3, charge=0)
-print(result.hash_str)         # H2Oq0m1-...
-print(result.geometry_hash)    # ...
+print(result.hash_str)  # H2Oq0m1-...
+print(result.geometry_hash)  # ...
 ```
 
 ## `read_xyz(path)`

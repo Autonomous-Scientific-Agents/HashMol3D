@@ -282,11 +282,11 @@ result = hash_molecule(
     coords,
     precision=1e-4,
     charge=0,
-    multiplicity=None,   # inferred if None
-    length=None,         # 32 hex (128-bit) if None
+    multiplicity=None,  # inferred if None
+    length=None,  # 32 hex (128-bit) if None
 )
-print(result.hash_str)        # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
-print(result.geometry_hash)   # a4ba9da41d888939961ef77dae43b297
+print(result.hash_str)  # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+print(result.geometry_hash)  # a4ba9da41d888939961ef77dae43b297
 ```
 
 A file-based convenience wrapper is also provided:

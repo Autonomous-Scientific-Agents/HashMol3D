@@ -554,9 +554,7 @@ def hash_molecule(
         qmat = _scaled_distances(coords, decimals)
         signature = _canonical_signature(atomic_nums, qmat)
     tag, z_ordered, body = signature
-    descriptor = _format_descriptor(
-        DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body
-    )
+    descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
 
     formula = _hill_formula(atomic_nums)
