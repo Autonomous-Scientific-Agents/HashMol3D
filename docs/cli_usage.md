@@ -22,7 +22,7 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 
 | Flag | Long form | Default | Meaning |
 | --- | --- | --- | --- |
-| `-p` | `--precision`    | `1e-4` | Distance precision in angstroms |
+| `-p` | `--precision`    | `1e-4` | Distance precision in angstroms; power of ten ≤ 1 |
 | `-c` | `--charge`       | `0`    | Total formal charge |
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
 | `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |

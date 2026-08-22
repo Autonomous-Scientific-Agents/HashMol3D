@@ -172,6 +172,10 @@ print(res.charge, res.multiplicity)  # 0 1
 All optional arguments are keyword-only: `precision`, `charge`,
 `multiplicity`, `length`.
 
+`precision` must be a power of ten no greater than 1 Å (`1.0`, `1e-1`,
+`1e-2`, ...). Restricting the grid to powers of ten keeps its descriptor
+representation unambiguous and portable.
+
 Or read straight from a file:
 
 ```python
@@ -186,4 +190,3 @@ See [`docs/`](docs/) for the full
 [specification](docs/specification.md),
 [API reference](docs/api_reference.md), and
 [CLI guide](docs/cli_usage.md).
-

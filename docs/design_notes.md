@@ -148,8 +148,9 @@ dependent volume signs in greedy quartet pickers.
 
 ## Precision and rounding
 
-Distances are quantized to `max(0, round(-log10(precision)))` decimal
-places before anything else happens. This gives stable hashes under
+The precision must be a power of ten no greater than 1 Å. Distances are
+quantized to `-log10(precision)` decimal places before anything else
+happens. This gives stable hashes under
 noise smaller than `precision / 2`. Two conformers that differ by less
 than `precision` may collide; two that differ by more will usually not.
 

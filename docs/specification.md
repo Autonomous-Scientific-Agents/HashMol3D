@@ -69,7 +69,8 @@ The reference implementation takes:
 
 1. `atomic_nums`: integer array of atomic numbers, shape `(N,)`
 2. `coords`: float array of Cartesian coordinates in Å, shape `(N, 3)`
-3. `precision`: distance precision in Å (default `1e-4`)
+3. `precision`: distance precision in Å (default `1e-4`); it must be a
+   power of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
 
@@ -90,7 +91,7 @@ For every atom pair `(i, j)` compute the Euclidean distance
 `d_ij = ||r_i - r_j||` and quantize it to an integer number of grid
 units:
 
-    decimals = max(0, round(-log10(precision)))
+    decimals = -log10(precision)                # a non-negative integer
     q_ij     = rint(d_ij * 10^decimals)        # round-half-to-even
 
 `q` is a symmetric non-negative integer matrix with zero diagonal. All

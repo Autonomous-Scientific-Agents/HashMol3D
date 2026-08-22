@@ -32,6 +32,17 @@ class TestPrecisionToDecimals:
         with pytest.raises(ValueError):
             _precision_to_decimals(float("nan"))
 
+    @pytest.mark.parametrize("precision", [10.0, 0.05, 0.02, 3.16e-4, 3.17e-4])
+    def test_rejects_ambiguous_grid_precision(self, precision):
+        with pytest.raises(ValueError, match="power of ten"):
+            _precision_to_decimals(precision)
+
+    def test_normalizes_floating_point_roundoff(self):
+        precision = np.nextafter(1e-4, np.inf)
+        result = hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.1]], precision=precision)
+        assert result.precision == 1e-4
+        assert "|P:1.0e-04|" in result.descriptor
+
 
 class TestInferMultiplicity:
     def test_user_value_wins(self):

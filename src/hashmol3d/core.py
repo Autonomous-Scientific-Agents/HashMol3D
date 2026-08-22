@@ -141,15 +141,25 @@ class HashMol3DResult:
 def _precision_to_decimals(precision: float) -> int:
     """Number of decimal places implied by a distance precision in Å.
 
-    The precision is snapped to the nearest power of ten:
-    ``decimals = round(-log10(precision))``. So ``1e-4`` -> 4 decimals, but
-    an intermediate value such as ``0.05`` also maps to the nearest decade
-    (here 1 decimal, i.e. a 0.1 Å grid), not to a 0.05 Å grid. Pass a power
-    of ten to make the rounding grid unambiguous.
+    ``precision`` must be a power of ten no greater than 1 Å, so the
+    descriptor's precision field uniquely identifies the integer grid used
+    for quantization. For example, ``1e-4`` -> 4 decimals.
     """
     if not np.isfinite(precision) or precision <= 0:
         raise ValueError(f"precision must be a positive finite number, got {precision!r}")
-    return int(max(0, round(-np.log10(precision))))
+    decimals = int(round(-np.log10(precision)))
+    if decimals < 0:
+        raise ValueError(
+            "precision must be a power of ten no greater than 1.0 Å "
+            f"(1.0, 1e-1, 1e-2, ...); got {precision!r}"
+        )
+    effective_precision = 10.0 ** (-decimals)
+    if not np.isclose(precision, effective_precision, rtol=1e-12, atol=0.0):
+        raise ValueError(
+            "precision must be a power of ten no greater than 1.0 Å "
+            f"(1.0, 1e-1, 1e-2, ...); got {precision!r}"
+        )
+    return decimals
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
@@ -461,10 +471,9 @@ def hash_molecule(
         atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
         coords: float array-like of Cartesian coordinates in Å, shape
             ``(N, 3)``.
-        precision: distance precision in Å (default ``1e-4``). Snapped to
-            the nearest power of ten before rounding distances, so passing a
-            power of ten (``1e-3``, ``1e-4``, ...) is recommended; see
-            :func:`_precision_to_decimals`.
+        precision: distance precision in Å (default ``1e-4``). Must be a
+            power of ten no greater than 1 Å (``1.0``, ``1e-1``,
+            ``1e-2``, ...); see :func:`_precision_to_decimals`.
         charge: total formal charge (default ``0``).
         multiplicity: spin multiplicity (``1`` = singlet, ``2`` = doublet,
             ...). If ``None``, inferred as singlet/doublet from the
@@ -525,6 +534,7 @@ def hash_molecule(
 
     charge = int(charge)
     decimals = _precision_to_decimals(precision)
+    effective_precision = 10.0 ** (-decimals)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
 
     signature = None
@@ -544,7 +554,9 @@ def hash_molecule(
         qmat = _scaled_distances(coords, decimals)
         signature = _canonical_signature(atomic_nums, qmat)
     tag, z_ordered, body = signature
-    descriptor = _format_descriptor(DESCRIPTOR_VERSION, precision, z_ordered, tag, body)
+    descriptor = _format_descriptor(
+        DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body
+    )
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
 
     formula = _hill_formula(atomic_nums)
@@ -555,7 +567,7 @@ def hash_molecule(
         formula=formula,
         geometry_hash=digest,
         version=DESCRIPTOR_VERSION,
-        precision=precision,
+        precision=effective_precision,
         charge=charge,
         multiplicity=used_mult,
         descriptor=descriptor,
