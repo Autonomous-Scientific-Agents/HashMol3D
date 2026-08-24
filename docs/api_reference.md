@@ -6,7 +6,7 @@ A HashMol3D identifier has the form:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-a4ba9da41d888939961ef77dae43b297`.
+For example: `H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf`.
 
 - **Hill formula**: carbon first if present, then hydrogen, then the
   remaining elements alphabetically. A count of 1 is omitted
@@ -15,13 +15,14 @@ For example: `H2Oq0m1-a4ba9da41d888939961ef77dae43b297`.
   sign (`q0`, `q1`); only negative charges carry a leading `-`
   (`q-1`, `q-2`).
 - **Geometry hash**: hex truncation of SHA-256 over the geometry-only
-  descriptor (atomic numbers + pairwise distances + precision +
+  descriptor (atomic numbers + canonical-frame coordinates or canonical
+  pairwise distances + precision +
   descriptor version). Charge and multiplicity are *not* hashed — they
   live in the readable prefix — so molecules that differ only in charge
   or multiplicity share the same `geometry_hash` and you can find them
   by suffix match.
 
-## `hash_molecule(atomic_nums, coords, *, precision=1e-4, charge=0, multiplicity=None, length=None)`
+## `hash_molecule(atomic_nums, coords, *, precision=1e-4, charge=0, multiplicity=None, length=None, method="frame")`
 
 Compute the HashMol3D identifier for a 3D molecular geometry.
 
@@ -31,7 +32,7 @@ All optional arguments are **keyword-only**.
 
 - `atomic_nums`: integer array-like of atomic numbers, shape `(N,)`
 - `coords`: float array-like of Cartesian coordinates in Å, shape `(N, 3)`
-- `precision`: distance precision in Å (default `1e-4`); must be a power
+- `precision`: geometry-grid precision in Å (default `1e-4`); must be a power
   of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
 - `charge`: total formal charge (default `0`)
 - `multiplicity`: spin multiplicity. If `None`, inferred as singlet/doublet
@@ -41,6 +42,11 @@ All optional arguments are **keyword-only**.
   Collision resistance depends on how many distinct geometries share a
   namespace, not on molecule size; use `hash_length_for()` to size the hash
   to a target corpus.
+- `method`: `"frame"` (default) normally uses O(N log N) time and O(N)
+  memory. Degenerate eigenspaces use intrinsic point/line coordinates or
+  canonical atom anchors. `"canonical"` selects the O(N²) labelled
+  distance-matrix descriptor. A frame that is ill-conditioned or exceeds
+  its 10,000-candidate budget warns and uses the canonical path.
 
 ### `hash_length_for(n_items, target_prob=1e-9) -> int`
 
@@ -63,7 +69,7 @@ res = hash_molecule(z, coords, length=L)
 - `geometry_hash`: hex-only geometry portion (useful for grouping
   molecules that differ only in charge/multiplicity)
 - `version`: descriptor version string (constant for a given release)
-- `precision`: distance precision used (Å)
+- `precision`: geometry-grid precision used (Å)
 - `charge`: charge used
 - `multiplicity`: multiplicity used
 - `descriptor`: raw descriptor string that was hashed (for debugging)

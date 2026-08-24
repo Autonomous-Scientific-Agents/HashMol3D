@@ -1,9 +1,8 @@
-"""Tests for the O(N) principal-axes ("frame") hashing method.
+"""Tests for the canonical frame hashing method.
 
 The frame method hashes coordinates in the eigenbasis of the Z-weighted
-gyration tensor. It is reliable only when the eigenvalues are well
-separated; degenerate or nearly degenerate cases (symmetric tops, linear
-molecules) must emit a UserWarning and fall back to the canonical method.
+gyration tensor when its eigenvalues are separated. Degenerate eigenspaces
+are resolved by intrinsic point/line descriptors or canonical atom anchors.
 """
 
 import warnings
@@ -11,6 +10,7 @@ import warnings
 import numpy as np
 import pytest
 
+import hashmol3d.core as core
 from hashmol3d import hash_molecule
 
 
@@ -37,6 +37,13 @@ def _chain(n, seed):
 
 
 class TestFrameMethod:
+    def test_frame_is_default(self, chiral_chfclbr):
+        z, coords = chiral_chfclbr
+        assert (
+            hash_molecule(z, coords).descriptor
+            == hash_molecule(z, coords, method="frame").descriptor
+        )
+
     def test_uses_frame_tag_for_asymmetric(self, chiral_chfclbr):
         z, coords = chiral_chfclbr
         res = hash_molecule(z, coords, method="frame")
@@ -87,39 +94,110 @@ class TestFrameMethod:
             hash_molecule(z, coords, method="inertia")
 
 
-class TestFrameFallback:
-    def _assert_warns_and_matches_canonical(self, z, coords):
-        with pytest.warns(UserWarning, match="unreliable"):
+class TestDegenerateFrames:
+    def _assert_frame_invariant(self, z, coords, seed=17):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
             res = hash_molecule(z, coords, method="frame")
-        assert "|F:" not in res.descriptor
-        assert res.geometry_hash == hash_molecule(z, coords).geometry_hash
+        assert "|F:" in res.descriptor
+        rng = np.random.default_rng(seed)
+        for t in range(30):
+            zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
+            assert hash_molecule(zz, cc, method="frame").geometry_hash == res.geometry_hash
+        return res
 
     def test_benzene_symmetric_top(self, benzene):
-        self._assert_warns_and_matches_canonical(*benzene)
+        self._assert_frame_invariant(*benzene)
+
+    def test_prolate_symmetric_top_anchors_transverse_plane(self):
+        coords = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, 3.0],
+                [0.0, 0.0, -3.0],
+            ]
+        )
+        self._assert_frame_invariant(np.full(6, 6), coords)
 
     def test_linear_co2(self):
         z = np.array([8, 6, 8])
         coords = np.array([[0, 0, -1.16], [0, 0, 0], [0, 0, 1.16]], float)
-        self._assert_warns_and_matches_canonical(z, coords)
+        res = self._assert_frame_invariant(z, coords)
+        rows = res.descriptor.split("|F:", 1)[1].split(";")
+        assert all(row.split(":", 1)[1].split(",")[:2] == ["0", "0"] for row in rows)
+
+    def test_diatomic_uses_intrinsic_line(self):
+        z = np.array([1, 35])
+        coords = np.array([[0.0, 0.0, -0.7], [0.0, 0.0, 0.7]])
+        self._assert_frame_invariant(z, coords)
 
     def test_methane_spherical_top(self):
         a = 1.09 / np.sqrt(3)
         coords = np.array([[0, 0, 0], [a, a, a], [a, -a, -a], [-a, a, -a], [-a, -a, a]], float)
-        self._assert_warns_and_matches_canonical(np.array([6, 1, 1, 1, 1]), coords)
+        self._assert_frame_invariant(np.array([6, 1, 1, 1, 1]), coords)
 
-    def test_near_degenerate_rejected(self, benzene):
-        # A 2e-4 A symmetry break is far below the gap threshold; the frame
-        # must still be refused (this is exactly the numerically explosive
-        # regime the diagnostic exists for).
+    def test_asymmetric_isotropic_tensor_uses_canonical_pair(self):
+        rng = np.random.default_rng(29)
+        coords = rng.normal(size=(7, 3))
+        coords -= coords.mean(axis=0)
+        lam, vec = np.linalg.eigh(coords.T @ coords)
+        coords = coords @ vec @ np.diag(lam**-0.5) @ vec.T
+        self._assert_frame_invariant(np.full(7, 6), coords)
+
+    @pytest.mark.parametrize("geometry", ["benzene", "methane"])
+    def test_anchor_branches_are_stable_to_small_noise(self, geometry, benzene):
+        if geometry == "benzene":
+            z, coords = benzene
+        else:
+            a = 1.09 / np.sqrt(3)
+            z = np.array([6, 1, 1, 1, 1])
+            coords = np.array(
+                [[0, 0, 0], [a, a, a], [a, -a, -a], [-a, a, -a], [-a, -a, a]],
+                float,
+            )
+        base = hash_molecule(z, coords, method="frame").geometry_hash
+        rng = np.random.default_rng(23)
+        for _ in range(20):
+            noisy = coords + rng.uniform(-1e-7, 1e-7, coords.shape)
+            assert hash_molecule(z, noisy, method="frame").geometry_hash == base
+
+    def test_near_degenerate_uses_anchor(self, benzene):
         z, coords = benzene
         coords = coords.copy()
         coords[0, :2] *= 1 + 2e-4 / 1.4
-        self._assert_warns_and_matches_canonical(z, coords)
+        self._assert_frame_invariant(z, coords)
 
-    def test_single_atom_falls_back(self):
-        with pytest.warns(UserWarning):
-            res = hash_molecule(np.array([6]), np.zeros((1, 3)), method="frame")
-        assert res.geometry_hash == hash_molecule(np.array([6]), np.zeros((1, 3))).geometry_hash
+    def test_single_atom_uses_intrinsic_point(self):
+        z = np.array([6])
+        coords = np.zeros((1, 3))
+        res = self._assert_frame_invariant(z, coords)
+        assert res.descriptor.endswith("|F:6:0,0,0")
+
+
+class TestFrameFallback:
+    def test_ill_conditioned_anchor_falls_back(self):
+        z = np.array([6, 6])
+        coords = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+        with pytest.warns(UserWarning, match="stable canonical frame"):
+            res = hash_molecule(z, coords, precision=1.0, method="frame")
+        canonical = hash_molecule(z, coords, precision=1.0, method="canonical")
+        assert res.descriptor == canonical.descriptor
+
+    def test_candidate_budget_fallback_is_permutation_invariant(self, benzene, monkeypatch):
+        monkeypatch.setattr(core, "_FRAME_CANDIDATE_BUDGET", 3)
+        z, coords = benzene
+        with pytest.warns(UserWarning, match="3-candidate budget"):
+            res = hash_molecule(z, coords, method="frame")
+        assert "|C:" in res.descriptor
+        rng = np.random.default_rng(19)
+        for t in range(10):
+            zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
+            with pytest.warns(UserWarning):
+                other = hash_molecule(zz, cc, method="frame")
+            assert other.geometry_hash == res.geometry_hash
 
     def test_canonical_method_never_warns(self, benzene):
         z, coords = benzene

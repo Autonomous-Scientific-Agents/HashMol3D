@@ -34,6 +34,14 @@ def test_cli_length_option(tmp_path, capsys):
     assert len(out.rsplit("-", 1)[-1]) == 16
 
 
+def test_cli_method_option(tmp_path, capsys):
+    path = _write_water(tmp_path)
+    rc = cli([path, "--method", "canonical", "-v"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "|C:" in out
+
+
 def test_cli_verbose(tmp_path, capsys):
     path = _write_water(tmp_path)
     rc = cli([path, "-v"])

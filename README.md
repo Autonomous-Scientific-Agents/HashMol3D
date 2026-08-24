@@ -7,31 +7,30 @@ It produces a **readable** identifier of the form
 
     <Hill formula><state tag>-<geometry hash>
 
-e.g. `H2Oq0m1-a4ba9da41d888939961ef77dae43b297` for neutral singlet water. The trailing
+e.g. `H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf` for neutral singlet water. The trailing
 geometry hash is **rotation-, translation-, permutation-, and
 parity-invariant** (matching the invariances of the eigenvalues of the
 non-relativistic molecular Hamiltonian), and depends on:
 
 - atomic numbers
-- pairwise distances rounded to a user-specified precision
+- coordinates quantized at a user-specified precision in a canonical frame
 - a descriptor version tag
 
-The hash is built from the element-labeled distance matrix written in a
-**canonical atom order** (Weisfeiler-Leman refinement plus an
-individualization-refinement search), which makes it a **complete**
-congruence invariant: two geometries share a geometry hash only if they
-are actually congruent at the chosen precision. In particular,
-*homometric* structures — distinct geometries that share the same
-distance multiset and collided in descriptor versions ≤ 4 — receive
-distinct hashes.
+The default method projects the original coordinates into a deterministic
+canonical frame, sorts the element-labelled coordinate rows, and hashes that
+complete representation. Ordinary geometries use the principal axes of the
+Z-weighted gyration tensor. Point-like, linear, symmetric-top, and spherical-
+top geometries use intrinsic coordinates or canonical atom anchors, so exact
+symmetry does not require a random perturbation. The older canonical labelled
+distance-matrix method remains available as `method="canonical"`.
 
 Charge and spin multiplicity live in the readable prefix, **not** in
 the hash, so two states of the same geometry share the same hex tail
 and can be grouped by suffix matching:
 
 ```text
-H2Oq0m1-a4ba9da41d888939961ef77dae43b297     # neutral singlet water
-H2Oq1m2-a4ba9da41d888939961ef77dae43b297     # water cation, same geometry → same hex tail
+H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf     # neutral singlet water
+H2Oq1m2-9a3a21fa2c3b6f0d4cb8acb76a18eccf     # water cation, same geometry → same hex tail
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -62,27 +61,31 @@ It deliberately does **not** distinguish enantiomers (which share their
 Hamiltonian eigenvalues). The reference implementation depends only on
 NumPy.
 
-## Fast O(N) mode for large systems
+## Canonical frame method
 
-For proteins and other large systems where the O(N²) distance matrix is
-prohibitive, `method="frame"` hashes coordinates in the principal-axes
-frame of the Z-weighted gyration tensor — O(N log N) time, O(N) memory
-(a 100,000-atom system hashes in ~0.3 s where the default method would
-need an 80 GB matrix):
+The default `method="frame"` normally takes O(N log N) time and O(N) memory
+(a 100,000-atom asymmetric system hashes in ~0.3 s where a full distance
+matrix would need 80 GB):
 
 ```python
-hash_molecule(z, coords, method="frame")
+hash_molecule(z, coords)  # method="frame" is the default
 ```
 
-The frame is reliable only when the principal moments are well separated.
-If they are degenerate or nearly so (symmetric tops, linear molecules —
-detected by a normative relative eigenvalue-gap threshold of 0.05), a
-`UserWarning` is emitted and the call falls back to the canonical method;
-the path taken is visible in `result.descriptor` (`F:` vs `C:`/`W:`).
-Hashes from different methods are **not comparable** — pick one method
-per corpus. Typical proteins and other asymmetric structures pass the
-check; ideal symmetric molecules do not (and are exactly the cases the
-default method handles).
+When principal moments are degenerate, the method preserves any isolated
+axis and canonically anchors only the ambiguous subspace. Linear and point-
+like systems are represented in their intrinsic dimension. Canonically tied
+anchors are all evaluated up to a 10,000-candidate budget. Ill-conditioned
+or over-budget cases emit `UserWarning` and use the complete distance method.
+The path is visible in `result.descriptor` (`F:` versus `C:`/`W:`).
+
+For an explicitly distance-based descriptor, use:
+
+```python
+hash_molecule(z, coords, method="canonical")
+```
+
+Hashes from different descriptor paths are not comparable; use the same
+method and descriptor version throughout a corpus.
 
 HashMol3D IDs are **stable across machines**, **reproducible**, and ideal for:
 - workflow deduplication  
@@ -131,11 +134,11 @@ uv pip install -e .  # Or: pip install -e .
 
 ```bash
 $ hashmol3d water.xyz
-H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf
 
 # Cation with explicit multiplicity — only the prefix changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-H2Oq1m2-a4ba9da41d888939961ef77dae43b297
+H2Oq1m2-9a3a21fa2c3b6f0d4cb8acb76a18eccf
 
 # Pin a fixed hash length and a coarser precision.
 $ hashmol3d -p 1e-3 -l 32 benzene.xyz
@@ -143,12 +146,15 @@ $ hashmol3d -p 1e-3 -l 32 benzene.xyz
 # Verbose: also print formula, geometry hash, descriptor, and metadata.
 $ hashmol3d -v water.xyz
 
+# Request the labelled distance-matrix method explicitly.
+$ hashmol3d --method canonical water.xyz
+
 # Show the package version.
 $ hashmol3d --version
 ```
 
-Short flags: `-p/--precision`, `-c/--charge`, `-m/--multiplicity`,
-`-l/--length`, `-v/--verbose`. Errors on missing or malformed input go
+Options include `-p/--precision`, `-c/--charge`, `-m/--multiplicity`,
+`-l/--length`, `--method`, and `-v/--verbose`. Errors on missing or malformed input go
 to stderr with exit code 1 (no Python traceback).
 
 ## Usage (Python)
@@ -166,14 +172,14 @@ coords = np.array(
     ]
 )
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)  # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+print(res.hash_str)  # H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf
 print(res.formula)  # H2O
-print(res.geometry_hash)  # a4ba9da41d888939961ef77dae43b297
+print(res.geometry_hash)  # 9a3a21fa2c3b6f0d4cb8acb76a18eccf
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
 All optional arguments are keyword-only: `precision`, `charge`,
-`multiplicity`, `length`.
+`multiplicity`, `length`, and `method`.
 
 `precision` must be a power of ten no greater than 1 Å (`1.0`, `1e-1`,
 `1e-2`, ...). Restricting the grid to powers of ten keeps its descriptor
@@ -184,9 +190,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
+print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# H2Oq1m2-a4ba9da41d888939961ef77dae43b297
+# H2Oq1m2-9a3a21fa2c3b6f0d4cb8acb76a18eccf
 ```
 
 See [`docs/`](docs/) for the full

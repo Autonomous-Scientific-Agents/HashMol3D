@@ -15,17 +15,18 @@ behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
 The identifier has the form `<formula><state>-<hash>`, e.g.
-`H2Oq0m1-a4ba9da41d888939961ef77dae43b297`. See the
+`H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
 
 | Flag | Long form | Default | Meaning |
 | --- | --- | --- | --- |
-| `-p` | `--precision`    | `1e-4` | Distance precision in angstroms; power of ten ≤ 1 |
+| `-p` | `--precision`    | `1e-4` | Geometry-grid precision in angstroms; power of ten ≤ 1 |
 | `-c` | `--charge`       | `0`    | Total formal charge |
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
 | `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |
+|      | `--method`       | frame  | Descriptor method: `frame` or `canonical` |
 | `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
 
 ## Examples
@@ -43,6 +44,12 @@ Use a coarser precision and a longer fixed identifier:
 hashmol3d -p 1e-3 -l 32 ethanol.xyz
 ```
 
+Request the O(N²) canonical labelled-distance descriptor explicitly:
+
+```bash
+hashmol3d --method canonical ethanol.xyz
+```
+
 Hash a cation with explicit multiplicity, verbosely:
 
 ```bash
@@ -53,7 +60,7 @@ Find all stored states of the same geometry by suffix-matching the
 `geometry_hash` portion (after the `-`):
 
 ```bash
-grep -E -- "-a4ba9da41d888939961ef77dae43b297" identifiers.txt
+grep -E -- "-9a3a21fa2c3b6f0d4cb8acb76a18eccf" identifiers.txt
 ```
 
 ## Exit codes

@@ -15,20 +15,20 @@ leave the non-relativistic molecular Hamiltonian's eigenvalues unchanged:
   * permutation (relabeling) of atom indices
   * spatial inversion / reflection (parity)
 
-The hash is built from the full element-labeled distance matrix written
-in a canonical atom order (found by Weisfeiler-Leman color refinement
-plus an individualization-refinement search). Two geometries receive the
-same descriptor if and only if their rounded distance matrices are equal
-up to an atom relabeling, i.e. if and only if the geometries are
-congruent at the chosen precision. Unlike a plain multiset of pairwise
-distances, this is a *complete* invariant: homometric pairs (distinct
-geometries sharing a distance multiset) do not collide; see
-``docs/design_notes.md``.
+By default the hash is built from element-labelled coordinates in a
+deterministic canonical frame. Principal axes handle ordinary geometries;
+intrinsic point/line representations and canonical atom anchors resolve
+degenerate eigenspaces without random perturbations. The full canonical
+labelled distance matrix remains available with ``method="canonical"``.
+The normal ``F`` and ``C`` paths are complete representations at their
+quantization grids; unlike a plain multiset of pairwise distances, homometric
+pairs do not collide. The explicitly tagged ``W`` search-budget fallback is
+weaker, as documented in ``docs/specification.md``.
 
-It depends on atomic numbers, pairwise distances (rounded to a user
-specified precision), and the descriptor version. Total charge and
-spin multiplicity are encoded in the readable prefix, not inside the
-hash, so changing charge or multiplicity only changes the prefix.
+The descriptor depends on atomic numbers, geometry quantized at a user
+specified precision, and the descriptor version. Total charge and spin
+multiplicity are encoded in the readable prefix, not inside the hash, so
+changing charge or multiplicity only changes the prefix.
 
 The implementation has no RDKit dependency; it uses only NumPy and the
 Python standard library.
@@ -59,7 +59,7 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "5-CANON-SHA256"
+DESCRIPTOR_VERSION = "6-FRAME-SHA256"
 
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
@@ -90,14 +90,24 @@ _MAX_SCALED = float(2**62)
 # reject them up front with a clear message instead of a raw OverflowError.
 _MAX_DECIMALS = 300
 
-# Minimum relative gap between principal-moment eigenvalues for the O(N)
-# frame method (normative for the "F" descriptor section). Below this the
-# principal axes are degenerate or nearly so (symmetric tops, linear and
-# near-linear molecules), the frame reorients under tiny perturbations, and
-# hash_molecule(method="frame") warns and falls back to the canonical
-# method. Frame noise amplification is bounded by ~1/gap, so 0.05 keeps it
-# within the same order as the distance-based paths.
+# Minimum relative gap between principal-moment eigenvalues for the fast
+# principal-axes branch of the frame method. Below this, only the isolated
+# eigenspaces are retained and atoms canonically anchor the ambiguous axes.
+# Frame noise amplification is bounded by ~1/gap, so 0.05 keeps it within
+# the same order as the distance-based paths.
 _FRAME_GAP_MIN = 0.05
+
+# An atom-derived axis shorter than ten coordinate-grid units is too easily
+# reoriented by sub-precision noise. Such marginal geometries use the exact
+# distance fallback instead. Exact point-like and linear geometries are
+# handled separately and therefore do not need artificial transverse axes.
+_FRAME_ANCHOR_MIN_GRID = 10.0
+
+# Canonically tied anchors must all be evaluated. Bound that work so an
+# adversarial highly symmetric geometry cannot turn the frame method into an
+# unbounded candidate search; exceeding the budget deterministically selects
+# the canonical distance fallback.
+_FRAME_CANDIDATE_BUDGET = 10_000
 
 
 def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
@@ -144,7 +154,7 @@ class HashMol3DResult:
 
 
 def _precision_to_decimals(precision: float) -> tuple[int, float]:
-    """Grid resolution implied by a distance precision in Å.
+    """Grid resolution implied by a geometry precision in Å.
 
     ``precision`` must be a power of ten no greater than 1 Å, so the
     descriptor's precision field uniquely identifies the integer grid used
@@ -389,10 +399,48 @@ def _lex_less(a: np.ndarray, b: np.ndarray) -> bool:
     return bool(af[i] < bf[i])
 
 
+def _sorted_signed_rows(
+    z: np.ndarray, q: np.ndarray, sign_choices: tuple[tuple[int, int, int], ...]
+) -> np.ndarray:
+    """Smallest sorted ``(Z, x, y, z)`` rows over ``sign_choices``."""
+    best: np.ndarray | None = None
+    for signs in sign_choices:
+        rows = np.column_stack([z, q * np.asarray(signs, dtype=np.int64)])
+        order = np.lexsort((rows[:, 3], rows[:, 2], rows[:, 1], rows[:, 0]))
+        cand = rows[order]
+        if best is None or _lex_less(cand, best):
+            best = cand
+    assert best is not None
+    return best
+
+
+_ALL_AXIS_SIGNS = tuple((sx, sy, sz) for sx in (1, -1) for sy in (1, -1) for sz in (1, -1))
+
+
+def _rows_in_basis(
+    z: np.ndarray, centered: np.ndarray, basis: np.ndarray, scale: float
+) -> np.ndarray:
+    """Quantize coordinates in an orthonormal basis and resolve axis signs."""
+    scaled = (centered @ basis) * scale
+    if scaled.size and float(np.abs(scaled).max()) >= _MAX_SCALED:
+        raise ValueError(
+            "precision too fine for this geometry's extent: scaled coordinates "
+            "exceed the exact-integer range; use a coarser precision"
+        )
+    q = np.rint(scaled).astype(np.int64)
+    return _sorted_signed_rows(z, q, _ALL_AXIS_SIGNS)
+
+
+def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str]:
+    """Serialize a winning frame row array as an ``F`` signature."""
+    body = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in best.tolist())
+    return "F", tuple(int(v) for v in best[:, 0].tolist()), body
+
+
 def _frame_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
 ) -> tuple[str, tuple[int, ...], str] | None:
-    """O(N) principal-axes signature, or ``None`` when the frame is unreliable.
+    """Canonical frame signature, or ``None`` for the distance fallback.
 
     Coordinates are expressed in the eigenbasis of the Z-weighted gyration
     tensor (axes ordered by ascending eigenvalue), quantized to the
@@ -403,15 +451,24 @@ def _frame_signature(
     computed over sorted addends so the result is exactly independent of
     the input atom order.
 
-    The frame is reliable only when the eigenvalues are well separated:
-    if any relative gap falls below :data:`_FRAME_GAP_MIN` (degenerate or
-    nearly degenerate principal moments -- symmetric tops, linear
-    molecules), the axes are ill-defined and ``None`` is returned so the
-    caller can fall back to the canonical method.
+    Well-separated eigenvalues take the O(N log N) principal-axes path. If
+    exactly one eigenspace is isolated, that axis is retained and a centered
+    atom vector canonically anchors the degenerate plane. If all moments are
+    degenerate, a canonical ordered pair of non-collinear atom vectors
+    supplies the frame. Exact point-like and linear inputs are represented in
+    their intrinsic zero- or one-dimensional coordinates instead of inventing
+    meaningless axes.
+
+    Anchor keys use only rotation-, reflection-, and permutation-invariant
+    integers on the precision grid. Every tied candidate is evaluated and the
+    lexicographically smallest row list wins. ``None`` is reserved for
+    ill-conditioned anchors or a candidate-budget overflow; the caller then
+    uses the complete canonical distance descriptor.
     """
     n = atomic_nums.shape[0]
     z = atomic_nums.astype(np.int64)
     w = z.astype(float)
+    scale = 10.0**decimals
 
     def ksum(a: np.ndarray) -> float:
         # Permutation-invariant summation: sort addends first.
@@ -424,31 +481,151 @@ def _frame_signature(
         for b in range(a, 3):
             t[a, b] = t[b, a] = ksum(w * c[:, a] * c[:, b])
     lam, vec = np.linalg.eigh(t)
-    if not lam[2] > 0.0:
-        return None  # single atom or all atoms coincident
-    if float(np.min(np.diff(lam)) / lam[2]) < _FRAME_GAP_MIN:
-        return None
-
-    scaled = (c @ vec) * (10.0**decimals)
-    if float(np.abs(scaled).max()) >= _MAX_SCALED:
+    radii = np.linalg.norm(c, axis=1)
+    max_radius_grid = float(radii.max()) * scale
+    if max_radius_grid >= _MAX_SCALED:
         raise ValueError(
             "precision too fine for this geometry's extent: scaled coordinates "
             "exceed the exact-integer range; use a coarser precision"
         )
-    q = np.rint(scaled).astype(np.int64)
+
+    # At the requested grid all atoms occupy the centroid. No orientation is
+    # meaningful, and every coordinate necessarily rounds to zero.
+    if max_radius_grid < 0.5:
+        q = np.zeros((n, 3), dtype=np.int64)
+        return _frame_body(_sorted_signed_rows(z, q, ((1, 1, 1),)))
+
+    # A non-point geometry this small has no well-conditioned atom anchor.
+    if not lam[2] > 0.0 or max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
+        return None
+
+    gap0 = float((lam[1] - lam[0]) / lam[2])
+    gap1 = float((lam[2] - lam[1]) / lam[2])
+    if min(gap0, gap1) >= _FRAME_GAP_MIN:
+        return _frame_body(_rows_in_basis(z, c, vec, scale))
+
+    def line_rows(axis: np.ndarray) -> np.ndarray:
+        q = np.zeros((n, 3), dtype=np.int64)
+        scaled_axial = (c @ axis) * scale
+        if scaled_axial.size and float(np.abs(scaled_axial).max()) >= _MAX_SCALED:
+            raise ValueError(
+                "precision too fine for this geometry's extent: scaled coordinates "
+                "exceed the exact-integer range; use a coarser precision"
+            )
+        # The nonzero intrinsic coordinate occupies the largest-moment slot,
+        # matching ascending eigenvalue order for an exact line.
+        q[:, 2] = np.rint(scaled_axial).astype(np.int64)
+        return _sorted_signed_rows(z, q, ((1, 1, 1), (1, 1, -1)))
+
+    def quantized(values: np.ndarray) -> np.ndarray:
+        scaled = values * scale
+        if scaled.size and float(np.abs(scaled).max()) >= _MAX_SCALED:
+            raise ValueError(
+                "precision too fine for this geometry's extent: scaled coordinates "
+                "exceed the exact-integer range; use a coarser precision"
+            )
+        return np.rint(scaled).astype(np.int64)
 
     best: np.ndarray | None = None
-    for sx in (1, -1):
-        for sy in (1, -1):
-            for sz in (1, -1):
-                rows = np.column_stack([z, q * np.array([sx, sy, sz])])
-                order = np.lexsort((rows[:, 3], rows[:, 2], rows[:, 1], rows[:, 0]))
-                cand = rows[order]
-                if best is None or _lex_less(cand, best):
-                    best = cand
-    assert best is not None and best.shape == (n, 4)
-    body = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in best.tolist())
-    return "F", tuple(int(v) for v in best[:, 0].tolist()), body
+    candidates = 0
+
+    def consider(basis: np.ndarray) -> bool:
+        """Evaluate one basis; return false when the budget is exhausted."""
+        nonlocal best, candidates
+        candidates += 1
+        if candidates > _FRAME_CANDIDATE_BUDGET:
+            return False
+        cand = _rows_in_basis(z, c, basis, scale)
+        if best is None or _lex_less(cand, best):
+            best = cand
+        return True
+
+    # One isolated eigenvalue leaves only a two-dimensional plane to anchor.
+    # Preserve eigenvalue-axis ordering so this branch approaches the regular
+    # principal frame continuously away from the degeneracy.
+    if (gap0 < _FRAME_GAP_MIN) != (gap1 < _FRAME_GAP_MIN):
+        unique_slot = 2 if gap0 < _FRAME_GAP_MIN else 0
+        axis = vec[:, unique_slot]
+        axial = c @ axis
+        projected = c - np.outer(axial, axis)
+        projected_norm = np.linalg.norm(projected, axis=1)
+        max_projected_grid = float(projected_norm.max()) * scale
+
+        # In the lower-pair-degenerate case an exact line has no transverse
+        # information to resolve. Small numerical residuals must not invent an
+        # orientation in its null plane.
+        if unique_slot == 2 and max_projected_grid < 0.5:
+            return _frame_body(line_rows(axis))
+        if max_projected_grid < _FRAME_ANCHOR_MIN_GRID:
+            return None
+
+        q_projected = quantized(projected_norm)
+        q_axial = quantized(np.abs(axial))
+        keys = [(int(q_projected[i]), int(z[i]), int(q_axial[i])) for i in range(n)]
+        winning_key = max(keys)
+        anchors = [i for i, key in enumerate(keys) if key == winning_key]
+        if len(anchors) > _FRAME_CANDIDATE_BUDGET:
+            return None
+
+        for i in anchors:
+            plane_axis = projected[i] / projected_norm[i]
+            cross_axis = np.cross(axis, plane_axis)
+            if unique_slot == 0:
+                basis = np.column_stack([axis, plane_axis, cross_axis])
+            else:
+                basis = np.column_stack([plane_axis, cross_axis, axis])
+            if not consider(basis):
+                return None
+        assert best is not None
+        return _frame_body(best)
+
+    # All three moments are near-degenerate. A far, heavy atom supplies the
+    # first axis; a maximally non-collinear second atom supplies the plane.
+    q_radii = quantized(radii)
+    first_keys = [(int(q_radii[i]), int(z[i])) for i in range(n)]
+    winning_first_key = max(first_keys)
+    first_anchors = [i for i, key in enumerate(first_keys) if key == winning_first_key]
+    if len(first_anchors) > _FRAME_CANDIDATE_BUDGET:
+        return None
+
+    for i in first_anchors:
+        first_axis = c[i] / radii[i]
+        along = c @ first_axis
+        projected = c - np.outer(along, first_axis)
+        projected_norm = np.linalg.norm(projected, axis=1)
+        max_projected_grid = float(projected_norm.max()) * scale
+        if max_projected_grid < _FRAME_ANCHOR_MIN_GRID:
+            # This can occur only for a marginally non-point cloud; a true
+            # line would have an isolated largest eigenvalue above.
+            return None
+        q_projected = quantized(projected_norm)
+        q_along = quantized(np.abs(along))
+        second_keys = [
+            (int(q_projected[j]), int(z[j]), int(q_along[j]))
+            for j in range(n)
+            if j != i and q_projected[j] > 0
+        ]
+        if not second_keys:
+            return None
+        winning_second_key = max(second_keys)
+        second_anchors = [
+            j
+            for j in range(n)
+            if j != i
+            and q_projected[j] > 0
+            and (int(q_projected[j]), int(z[j]), int(q_along[j])) == winning_second_key
+        ]
+        if candidates + len(second_anchors) > _FRAME_CANDIDATE_BUDGET:
+            return None
+        for j in second_anchors:
+            second_axis = projected[j] / projected_norm[j]
+            third_axis = np.cross(first_axis, second_axis)
+            basis = np.column_stack([first_axis, second_axis, third_axis])
+            if not consider(basis):
+                return None
+
+    assert best is not None
+    return _frame_body(best)
 
 
 def _format_descriptor(
@@ -485,7 +662,7 @@ def hash_molecule(
     charge: int = 0,
     multiplicity: int | None = None,
     length: int | None = None,
-    method: str = "canonical",
+    method: str = "frame",
 ) -> HashMol3DResult:
     """Compute the HashMol3D identifier for a 3D molecular geometry.
 
@@ -497,7 +674,7 @@ def hash_molecule(
         atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
         coords: float array-like of Cartesian coordinates in Å, shape
             ``(N, 3)``.
-        precision: distance precision in Å (default ``1e-4``). Must be a
+        precision: geometry-grid precision in Å (default ``1e-4``). Must be a
             power of ten no greater than 1 Å (``1.0``, ``1e-1``,
             ``1e-2``, ...); see :func:`_precision_to_decimals`.
         charge: total formal charge (default ``0``).
@@ -510,18 +687,17 @@ def hash_molecule(
             depends on how many distinct geometries share a namespace, not on
             molecule size; use :func:`hash_length_for` to size the hash to a
             target corpus and probability.
-        method: ``"canonical"`` (default) or ``"frame"``. The canonical
+        method: ``"frame"`` (default) or ``"canonical"``. The canonical
             method hashes the labeled distance matrix in a canonical atom
             order (complete, but O(N^2) time and memory). The frame method
             hashes coordinates in the principal-axes frame of the Z-weighted
-            gyration tensor -- O(N log N) time and O(N) memory, suited to
-            proteins and other large systems -- and is equally complete
-            *when the frame is well-defined*. If the principal moments are
-            degenerate or nearly so (relative eigenvalue gap below
-            :data:`_FRAME_GAP_MIN`; symmetric tops, linear molecules), the
-            frame is unreliable: a :class:`UserWarning` is emitted and the
-            canonical method is used instead (detectable via the ``C:`` or
-            ``W:`` section in ``result.descriptor`` instead of ``F:``).
+            gyration tensor -- normally O(N log N) time and O(N) memory,
+            suited to proteins and other large systems. Degenerate principal
+            moments are resolved by intrinsic point/line descriptors or by
+            canonical atom anchors. Ill-conditioned anchors and candidate-
+            budget overflows emit :class:`UserWarning` and use the canonical
+            method instead (detectable via the ``C:`` or ``W:`` section in
+            ``result.descriptor`` instead of ``F:``).
             Identifiers from different methods are **not comparable**; pick
             one method per corpus.
 
@@ -570,11 +746,10 @@ def hash_molecule(
         signature = _frame_signature(atomic_nums, coords, decimals)
         if signature is None:
             warnings.warn(
-                "principal moments are degenerate or nearly degenerate "
-                f"(relative eigenvalue gap < {_FRAME_GAP_MIN}); the inertia "
-                "frame is unreliable for this geometry, falling back to "
-                "method='canonical'. The returned hash is a canonical-method "
-                "hash and will not match frame-method hashes.",
+                "no numerically stable canonical frame was found within the "
+                f"{_FRAME_CANDIDATE_BUDGET}-candidate budget; falling back "
+                "to method='canonical'. The returned descriptor uses the "
+                "canonical distance path instead of the frame path.",
                 UserWarning,
                 stacklevel=2,
             )

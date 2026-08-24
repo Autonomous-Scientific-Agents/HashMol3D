@@ -21,7 +21,7 @@ def test_returns_result(water):
 def test_descriptor_contains_geometry_fields(water):
     z, coords = water
     res = hash_molecule(z, coords)
-    for tag in ("V:", "P:", "Z:", "C:"):
+    for tag in ("V:", "P:", "Z:", "F:"):
         assert tag in res.descriptor
     # Charge/multiplicity no longer hashed.
     assert "Q:" not in res.descriptor

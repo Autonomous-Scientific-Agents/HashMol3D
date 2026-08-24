@@ -31,7 +31,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1e-4,
         metavar="Å",
-        help="Distance precision in angstroms; must be a power of ten <= 1 (default: 1e-4)",
+        help="Geometry-grid precision in angstroms; power of ten <= 1 (default: 1e-4)",
     )
     parser.add_argument(
         "-c",
@@ -54,6 +54,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Number of hex characters in the geometry hash, 1-64 "
         "(default: 32 = 128-bit; size by corpus, not molecule)",
+    )
+    parser.add_argument(
+        "--method",
+        choices=("frame", "canonical"),
+        default="frame",
+        help="Geometry descriptor method (default: frame)",
     )
     parser.add_argument(
         "-v",
@@ -82,6 +88,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
             charge=args.charge,
             multiplicity=args.multiplicity,
             length=args.length,
+            method=args.method,
         )
     except FileNotFoundError as err:
         print(f"hashmol3d: {err}", file=sys.stderr)

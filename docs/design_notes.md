@@ -75,7 +75,7 @@ migration later.
 
 ### Rejected alternatives
 
-- **Canonical inertia frame** (translate to centroid, rotate to
+- **Unanchored inertia frame** (translate to centroid, rotate to
   principal axes, sort atoms, hash coordinates): O(N) after a 3×3
   eigendecomposition and a complete invariant *when it works*, but the
   axes are undefined exactly where chemistry is interesting. In our
@@ -114,23 +114,36 @@ distinct descriptor tag (`W:` instead of `C:`), which prevents any
 cross-path collision. The fallback is still strictly stronger than the
 v4 multiset.
 
-## The opt-in O(N) frame method
+## The default canonical frame method
 
-Version 0.8 adds `hash_molecule(method="frame")` for systems too large
-for the O(N²) distance matrix (a 100,000-atom structure hashes in ~0.3 s
-versus an infeasible 80 GB matrix). It projects Z-weighted centered
-coordinates onto the gyration-tensor eigenbasis, quantizes, and takes the
-lexicographically smallest of the eight axis-sign choices — which makes
-it parity-invariant with no fragile sign conventions, and complete when
-the frame is defined. The known failure mode of frame methods (axes
-undefined or numerically explosive for symmetric tops and linear
-molecules, see the rejected-alternatives analysis above) is *detected*
-rather than risked: a normative relative eigenvalue-gap threshold (0.05)
-rejects degenerate and near-degenerate frames, emitting a warning and
-falling back to the canonical method. Tensor sums use sorted addends so
-the result is exactly permutation-invariant. Frame hashes carry a
-distinct descriptor tag (`F:`), so they can never collide with — and are
-not comparable to — canonical hashes; a corpus must pick one method.
+Version 0.8 introduced an opt-in principal frame for systems too large for
+the O(N²) distance matrix. Version 0.9 makes `method="frame"` the default
+and resolves its former symmetry failure without random perturbations.
+
+The second moment is used only for the subspaces it determines reliably.
+Three separated eigenvalues give the original one-frame O(N log N) path.
+With a two-dimensional degenerate eigenspace, the isolated axis is retained
+and the farthest canonically keyed projected atom anchors the ambiguous
+plane. With three degenerate moments, a canonically keyed non-collinear atom
+pair constructs the frame. Every invariantly tied anchor is evaluated and
+the smallest sorted coordinate-row descriptor wins. Point-like and linear
+sets are serialized in zero and one intrinsic dimensions, so arbitrary null
+axes are never invented.
+
+Anchors affect only frame construction: the original coordinates are always
+projected and hashed. All eight axis signs are evaluated, retaining parity
+invariance without handedness conventions. A 10-grid-unit minimum anchor
+length prevents sub-precision noise from defining a global orientation, and
+a 10,000-candidate budget bounds symmetry enumeration. Either condition
+selects the canonical distance method with a warning.
+
+Generic cost is O(N log N) time and O(N) memory. An axial degeneracy with M
+tied anchors costs O(M N log N); a fully degenerate tensor with M tied atom
+pairs has the same candidate-linear cost and can reach the budget. Exact
+large symmetric shells are therefore the main performance failure mode.
+Near conditioning thresholds and coordinate rounding boundaries remain the
+main numerical failure modes; the distance fallback is retained for them.
+Frame and distance bodies use distinct `F:` and `C:`/`W:` tags.
 
 ## Why we do not encode chirality
 
@@ -148,21 +161,20 @@ dependent volume signs in greedy quartet pickers.
 
 ## Precision and rounding
 
-The precision must be a power of ten no greater than 1 Å. Distances are
-quantized to `-log10(precision)` decimal places before anything else
-happens. This gives stable hashes under
-noise smaller than `precision / 2`. Two conformers that differ by less
-than `precision` may collide; two that differ by more will usually not.
+The precision must be a power of ten no greater than 1 Å. The frame method
+quantizes canonical-frame coordinates; the distance method quantizes pair
+distances. Both use `-log10(precision)` decimal places. Two conformers that
+differ by less than `precision` may collide; two that differ by more will
+usually not.
 
 There is a residual rounding-boundary risk: a distance of exactly
 `x.xxxx5` may round to two different values depending on numerical
 noise. Choose `precision` generously larger than the geometric noise
-floor of your pipeline. Working from pair distances keeps this damage
-local — only distances sitting near a bin edge are at risk — which is a
-further reason the descriptor is built from distances rather than from
-frames or spectra, where one perturbed atom moves every hashed number
-at once. (Empirically, the v5 flip-rate-vs-noise curves coincide with
-v4's: completeness cost us no rounding robustness.)
+floor of your pipeline. The canonical distance method keeps this damage
+local — only distances sitting near a bin edge are at risk. A frame rotates
+all coordinates together, so its noise is global; the eigenvalue-gap and
+anchor-conditioning thresholds bound that risk, but callers needing maximum
+rounding robustness can still request `method="canonical"`.
 
 ## Dependencies
 

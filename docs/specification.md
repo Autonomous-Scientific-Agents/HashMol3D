@@ -1,8 +1,8 @@
-# HashMol3D Specification v0.7.0
+# HashMol3D Specification v0.9.0
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
-**Canonical version tag:** `5-CANON-SHA256`
+**Canonical version tag:** `6-FRAME-SHA256`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
@@ -14,7 +14,7 @@ A HashMol3D identifier is a single ASCII string with three parts:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-a4ba9da41d888939961ef77dae43b297`.
+For example: `H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf`.
 
 - **Hill formula** — carbon first if present, then hydrogen, then the
   remaining elements alphabetically by symbol. A count of 1 is omitted.
@@ -46,12 +46,13 @@ It is **not** invariant under:
 - changes in the descriptor version tag
 - geometric distortions larger than the chosen precision
 
-The signature is furthermore **complete**: two geometries share a
-geometry hash *only if* their element-labeled distance matrices are
-equal, after rounding, up to an atom relabeling — i.e. only if the
-geometries are congruent at the chosen precision (or if the truncated
-SHA-256 digests collide, §7). Homometric configurations — distinct
-geometries with the same distance *multiset* — receive distinct hashes.
+The default frame signature is furthermore **complete on its coordinate
+grid**: equal descriptors contain the same sorted element-labelled
+coordinates in an orthonormal canonical frame. The optional canonical
+distance signature is complete on its rounded-distance grid. Thus
+homometric configurations — distinct geometries with the same distance
+*multiset* — receive distinct hashes (except for a truncated SHA-256
+collision, §7, or the explicitly tagged stable-WL budget fallback, §4.4).
 
 The **state tag** (and therefore the full identifier) additionally
 changes with charge or multiplicity. Two states of the same geometry
@@ -69,21 +70,25 @@ The reference implementation takes:
 
 1. `atomic_nums`: integer array of atomic numbers, shape `(N,)`
 2. `coords`: float array of Cartesian coordinates in Å, shape `(N, 3)`
-3. `precision`: distance precision in Å (default `1e-4`); it must be a
+3. `precision`: geometry-grid precision in Å (default `1e-4`); it must be a
    power of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
+6. `method`: `"frame"` (default) or `"canonical"`
 
-## 4. Canonical geometry signature
+## 4. Geometry signatures
 
-Translation, rotation, and reflection invariance come from using only
-pairwise distances. Permutation invariance comes from writing the
-element-labeled distance matrix in a **canonical atom order** that is a
-pure function of the geometry. Because the full labeled distance matrix
-determines the point set up to congruence, two geometries receive the
-same signature **if and only if** they are congruent at the chosen
-precision — homometric configurations (distinct geometries sharing a
-distance multiset) do not collide.
+The default frame method is specified in §4.5. Sections §4.1–4.4 specify
+the optional canonical labelled-distance method and the final fallback used
+when a stable bounded frame cannot be constructed.
+
+For the canonical distance method, translation, rotation, and reflection
+invariance come from using only pairwise distances. Permutation invariance
+comes from writing the element-labelled distance matrix in a **canonical
+atom order** that is a pure function of the geometry. Because the full
+labelled distance matrix determines the point set up to congruence, two
+geometries receive the same `C` signature if and only if they are congruent
+on its rounded-distance grid — homometric configurations do not collide.
 
 ### 4.1 Scaled distance matrix
 
@@ -146,39 +151,63 @@ colors of §4.2, the triples sorted as a multiset. The fallback uses a
 distinct descriptor section tag (`W` instead of `C`, §6), so the two
 paths can never collide with each other.
 
-### 4.5 Optional O(N) frame method (`method="frame"`)
+### 4.5 Default canonical frame method (`method="frame"`)
 
-For very large systems (proteins, clusters) where the O(N²) distance
-matrix is prohibitive, an opt-in O(N log N) method hashes coordinates in
-a canonical principal-axes frame instead:
+The default method normally takes O(N log N) time and O(N) memory:
 
 1. Compute the Z-weighted centroid and the Z-weighted **gyration tensor**
-   `T_ab = Σ_i Z_i (r_i − c)_a (r_i − c)_b`. All sums are computed over
-   *sorted* addends so the result is exactly independent of the input
-   atom order.
-2. **Reliability check (normative):** with eigenvalues
-   `λ1 ≤ λ2 ≤ λ3`, require `λ3 > 0` and both relative gaps
-   `(λ2−λ1)/λ3` and `(λ3−λ2)/λ3` to be at least **0.05**. Below this the
-   axes are degenerate or nearly so (symmetric tops, linear molecules)
-   and reorient under arbitrarily small perturbations; the implementation
-   emits a warning and falls back to the canonical method of §4.2–4.4.
-3. Project the centered coordinates onto the eigenvectors (ascending
-   eigenvalue order) and quantize each coordinate to the precision grid,
-   `q = rint(u · 10^decimals)` (same overflow bound as §4.1).
-4. **Axis signs need no convention:** evaluate all eight sign
-   combinations of the three axes; for each, sort the `(Z, x, y, z)`
-   rows lexicographically; keep the lexicographically smallest row list.
-   Because the eight combinations include both parities, the signature is
-   reflection-invariant by construction.
+   `T_ab = Σ_i Z_i (r_i − c)_a (r_i − c)_b`. Tensor sums use sorted
+   addends so atom permutation cannot change summation order. Let centered
+   vectors be `v_i`, scale `s = 10^decimals`, and eigenvalues
+   `λ1 ≤ λ2 ≤ λ3`.
+2. If `max_i ||v_i|| s < 0.5`, serialize every coordinate as zero. This
+   is the intrinsic point-like representation.
+3. Otherwise require `λ3 > 0` and `max_i ||v_i|| s ≥ 10`. Inputs failing
+   this conditioning requirement use §4.1–4.4 with a `UserWarning`.
+4. Define relative gaps `g1=(λ2−λ1)/λ3` and `g2=(λ3−λ2)/λ3`.
+   If both are at least **0.05**, use the eigenvectors in ascending
+   eigenvalue order, as in the v0.8 principal-frame method.
+5. If exactly one gap is below 0.05, preserve the isolated eigenvector
+   `u`. For every atom form its projection into the degenerate plane,
+   `p_i = v_i − (v_i·u)u`. If the isolated axis is the largest-moment
+   axis and `max_i ||p_i||s < 0.5`, serialize a one-dimensional line:
+   `(Z, 0, 0, rint((v_i·u)s))`, considering both axial signs. Otherwise
+   require `max_i ||p_i||s ≥ 10` and select the lexicographically largest
+   invariant anchor key
 
-The result is serialized under a distinct section tag (`F`, §6), so
-frame-method hashes can never collide with canonical-method hashes; the
-two methods are, by the same token, **not comparable** — a corpus must
-choose one method. When the frame is reliable, equal `F` descriptors
-certify identical quantized coordinates in a canonical frame, i.e. the
-method is complete in the same sense as §4. The gap threshold bounds the
-frame's noise amplification (≈ 1/gap), and the residual floating-point
-caveats of §8 apply with that factor.
+       (rint(||p_i||s), Z_i, rint(|v_i·u|s)).
+
+   Evaluate every tied anchor. Its normalized `p_i` resolves the ambiguous
+   plane; a cross product supplies the remaining axis. The isolated axis
+   stays in its ascending-eigenvalue slot.
+6. If both gaps are below 0.05, choose first anchors by the largest key
+
+       (rint(||v_i||s), Z_i).
+
+   For every tied first anchor `i`, set `e1=v_i/||v_i||`, project every
+   other atom perpendicular to it, and choose second anchors by the largest
+   key
+
+       (rint(||p_ij||s), Z_j, rint(|v_j·e1|s)).
+
+   Evaluate every tied non-collinear ordered pair. Normalize `p_ij` as
+   `e2` and set `e3=e1×e2`.
+7. At most **10,000** tied candidate frames may be evaluated. Exceeding
+   this normative budget, or finding an atom-derived axis shorter than 10
+   grid units, deterministically selects the canonical method of §4.1–4.4
+   with a `UserWarning`.
+8. For every candidate basis, project the **original centered coordinates**
+   (anchors never perturb the geometry), quantize with `rint`, evaluate all
+   eight axis-sign combinations, sort `(Z,x,y,z)` rows lexicographically,
+   and keep the globally smallest row list. The sign set includes both
+   parities, making the descriptor reflection-invariant.
+
+The result uses section tag `F` (§6). Generic inputs evaluate one frame;
+an axial degeneracy can evaluate up to N tied anchors, and a fully
+degenerate tensor can evaluate up to N(N−1) ordered pairs before the
+normative budget intervenes. Equal `F` bodies contain identical quantized
+element-labelled coordinates in an orthonormal frame and are therefore a
+complete representation on that grid.
 
 ## 5. Multiplicity inference
 
@@ -202,7 +231,7 @@ components, in this fixed order:
 
 Where:
 
-- `<version>` is a string, e.g. `5-CANON-SHA256`.
+- `<version>` is a string, e.g. `6-FRAME-SHA256`.
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
 - `<z_ordered>` is the list of atomic numbers in canonical atom order,
   comma-separated (this always coincides with the ascending-sorted
@@ -222,15 +251,14 @@ Where:
 Charge and multiplicity are **not** part of the descriptor; they are
 written into the readable prefix of the identifier instead.
 
-Example (water, `precision = 1e-4`); this descriptor's SHA-256 digest,
-truncated to the default 32 hex characters, is the geometry hash
-`a4ba9da41d888939961ef77dae43b297`:
+Example using the default frame method (water, `precision = 1e-4`); this
+descriptor's SHA-256 digest, truncated to the default 32 hex characters,
+is the geometry hash `9a3a21fa2c3b6f0d4cb8acb76a18eccf`:
 
-    V:5-CANON-SHA256|P:1.0e-04|Z:1,1,8|C:15144,9575,9575
+    V:6-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
 
-(The two hydrogens precede the oxygen; the first two entries are the
-H–H and H–O rows: `q_HH = 15144`, `q_HO = q_H'O = 9575` grid units of
-1e-4 Å.)
+(The molecular-plane normal occupies the first axis. The two hydrogen rows
+precede oxygen after lexicographic sorting.)
 
 ## 7. Hashing
 
@@ -257,8 +285,9 @@ To guarantee identical identifiers across machines:
 - Format atomic numbers and scaled distances as decimal integers with
   no leading zeros or sign.
 - Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1.
-- Use the search-node budget of 10,000 exactly (§4.4) and, for the frame
-  method, the relative eigenvalue-gap threshold of 0.05 exactly (§4.5).
+- Use the search-node budget of 10,000 exactly (§4.4). For the frame method,
+  use the relative eigenvalue-gap threshold 0.05, minimum atom-anchor length
+  10 grid units, and candidate budget 10,000 exactly (§4.5).
 - Encode the descriptor in UTF-8 before hashing.
 - Use SHA-256 as defined in FIPS 180-4.
 - Render the formula in Hill order and the state tag exactly as in §1.
@@ -284,9 +313,10 @@ result = hash_molecule(
     charge=0,
     multiplicity=None,  # inferred if None
     length=None,  # 32 hex (128-bit) if None
+    method="frame",  # default; use "canonical" for the distance method
 )
-print(result.hash_str)  # H2Oq0m1-a4ba9da41d888939961ef77dae43b297
-print(result.geometry_hash)  # a4ba9da41d888939961ef77dae43b297
+print(result.hash_str)  # H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf
+print(result.geometry_hash)  # 9a3a21fa2c3b6f0d4cb8acb76a18eccf
 ```
 
 A file-based convenience wrapper is also provided:

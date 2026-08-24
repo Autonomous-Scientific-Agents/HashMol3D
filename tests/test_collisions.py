@@ -1,4 +1,4 @@
-"""Collision-resistance tests for the canonical (v5) geometry descriptor.
+"""Collision-resistance tests for the geometry descriptors.
 
 The v4 descriptor hashed the unlabeled multiset of (Zmin, Zmax, distance)
 triples, so *homometric* configurations -- distinct geometries sharing a
@@ -140,7 +140,7 @@ class TestSymmetricInvariance:
         self._check(z, np.asarray(WL1_PAIRS[0][0], float))
 
 
-class TestFallbackPath:
+class TestCanonicalFallbackPath:
     def test_degenerate_rounding_falls_back_and_stays_invariant(self):
         # 12 atoms inside a 0.01 A box hashed at 1 A precision: every
         # rounded distance is 0, the search tree exceeds the node budget,
@@ -148,26 +148,40 @@ class TestFallbackPath:
         rng = np.random.default_rng(5)
         coords = rng.uniform(0, 0.01, size=(12, 3))
         z = np.full(12, 6)
-        res = hash_molecule(z, coords, precision=1.0)
+        res = hash_molecule(z, coords, precision=1.0, method="canonical")
         assert "|W:" in res.descriptor
         assert "|C:" not in res.descriptor
         base = res.geometry_hash
         for t in range(10):
             zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
-            assert hash_molecule(zz, cc, precision=1.0).geometry_hash == base
+            assert hash_molecule(zz, cc, precision=1.0, method="canonical").geometry_hash == base
 
     def test_budget_is_permutation_invariant_when_patched(self, benzene, monkeypatch):
         # Force even benzene onto the fallback path; the trigger and the
         # resulting hash must not depend on the input atom order.
         monkeypatch.setattr(core, "_NODE_BUDGET", 3)
         z, coords = benzene
-        res = hash_molecule(z, coords)
+        res = hash_molecule(z, coords, method="canonical")
         assert "|W:" in res.descriptor
         rng = np.random.default_rng(9)
         for t in range(10):
             zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
-            assert hash_molecule(zz, cc).geometry_hash == res.geometry_hash
+            assert hash_molecule(zz, cc, method="canonical").geometry_hash == res.geometry_hash
 
-    def test_normal_molecules_use_canonical_path(self, water, benzene):
+    def test_explicit_canonical_method_uses_canonical_path(self, water, benzene):
         for z, coords in (water, benzene):
-            assert "|C:" in hash_molecule(z, coords).descriptor
+            assert "|C:" in hash_molecule(z, coords, method="canonical").descriptor
+
+
+class TestDefaultFramePath:
+    def test_point_like_at_grid_uses_intrinsic_frame(self):
+        rng = np.random.default_rng(5)
+        coords = rng.uniform(0, 0.01, size=(12, 3))
+        z = np.full(12, 6)
+        res = hash_molecule(z, coords, precision=1.0)
+        assert "|F:" in res.descriptor
+        assert ":0,0,0" in res.descriptor
+
+    def test_normal_molecules_use_frame_path(self, water, benzene):
+        for z, coords in (water, benzene):
+            assert "|F:" in hash_molecule(z, coords).descriptor
