@@ -83,7 +83,7 @@ PANEL = [
     ("naphthalene", "c1ccc2ccccc2c1", "aromatic"),
     ("neopentane", "CC(C)(C)C", "branched"),
     ("adamantane", "C1C2CC3CC1CC(C2)C3", "cage"),
-    ("cubane", "C1C2C3C1C4C2C3C4", "cage"),
+    ("cubane", "C12C3C4C1C5C4C3C25", "cage"),
     ("caffeine", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C", "heterogeneous"),
 ]
 
@@ -199,8 +199,8 @@ def part_A_flip_sweep():
                  label=f"{name} (N={n}, {cls})")
     plt.xscale("log")
     plt.xlabel(r"noise / precision  $\sigma/\varepsilon$")
-    plt.ylabel("hash-flip probability")
-    plt.title(r"Descriptor flip probability vs $\sigma/\varepsilon$ (500 trials each)")
+    plt.ylabel("fraction of trials with changed descriptor")
+    plt.title(r"Descriptor change fraction vs $\sigma/\varepsilon$ (500 trials each)")
     plt.grid(True, which="both", ls=":", alpha=0.5)
     plt.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16),
                ncol=2, fontsize=7, frameon=False)

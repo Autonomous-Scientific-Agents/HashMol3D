@@ -72,6 +72,11 @@ DESCRIPTOR_VERSION = "6-FRAME-SHA256"
 DEFAULT_LENGTH = 32
 _MAX_LENGTH = 64
 
+# Highest atomic number the periodic table recognizes (H..Og); inputs outside
+# ``[1, _MAX_Z]`` are rejected up front rather than surfacing later as a
+# symbol-lookup KeyError.
+_MAX_Z = 118
+
 # Cap on the number of partition-refinement states visited by the canonical
 # atom-ordering search. The search tree's size is a function of the geometry
 # alone (never of the input atom order), so hitting the cap is itself a
@@ -133,6 +138,18 @@ def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
         return 1
     bits = 2.0 * math.log2(n) - math.log2(target_prob) - 1.0
     hexlen = int(math.ceil(bits / 4.0))
+    if hexlen > _MAX_LENGTH:
+        # The full SHA-256 digest cannot reach ``target_prob`` for this many
+        # items. Clamping silently would report a length that does not meet
+        # the requested bound, so signal the shortfall instead of hiding it.
+        warnings.warn(
+            f"a collision probability of {target_prob!r} for {n} items needs "
+            f"{hexlen} hex characters, exceeding the {_MAX_LENGTH}-character "
+            f"SHA-256 digest; returning {_MAX_LENGTH}. The actual collision "
+            "probability at this length is higher than requested.",
+            UserWarning,
+            stacklevel=2,
+        )
     return max(1, min(_MAX_LENGTH, hexlen))
 
 
@@ -198,10 +215,57 @@ def _precision_to_decimals(precision: float) -> tuple[int, float]:
     return decimals, 10.0 ** (-decimals)
 
 
+def _as_exact_int(value, name: str) -> int:
+    """Coerce an integer-valued scalar to ``int`` without silent truncation.
+
+    Accepts Python and NumPy integers and integer-valued floats (``3.0``) but
+    rejects booleans and genuinely fractional values (``0.5``), which
+    ``int(...)`` would otherwise truncate toward zero and hash as a different
+    state. This keeps the state prefix a faithful record of the input.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{name} must be an integer, not bool; got {value!r}")
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        f = float(value)
+        if not math.isfinite(f) or f != round(f):
+            raise ValueError(f"{name} must be an integer, got {value!r}")
+        return int(f)
+    raise ValueError(f"{name} must be an integer, got {value!r}")
+
+
+def _validate_atomic_nums(atomic_nums) -> np.ndarray:
+    """Validate and normalize atomic numbers to an ``int64`` array.
+
+    Rejects booleans, non-finite and fractional values (``6.9``), and values
+    outside ``[1, _MAX_Z]`` *before* coercing to ``int``, so a fractional or
+    out-of-range input fails with a clear domain error rather than being
+    silently floored (``6.9`` -> carbon) or surfacing later as a symbol-lookup
+    ``KeyError`` (``119``).
+    """
+    arr = np.asarray(atomic_nums)
+    if arr.dtype == bool:
+        raise ValueError("atomic numbers must be integers, not booleans")
+    try:
+        as_float = arr.astype(float).reshape(-1)
+    except (TypeError, ValueError):
+        raise ValueError("atomic numbers must be integers in [1, %d]" % _MAX_Z)
+    if as_float.size == 0:
+        return as_float.astype(np.int64)
+    if not np.all(np.isfinite(as_float)):
+        raise ValueError("atomic numbers must be finite integers")
+    if not np.all(as_float == np.round(as_float)):
+        raise ValueError("atomic numbers must be integers, not fractional values")
+    if not np.all((as_float >= 1) & (as_float <= _MAX_Z)):
+        raise ValueError(f"atomic numbers must be in [1, {_MAX_Z}]")
+    return as_float.astype(np.int64)
+
+
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
     """Use the caller-supplied multiplicity, or infer one from electron count."""
     if multiplicity is not None:
-        m = int(multiplicity)
+        m = _as_exact_int(multiplicity, "multiplicity")
         if m < 1:
             raise ValueError(f"multiplicity must be >= 1, got {m}")
         return m
@@ -704,7 +768,7 @@ def hash_molecule(
     Returns:
         :class:`HashMol3DResult`.
     """
-    atomic_nums = np.asarray(atomic_nums, dtype=int).reshape(-1)
+    atomic_nums = _validate_atomic_nums(atomic_nums)
     coords = np.asarray(coords, dtype=float)
 
     if atomic_nums.size == 0:
@@ -715,8 +779,6 @@ def hash_molecule(
         raise ValueError(
             f"atomic_nums has {atomic_nums.size} entries but coords has {coords.shape[0]} rows"
         )
-    if not np.all(atomic_nums > 0):
-        raise ValueError("atomic numbers must be positive integers")
     if not np.all(np.isfinite(coords)):
         raise ValueError("coords contain non-finite values")
 
@@ -734,7 +796,7 @@ def hash_molecule(
     if method not in ("canonical", "frame"):
         raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
 
-    charge = int(charge)
+    charge = _as_exact_int(charge, "charge")
     # ``precision`` is validated (power of ten <= 1 Å, no bool) and
     # canonicalized in one place; ``effective_precision`` is what gets hashed
     # and reported, so the descriptor grid can never drift from the value.

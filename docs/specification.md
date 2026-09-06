@@ -1,4 +1,4 @@
-# HashMol3D Specification v0.9.0
+# HashMol3D Specification v0.9.1
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
@@ -30,19 +30,29 @@ For example: `H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf`.
 
 ## 2. Invariance contract
 
-The **geometry hash** is invariant under exactly those operations that
-leave the eigenvalues of the non-relativistic molecular Hamiltonian
-unchanged:
+In **exact arithmetic** the mathematical descriptor is invariant under
+rigid motions and atom relabeling:
 
 - rigid translation of the coordinates
 - rigid rotation of the coordinates
 - permutation (relabeling) of atom indices
 - spatial inversion / reflection (parity)
-- numerical noise smaller than the user-specified precision
 
-It is **not** invariant under:
+These are all rigid motions (plus parity) composed with relabeling; they
+are a subset of the transformations that leave the eigenvalues of the
+non-relativistic molecular Hamiltonian unchanged, but the descriptor does
+**not** claim invariance under every spectrum-preserving operation.
 
-- changes in any atomic number Z
+Invariance to small numerical noise is **not** guaranteed. A perturbation
+smaller than the requested precision usually leaves the hash unchanged,
+but a perturbation that crosses a quantization boundary or a
+frame-selection boundary (a near-degenerate principal axis, an anchor at
+its acceptance threshold) can change it. See §7 and the manuscript's
+finite-grid and stability analysis for the empirical rate.
+
+The geometry hash is also **not** invariant under:
+
+- changes in any atomic number Z (isotopes share Z and therefore hash alike)
 - changes in the descriptor version tag
 - geometric distortions larger than the chosen precision
 
