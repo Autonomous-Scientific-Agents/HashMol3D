@@ -1,17 +1,16 @@
 """
-Does discrimination require FINER precision for longer alkene chains?
+Exploratory conformer-retention test for longer alkene chains.
 
 The reviewer's concern (discrimination form): a long chain packs ~N^2/2
 pairwise distances into a bounded range [~1, L] Angstrom. At precision eps there
 are ~L/eps distance "bins"; when N^2/2 approaches L/eps the distance multiset
-saturates and distinct geometries are more likely to collide. This predicts a
-saturation precision eps* ~ L/(N^2/2) that gets FINER as the chain grows.
+saturates. The descriptive scale eps* ~ L/(N^2/2) therefore tracks crowding of
+an unordered distance multiset.
 
-We test this operationally: for polyenes of increasing length we generate an
-ensemble of genuinely distinct conformers and ask, at each precision, whether
-the HashMol3D geometry hash keeps them all distinct (no false merges). We then
-compare the empirical onset of collisions to the saturation bound and to the
-default precision (1e-4 Angstrom).
+The canonical C descriptor retains the assignment of distances to atom pairs,
+so eps* is NOT a collision bound or a safe-precision rule for HashMol3D. We
+retain it only as a descriptive comparison while reporting how many conformers
+in one generated polyene family remain distinct on each tested grid.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from hashmol3d.core import DESCRIPTOR_VERSION, hash_molecule
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# HashMol3D v0.8.0 accepts powers of ten no greater than 1 Å.  The coarse
+# HashMol3D v0.9.0 accepts powers of ten no greater than 1 Å.  The coarse
 # end is wide enough to trigger saturation, and 1e-4 is the shipped default.
 EPS = [1.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
 TAU_SAME = 1e-3  # two geometries with class-gap below this are the "same"
@@ -174,12 +173,13 @@ def main():
     print("\nInterpretation:")
     print(f" - 'nDist' = # genuinely-distinct conformers (class-gap >= {TAU_SAME:.0e} Ang).")
     print(" - u@eps  = # unique hashes among those reps at precision eps.")
-    print("   A false merge has occurred whenever u@eps < nDist.")
-    print(" - eps* = L / (N choose 2): the distance-bin saturation scale.")
+    print("   A coarse-grid merge has occurred whenever u@eps < nDist.")
+    print(" - eps* = L / (N choose 2): a descriptive multiset-crowding scale,")
+    print("   not a collision bound for the canonical matrix descriptor.")
     default_ok = all(r["uniq"][1e-4] == r["ndist"] for r in rows)
     print(
         f" - At the DEFAULT precision 1e-4: "
-        f"{'zero false merges for every chain.' if default_ok else 'SOME false merges occurred!'}"
+        f"{'all retained conformers remain distinct.' if default_ok else 'some retained conformers merge.'}"
     )
 
     # ---- figure: required precision vs chain length ----
@@ -188,7 +188,7 @@ def main():
     # closest distinct-conformer gap: eps must be finer than this to resolve
     dmin_N = [r["n"] for r in rows if np.isfinite(r["dmin"])]
     dmin_v = [r["dmin"] for r in rows if np.isfinite(r["dmin"])]
-    # coarsest eps in the grid with no false merge (>= this value works)
+    # Coarsest tested grid retaining every selected representative.
     onset = []
     for r in rows:
         good = [e for e in EPS if r["uniq"][e] == r["ndist"]]
@@ -205,7 +205,7 @@ def main():
         "D--",
         color="green",
         alpha=0.7,
-        label="coarsest tested $\\epsilon$ with 0 false merges",
+        label="coarsest tested $\\epsilon$ retaining all representatives",
     )
     plt.axhline(1e-4, ls="--", color="gray", lw=1)
     plt.text(Ns[0], 1.25e-4, "default $\\epsilon=10^{-4}$ Å", color="gray", fontsize=9)
@@ -213,7 +213,7 @@ def main():
     plt.ylabel("precision $\\epsilon$ (Å)")
     plt.yscale("log")
     plt.ylim(5e-5, 3.0)
-    plt.title("Precision needed for discrimination vs molecule size")
+    plt.title("Exploratory conformer retention versus molecule size")
     plt.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=1, fontsize=8, frameon=False)
     plt.grid(True, which="both", ls=":", alpha=0.5)
     plt.tight_layout()

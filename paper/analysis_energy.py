@@ -1,5 +1,5 @@
 """
-Energy-resolution calibration for HashMol3D, done properly.
+Exploratory local-curvature probes for HashMol3D precision studies.
 
 An earlier version estimated the energy implied by a distance precision by
 taking a *single one-sided* 1e-2 Angstrom bond stretch of an MMFF geometry and
@@ -9,27 +9,31 @@ same electronic-structure method, so the linear gradient term vanishes, and
 (ii) the response to be harmonic over the fitted interval. Neither was shown,
 and at a nonstationary geometry a linear term dominates.
 
-This script does the calibration the way the reviewer asked:
+This script replaces that invalid one-sided estimate with a controlled local
+calculation:
 
   1. Optimize each polyene at RHF/STO-3G (geomeTRIC), and *verify* it is a
      stationary point by reporting SCF convergence and the max analytic
      gradient component at the optimized geometry.
-  2. Probe the stiffest coordinates (a C-H stretch and a backbone C=C/C-C
-     stretch) with SYMMETRIC +/-delta displacements at several delta.
-  3. Fit E(delta) = E0 + a*delta + (1/2) k*delta^2 and report the linear term
-     a (which should be ~0 at a stationary point), the fitted force constant k
-     with its uncertainty, and R^2. The implied energy resolution at a distance
-     precision eps is DeltaE(eps) = (1/2) k_max eps^2, using the stiffest probed
-     coordinate (a conservative, worst-case choice) and verifying that the
-     max pairwise-distance change per unit delta is ~1.
-  4. Spot-check a representative subset at B3LYP/def2-SVP -- a level appropriate
-     for quantitative energy differences -- to show the STO-3G force constant
-     and the resulting eps=1e-4 resolution are the right order of magnitude and
-     stay far below chemical accuracy (1 kcal/mol ~ 1.6 mHa).
+  2. Probe two selected directions (one C-H and one backbone C=C/C-C
+     direction) with SYMMETRIC +/-delta displacements at several delta.
+  3. Fit E(delta) = E0 + a*delta + (1/2) k*delta^2 and report the linear term,
+     fitted curvature k with its uncertainty, and R^2. We also tabulate
+     (1/2)k*eps^2 as a local scale for that imposed displacement.
+  4. Spot-check two systems at B3LYP/def2-SVP.
 
-Outputs: printed report, energy_results.csv, and fig_energy_resolution.pdf (used
-by the paper). All electronic-structure work is optional analysis-only tooling
-(pyscf/geomeTRIC/rdkit); the hashmol3d package itself remains NumPy-only.
+The larger of these two sampled curvatures is not the largest Hessian
+eigenvalue. Moreover, equality of quantized distances does not bound Cartesian
+displacements by eps. The reported local quadratic scale is therefore neither
+an upper bound on unresolved energy nor a universal energy resolution for the
+identifier.
+
+Outputs: printed report, energy_results.csv, and fig_energy_resolution.pdf (the
+legacy figure filename is retained for workflow compatibility). The
+supplementary material uses the CSV values, not the figure, and states their
+limited interpretation. All electronic-structure work is optional
+analysis-only tooling (pyscf/geomeTRIC/rdkit); the hashmol3d package itself
+remains NumPy-only.
 """
 
 from __future__ import annotations
@@ -57,7 +61,6 @@ from pyscf import dft, gto, scf
 from pyscf.data.nist import BOHR  # Angstrom per Bohr
 from pyscf.geomopt.geometric_solver import optimize
 
-CHEM_ACC_HA = 1.0 / 627.509  # 1 kcal/mol in Hartree (~1.594 mHa)
 EPS_REF = 1e-4  # default distance precision (Angstrom)
 
 # Symmetric displacement grid (Angstrom) for the force-constant fit.
@@ -147,7 +150,7 @@ def nearest_neighbor(X, i):
 def scan_coordinate(Z, X0, level, atom_idx, e0):
     """Symmetric +/-delta scan: displace `atom_idx` along the bond to its
     nearest neighbor. Return dict with fit (a, k, sigmas, R^2), the max
-    distance-change slope, and the energy resolution at EPS_REF.
+    distance-change slope, and the local quadratic scale at EPS_REF.
     """
     j = nearest_neighbor(X0, atom_idx)
     u = X0[atom_idx] - X0[j]
@@ -228,7 +231,8 @@ def main():
         hi, ci = stiff_atom_choices(Z, X_opt)
         sH = scan_coordinate(Z, X_opt, "hf/sto-3g", hi, e0)
         sC = scan_coordinate(Z, X_opt, "hf/sto-3g", ci, e0)
-        # conservative: stiffest probed coordinate
+        # Retain the larger of the two sampled curvatures for a compact summary.
+        # This is not claimed to be the stiffest molecular coordinate.
         stiff = sH if sH["k"] >= sC["k"] else sC
         print(
             f"\n[{name}] N={n} HF/STO-3G opt: SCF converged={scf_ok}, "
@@ -239,15 +243,14 @@ def main():
                 f"   {lab:>7} stretch: k={s['k']:.4f}+/-{s['sig_k']:.4f} Ha/A^2, "
                 f"a={s['a']:+.2e}+/-{s['sig_a']:.1e} Ha/A (stationary=>~0), "
                 f"R^2={s['r2']:.5f}, dmax/|d|={s['dmax_slope']:.3f}, "
-                f"E-res@1e-4={s['eres']:.2e} Ha, SCFok={s['conv_all']}"
+                f"local-scale@1e-4={s['eres']:.2e} Ha, SCFok={s['conv_all']}"
             )
 
         row = dict(
             name=name, n=n, nC=nC, scf_converged=scf_ok, max_grad=gmax, e0=e0,
             k_CH=sH["k"], sig_k_CH=sH["sig_k"], a_CH=sH["a"], r2_CH=sH["r2"],
             k_CC=sC["k"], sig_k_CC=sC["sig_k"], a_CC=sC["a"], r2_CC=sC["r2"],
-            k_max=stiff["k"], eres_1e4=stiff["eres"],
-            eres_over_chemacc=stiff["eres"] / CHEM_ACC_HA,
+            k_probe_max=stiff["k"], local_scale_1e4=stiff["eres"],
         )
 
         # ---- subset cross-check at B3LYP/def2-SVP ----
@@ -258,14 +261,13 @@ def main():
                 sHb = scan_coordinate(Z, Xb, "b3lyp/def2-svp", hib, e0b)
                 sCb = scan_coordinate(Z, Xb, "b3lyp/def2-svp", cib, e0b)
                 stiffb = sHb if sHb["k"] >= sCb["k"] else sCb
-                row["k_max_b3lyp"] = stiffb["k"]
-                row["eres_1e4_b3lyp"] = stiffb["eres"]
+                row["k_probe_max_b3lyp"] = stiffb["k"]
+                row["local_scale_1e4_b3lyp"] = stiffb["eres"]
                 row["max_grad_b3lyp"] = gmax_b
                 print(
                     f"   [B3LYP/def2-SVP] SCF conv={ok_b}, max|grad|={gmax_b:.2e}, "
-                    f"k_max={stiffb['k']:.4f} Ha/A^2, "
-                    f"E-res@1e-4={stiffb['eres']:.2e} Ha "
-                    f"({stiffb['eres']/CHEM_ACC_HA:.1e} x chem-acc)"
+                    f"k_probe={stiffb['k']:.4f} Ha/A^2, "
+                    f"local-scale@1e-4={stiffb['eres']:.2e} Ha"
                 )
                 fig_Nb.append(n)
                 fig_eresb.append(stiffb["eres"])
@@ -284,8 +286,8 @@ def main():
     lead = ["name", "n", "nC", "scf_converged", "max_grad", "e0",
             "k_CH", "sig_k_CH", "a_CH", "r2_CH",
             "k_CC", "sig_k_CC", "a_CC", "r2_CC",
-            "k_max", "eres_1e4", "eres_over_chemacc",
-            "k_max_b3lyp", "eres_1e4_b3lyp", "max_grad_b3lyp"]
+            "k_probe_max", "local_scale_1e4",
+            "k_probe_max_b3lyp", "local_scale_1e4_b3lyp", "max_grad_b3lyp"]
     fields = [k for k in lead if k in keys] + [k for k in keys if k not in lead]
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -294,18 +296,16 @@ def main():
             w.writerow({k: r.get(k, "") for k in fields})
     print(f"\nWrote {csv_path}")
 
-    # ---- figure: energy resolution vs N, with chemical-accuracy line ----
+    # ---- figure: selected local quadratic scale vs N ----
     plt.figure(figsize=(6.4, 4.2))
-    plt.plot(fig_N, fig_eres, "o-", label=r"HF/STO-3G: $\frac{1}{2}k_{\max}\varepsilon^2$ at $\varepsilon=10^{-4}$ Å")
+    plt.plot(fig_N, fig_eres, "o-", label=r"HF/STO-3G: $\frac{1}{2}k_{\rm probe}\varepsilon^2$ at $\varepsilon=10^{-4}$ Å")
     if fig_Nb:
         plt.plot(fig_Nb, fig_eresb, "s--", color="seagreen",
                  label=r"B3LYP/def2-SVP cross-check")
-    plt.axhline(CHEM_ACC_HA, ls="--", color="crimson", lw=1,
-                label=r"chemical accuracy ($\approx1.6$ mHa)")
     plt.xlabel("number of atoms $N$")
-    plt.ylabel("energy resolution at $\\varepsilon=10^{-4}$ Å (Hartree)")
+    plt.ylabel("selected local quadratic scale (Hartree)")
     plt.yscale("log")
-    plt.title("Energy resolution from the fitted stiff-mode force constant")
+    plt.title("Local curvature scale for two selected displacement directions")
     plt.legend(loc="best", fontsize=8, frameon=False)
     plt.grid(True, which="both", ls=":", alpha=0.5)
     plt.tight_layout()

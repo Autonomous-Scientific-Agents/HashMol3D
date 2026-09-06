@@ -17,9 +17,9 @@ things as a function of chain length N:
 Two perturbation modes are studied:
 
   * RANDOM per-atom Gaussian noise  -> models numerical / round-off noise.
-  * SOFT torsional mode (lever arm) -> rotate one half of the carbon
-    backbone about the central single bond by a small angle; models the
-    large-amplitude soft modes that dominate long flexible chains.
+  * CONSTRUCTED END-HINGED BEND -> rotate one side of a terminal C-C bond
+    about an axis through the terminal carbon. This is a geometric stress
+    test, not a normal mode or a molecular-dynamics sample.
 
 Outputs: printed tables, a CSV, and two PDF figures used in the paper.
 """
@@ -219,7 +219,9 @@ def main():
 
     SIGMA = 1e-4  # random noise magnitude (Ang), ~ tight-opt noise floor
     N_TRIALS = 200
-    N_E_TRIALS = 5  # HF evaluations under noise (costly; enough for a mean)
+    # HF evaluations under noise are costly. Five draws give only a descriptive
+    # mean and do not support a useful uncertainty estimate.
+    N_E_TRIALS = 5
     DTHETA = np.deg2rad(0.5)  # small soft-mode torsion (degrees)
 
     for nd in n_doubles:
@@ -241,9 +243,8 @@ def main():
             rand_dmax.append(np.abs(dn - d0).max())
             rand_dnre.append(abs(nuclear_repulsion(Z, Xn) - nre0))
             if t < N_E_TRIALS:
-                # HF is costly; a few draws suffice for the mean. Computed
-                # after the rng draw, so the seeded noise stream (and every
-                # previously published number) is unchanged.
+                # Computed after the RNG draw so the seeded coordinate-noise
+                # stream is unchanged by whether an energy is evaluated.
                 rand_dE.append(abs(hf_energy(Z, Xn) - e0))
             for p in PRECISIONS:
                 if hash_at(Z, Xn, p) != hash_at(Z, X0, p):
@@ -275,11 +276,10 @@ def main():
             lever_dE = abs(hf_energy(Z, Xt) - e0)
             lever_flip = {p: (hash_at(Z, Xt, p) != hash_at(Z, X0, p)) for p in PRECISIONS}
 
-        # ---- Experiment 3: single central-bond stretch calibration ----
+        # ---- Experiment 3: single central-bond stretch datum ----
         # Stretch one central backbone C-C bond by a fixed DR and measure the
-        # energy cost. This isolates the per-bond stiffness, which sets the
-        # energy resolution implied by a distance precision and should be
-        # (near) chain-length independent.
+        # energy change. A one-sided change from an MMFF reference cannot be
+        # converted into a force constant or an identifier energy resolution.
         DR = 1e-2  # Angstrom
         cb = end_backbone_bond(mol)  # reuse: (a interior-ish, b)
         stretch_dE = stretch_dnre = float("nan")
@@ -376,10 +376,10 @@ def main():
         f"\n=== Experiment 3 (raw stretch datum): single central C-C bond "
         f"stretch, dr = {rows[0]['stretch_dr']:.0e} Ang ==="
     )
-    print("    NOTE: the energy resolution at eps=1e-4 A is obtained from a")
-    print("    symmetric +/-delta force-constant fit in analysis_energy.py.")
-    print("    The one-sided finite difference below is reported only as a raw")
-    print("    geometry->energy sensitivity, not an energy-resolution estimate.")
+    print("    NOTE: the one-sided finite difference below is reported only as")
+    print("    raw geometry-to-energy sensitivity. analysis_energy.py performs")
+    print("    symmetric local-curvature fits, but those fits are not a global")
+    print("    energy-resolution bound for descriptor equality.")
     print(f"{'mol':>10} {'N':>4} {'|dE_HF|(Ha)':>12} {'|dNRE|(Ha)':>12}")
     for r in rows:
         print(

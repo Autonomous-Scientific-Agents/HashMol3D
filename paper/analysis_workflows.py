@@ -1,15 +1,16 @@
 """
-Does the default 1e-4 A precision keep the closely spaced geometries of routine
-quantum-chemistry workflows distinct?
+Exploratory descriptor counts for two quantum-chemistry workflows.
 
 Two workflows probe the coarse (merging) limit of the precision directly:
   * finite-difference Hessian: central displacements +/- delta on every
     Cartesian degree of freedom;
   * geometry optimization: successive iterates converging to a minimum.
 
-We hash each geometry at the default precision and count distinct hashes.
-Reference system: ethanol, HF/STO-3G, optimized with geomeTRIC. Produces the
-numbers behind Table (Section: precision for QC workflows).
+We hash each geometry at the default precision and count distinct descriptors.
+The finite-difference reference is randomly distorted to reduce symmetry, but
+the script does not independently prove that every displacement is inequivalent.
+The results are therefore counts for one ethanol/HF/STO-3G example, not a
+general minimum workflow step or a false-merge benchmark.
 """
 
 from __future__ import annotations

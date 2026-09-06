@@ -6,8 +6,8 @@ what probability does the geometry hash change under coordinate perturbations,
 and how does that probability depend on the noise-to-precision ratio, the atom
 count, and the molecular class? It complements the per-distance amplification
 study (analysis_precision.py) with the descriptor-level flip probability, plus
-the quantization-boundary margins that control it and a realistic round-trip
-duplicate test that reports both false-negative and false-merge rates.
+the quantization-boundary margins that control it, fixed-decimal round trips,
+and a small digest-collision consistency check.
 
 Three parts:
 
@@ -17,20 +17,21 @@ Three parts:
      reference. We sweep the ratio sigma/epsilon and report Wilson 95% binomial
      confidence intervals with explicit trial counts.
 
-  B. Boundary margins. A descriptor flips when *any* pairwise distance crosses
-     a bin boundary. For each molecule we report the distribution of margins
-     (distance of each quantized pair distance to its nearest bin edge) and the
-     minimum margin, which is the single most fragile distance.
+  B. Distance-boundary margins. These remain a diagnostic for the retained
+     canonical distance-matrix option.  The frame descriptor instead quantizes
+     canonical-frame coordinates, so these margins are not used to explain its
+     measured flip rates.
 
-  C. Round-trip duplicate test. For copies that *should* be recognized as the
-     same geometry -- random rigid motions, atom permutations, and fixed-decimal
-     file round-trips -- we report the false-negative rate (hash changed). For
-     copies that should *not* be merged -- distinct molecules, and distinct
-     conformers -- we report the false-merge rate at several precisions.
+  C. Round-trip perturbation test. Random rigid motions and atom permutations
+     must preserve the descriptor. Fixed-decimal serialization and Gaussian
+     noise need not preserve it because they change distances. Deterministic
+     fixed-decimal results are counted once per unique molecule, rather than
+     repeating the same comparison and treating it as an independent trial.
 
-Geometries are MMFF-optimized (RDKit ETKDGv3); this is a geometric-stability
-study, so the force field used to generate the structures is immaterial. All
-randomness is seeded. Outputs: printed tables, CSVs, and a figure.
+Geometries are MMFF-optimized (RDKit ETKDGv3). The resulting boundary margins,
+and therefore the measured flip fractions, depend on these particular
+geometries and on the RDKit version. All randomness is seeded. Outputs: printed
+tables, CSVs, and a figure.
 """
 
 from __future__ import annotations
@@ -59,6 +60,14 @@ import matplotlib.pyplot as plt
 
 rng = np.random.default_rng(20250822)
 DEFAULT_EPS = 1e-4
+METHOD = os.environ.get("HM3D_METHOD", "frame")
+if METHOD not in {"frame", "canonical"}:
+    raise ValueError("HM3D_METHOD must be 'frame' or 'canonical'")
+OUTPUT_SUFFIX = os.environ.get("HM3D_OUTPUT_SUFFIX", "")
+
+
+def output_path(stem, extension):
+    return os.path.join(_here, f"{stem}{OUTPUT_SUFFIX}.{extension}")
 
 
 # --------------------------------------------------------------------------
@@ -91,24 +100,21 @@ def build(smiles: str, seed: int = 0xC0FFEE):
 
 
 def gh(Z, X, eps=DEFAULT_EPS):
-    return hash_molecule(Z, X, precision=eps, method="canonical").geometry_hash
+    return hash_molecule(Z, X, precision=eps, method=METHOD).geometry_hash
 
 
 def gh_desc(Z, X, eps=DEFAULT_EPS):
-    """Return (geometry_hash, full canonical descriptor string).
+    """Return (geometry_hash, full descriptor string).
 
-    The descriptor is the pre-hash canonical form of the quantized element-
-    labeled distance matrix; two structures with different descriptors are
-    genuinely distinct at this grid (Proposition 2), so a shared hash between
-    them would be a true false merge (a truncation/collision event) rather than
-    a legitimate coarse-grid deduplication of quantized-identical geometries.
+    Two different descriptors sharing a hash would be a truncation/collision
+    event rather than a legitimate merge at the selected method and grid.
     """
-    r = hash_molecule(Z, X, precision=eps, method="canonical")
+    r = hash_molecule(Z, X, precision=eps, method=METHOD)
     return r.geometry_hash, r.descriptor
 
 
 def tag_of(Z, X, eps=DEFAULT_EPS):
-    r = hash_molecule(Z, X, precision=eps, method="canonical")
+    r = hash_molecule(Z, X, precision=eps, method=METHOD)
     return r.descriptor.rsplit("|", 1)[1].split(":", 1)[0]
 
 
@@ -165,7 +171,8 @@ def part_A_flip_sweep():
             ps.append(p)
             rows.append(
                 dict(
-                    name=name, cls=cls, N=n, npair=npair, eps=eps, sigma=sigma,
+                    method=METHOD, name=name, cls=cls, N=n, npair=npair,
+                    eps=eps, sigma=sigma,
                     ratio=ratio, trials=n_trials, flips=flips,
                     p=p, ci_lo=lo, ci_hi=hi,
                 )
@@ -176,11 +183,12 @@ def part_A_flip_sweep():
             + " ".join(f"{r:.2f}:{p:.3f}" for r, p in zip(ratios, ps))
         )
 
-    with open(os.path.join(_here, "flip_sweep.csv"), "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+    csv_path = output_path("flip_sweep", "csv")
+    with open(csv_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()), lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
-    print("  wrote flip_sweep.csv")
+    print(f"  wrote {os.path.basename(csv_path)}")
 
     # figure: flip prob vs sigma/eps, one line per molecule
     plt.figure(figsize=(6.4, 4.4))
@@ -197,7 +205,7 @@ def part_A_flip_sweep():
     plt.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16),
                ncol=2, fontsize=7, frameon=False)
     plt.tight_layout()
-    fp = os.path.join(_here, "fig_flips.pdf")
+    fp = output_path("fig_flips", "pdf")
     plt.savefig(fp, bbox_inches="tight")
     print(f"  wrote {fp}")
     return rows
@@ -214,16 +222,18 @@ def part_B_margins():
         Z, X0, _ = build(smi)
         m = boundary_margins(X0, eps)
         frac_fragile = float(np.mean(m < 0.1 * eps))
-        rows.append(dict(name=name, cls=cls, N=len(Z), npair=len(m),
+        rows.append(dict(diagnostic="canonical-distance", name=name, cls=cls,
+                         N=len(Z), npair=len(m),
                          min_margin=float(m.min()), median_margin=float(np.median(m)),
                          frac_below_0p1eps=frac_fragile))
         print(f"  {name:>12} {len(Z):>3} {len(m):>5} {m.min():>13.2e} "
               f"{np.median(m):>10.2e} {frac_fragile:>11.3f}")
-    with open(os.path.join(_here, "boundary_margins.csv"), "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+    csv_path = output_path("boundary_margins", "csv")
+    with open(csv_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()), lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
-    print("  wrote boundary_margins.csv")
+    print(f"  wrote {os.path.basename(csv_path)}")
     return rows
 
 
@@ -243,9 +253,9 @@ def part_C_roundtrip():
     eps = DEFAULT_EPS
     n_rep = 200
 
-    # ---- C1: transforms that MUST preserve the hash (false-negative rate) ----
-    print("\n  C1 false-negative rate (should stay equal), eps=1e-4:")
-    print(f"  {'transform':>22} {'trials':>7} {'false_neg':>10} {'rate':>8}")
+    # ---- C1: exact transformations and coordinate perturbations ----
+    print("\n  C1 descriptor changes, eps=1e-4:")
+    print(f"  {'operation':>22} {'trials':>7} {'changes':>10} {'rate':>8}")
     fn_rows = []
     for label, kind in [
         ("rigid motion (rot+trans)", "rigid"),
@@ -259,7 +269,11 @@ def part_C_roundtrip():
         for name, smi, cls in PANEL:
             Z, X0, _ = build(smi)
             h0 = gh(Z, X0, eps)
-            for _ in range(n_rep // len(PANEL) + 1):
+            # A fixed-decimal round trip is deterministic for a given
+            # molecule. Count it once. Rigid, permutation, and noise cases are
+            # genuinely resampled 21 times per molecule.
+            n_local = 1 if kind in ("rt6", "rt4", "rt3") else n_rep // len(PANEL) + 1
+            for _ in range(n_local):
                 if kind == "rigid":
                     Xt = X0 @ random_rotation().T + rng.normal(0, 5, 3)
                 elif kind == "perm":
@@ -281,18 +295,19 @@ def part_C_roundtrip():
                     fneg += 1
                 trials += 1
         rate = fneg / trials
-        fn_rows.append(dict(transform=label, trials=trials, false_neg=fneg, rate=rate))
+        fn_rows.append(dict(method=METHOD, transform=label, trials=trials,
+                            false_neg=fneg, rate=rate))
         print(f"  {label:>22} {trials:>7} {fneg:>10} {rate:>8.3f}")
 
-    # ---- C2: distinct structures that must NOT merge (false-merge rate) ----
+    # ---- C2: digest-collision sanity check on distinct descriptors ----
     # Distinct conformers of each flexible molecule at several precisions.
-    # Ground truth for "distinct at this grid" is the canonical descriptor, not
+    # Ground truth for "distinct at this grid" is the selected full descriptor, not
     # the RDKit conformer id: rigid molecules (e.g. C2H4) yield many embeddings
     # of the *same* geometry, which SHOULD merge. A false merge is therefore a
     # pair with DIFFERENT descriptors but the SAME geometry hash (a truncation
     # collision). We also report how many pairs are quantized-identical (a
     # legitimate coarse-grid merge) to characterize deduplication behavior.
-    print("\n  C2 false-merge (distinct descriptor, shared hash) + legitimate merges:")
+    print("\n  C2 digest-collision sanity check + quantized-identical pairs:")
     print(f"  {'eps(A)':>10} {'distinct_pairs':>14} {'false_merge':>12} "
           f"{'rate':>10} {'quant_ident':>12}")
     fm_rows = []
@@ -319,30 +334,36 @@ def part_C_roundtrip():
                     distinct_pairs += 1           # genuinely distinct at this grid
                     if hi == hj:
                         false_merge += 1          # different descriptor, same hash: collision
+        # This small number of comparisons cannot validate the cryptographic
+        # collision rate; the result is retained only as a consistency check.
         rate = false_merge / distinct_pairs if distinct_pairs else 0.0
-        fm_rows.append(dict(eps=eps_t, distinct_pairs=distinct_pairs,
+        fm_rows.append(dict(method=METHOD, eps=eps_t, distinct_pairs=distinct_pairs,
                             false_merge=false_merge, rate=rate, quant_ident=quant_ident))
         print(f"  {eps_t:>10.0e} {distinct_pairs:>14} {false_merge:>12} "
               f"{rate:>10.4f} {quant_ident:>12}")
 
-    with open(os.path.join(_here, "roundtrip.csv"), "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["section", "key", "trials_or_pairs", "count", "rate"])
+    csv_path = output_path("roundtrip", "csv")
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(["method", "section", "key", "trials_or_pairs", "count", "rate"])
         for r in fn_rows:
-            w.writerow(["false_negative", r["transform"], r["trials"], r["false_neg"], r["rate"]])
+            w.writerow([METHOD, "descriptor_change", r["transform"], r["trials"],
+                        r["false_neg"], r["rate"]])
         for r in fm_rows:
-            w.writerow(["false_merge", f"eps={r['eps']:.0e}", r["distinct_pairs"],
+            w.writerow([METHOD, "false_merge", f"eps={r['eps']:.0e}", r["distinct_pairs"],
                         r["false_merge"], r["rate"]])
-            w.writerow(["quant_identical", f"eps={r['eps']:.0e}", r["distinct_pairs"] + r["quant_ident"],
+            w.writerow([METHOD, "quant_identical", f"eps={r['eps']:.0e}",
+                        r["distinct_pairs"] + r["quant_ident"],
                         r["quant_ident"], r["quant_ident"] / (r["distinct_pairs"] + r["quant_ident"])
                         if (r["distinct_pairs"] + r["quant_ident"]) else 0.0])
-    print("  wrote roundtrip.csv")
+    print(f"  wrote {os.path.basename(csv_path)}")
     return fn_rows, fm_rows
 
 
 def main():
     print(f"HashMol3D package version: {__version__}")
     print(f"descriptor version: {DESCRIPTOR_VERSION}")
+    print(f"requested method: {METHOD}")
     only = sys.argv[1] if len(sys.argv) > 1 else "all"
     if only in ("all", "A"):
         part_A_flip_sweep()
