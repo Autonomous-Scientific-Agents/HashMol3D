@@ -15,8 +15,13 @@ calculation:
   1. Optimize each polyene at RHF/STO-3G (geomeTRIC), and *verify* it is a
      stationary point by reporting SCF convergence and the max analytic
      gradient component at the optimized geometry.
-  2. Probe two selected directions (one C-H and one backbone C=C/C-C
-     direction) with SYMMETRIC +/-delta displacements at several delta.
+  2. Probe two selected single-atom displacements with SYMMETRIC +/-delta
+     displacements at several delta. The first moves a terminal hydrogen along
+     the bond to its nearest neighbor (a carbon), i.e. a C-H stretch. The
+     second moves a central carbon along the bond to ITS nearest neighbor;
+     that neighbor is not restricted to carbon and is in practice an attached
+     hydrogen, so this is a carbon-displacement probe (which also perturbs
+     several other internal coordinates), not a C=C/C-C bond force constant.
   3. Fit E(delta) = E0 + a*delta + (1/2) k*delta^2 and report the linear term,
      fitted curvature k with its uncertainty, and R^2. We also tabulate
      (1/2)k*eps^2 as a local scale for that imposed displacement.
@@ -194,7 +199,13 @@ def scan_coordinate(Z, X0, level, atom_idx, e0):
 
 
 def stiff_atom_choices(Z, X):
-    """Return (H_index, C_index) for a terminal H and a backbone C to probe."""
+    """Return (H_index, C_index): a terminal H and a central C to displace.
+
+    The H is displaced along its C-H bond (a genuine C-H stretch). The C is
+    displaced along the bond to ITS nearest neighbor, which for these polyenes
+    is an attached hydrogen, so the second probe is a carbon displacement, not
+    a C=C/C-C stretch.
+    """
     Hs = [i for i, z in enumerate(Z) if z == 1]
     Cs = [i for i, z in enumerate(Z) if z == 6]
     # terminal H: the H whose nearest neighbor is a C (all of them) -- pick one
@@ -238,9 +249,9 @@ def main():
             f"\n[{name}] N={n} HF/STO-3G opt: SCF converged={scf_ok}, "
             f"max|grad|={gmax:.2e} Ha/Bohr, E0={e0:.6f} Ha"
         )
-        for lab, s in (("C-H", sH), ("C-C/C=C", sC)):
+        for lab, s in (("C-H", sH), ("C-disp", sC)):
             print(
-                f"   {lab:>7} stretch: k={s['k']:.4f}+/-{s['sig_k']:.4f} Ha/A^2, "
+                f"   {lab:>7} probe: k={s['k']:.4f}+/-{s['sig_k']:.4f} Ha/A^2, "
                 f"a={s['a']:+.2e}+/-{s['sig_a']:.1e} Ha/A (stationary=>~0), "
                 f"R^2={s['r2']:.5f}, dmax/|d|={s['dmax_slope']:.3f}, "
                 f"local-scale@1e-4={s['eres']:.2e} Ha, SCFok={s['conv_all']}"
@@ -249,7 +260,9 @@ def main():
         row = dict(
             name=name, n=n, nC=nC, scf_converged=scf_ok, max_grad=gmax, e0=e0,
             k_CH=sH["k"], sig_k_CH=sH["sig_k"], a_CH=sH["a"], r2_CH=sH["r2"],
-            k_CC=sC["k"], sig_k_CC=sC["sig_k"], a_CC=sC["a"], r2_CC=sC["r2"],
+            nbr_CH=sH["neighbor"],
+            k_Cdisp=sC["k"], sig_k_Cdisp=sC["sig_k"], a_Cdisp=sC["a"],
+            r2_Cdisp=sC["r2"], nbr_Cdisp=sC["neighbor"],
             k_probe_max=stiff["k"], local_scale_1e4=stiff["eres"],
         )
 
@@ -284,8 +297,8 @@ def main():
     keys = sorted({k for r in rows for k in r})
     # keep a stable, readable leading order
     lead = ["name", "n", "nC", "scf_converged", "max_grad", "e0",
-            "k_CH", "sig_k_CH", "a_CH", "r2_CH",
-            "k_CC", "sig_k_CC", "a_CC", "r2_CC",
+            "k_CH", "sig_k_CH", "a_CH", "r2_CH", "nbr_CH",
+            "k_Cdisp", "sig_k_Cdisp", "a_Cdisp", "r2_Cdisp", "nbr_Cdisp",
             "k_probe_max", "local_scale_1e4",
             "k_probe_max_b3lyp", "local_scale_1e4_b3lyp", "max_grad_b3lyp"]
     fields = [k for k in lead if k in keys] + [k for k in keys if k not in lead]

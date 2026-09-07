@@ -6,7 +6,7 @@ what probability does the geometry hash change under coordinate perturbations,
 and how does that probability depend on the noise-to-precision ratio, the atom
 count, and the molecular class? It complements the per-distance amplification
 study (analysis_precision.py) with the descriptor-level flip probability, plus
-the quantization-boundary margins that control it, fixed-decimal round trips,
+the quantization-boundary margins that control it, decimal-rounding tests,
 and a small digest-collision consistency check.
 
 Three parts:
@@ -22,11 +22,13 @@ Three parts:
      canonical-frame coordinates, so these margins are not used to explain its
      measured flip rates.
 
-  C. Round-trip perturbation test. Random rigid motions and atom permutations
-     must preserve the descriptor. Fixed-decimal serialization and Gaussian
-     noise need not preserve it because they change distances. Deterministic
-     fixed-decimal results are counted once per unique molecule, rather than
-     repeating the same comparison and treating it as an independent trial.
+  C. Perturbation test. Random rigid motions and atom permutations must
+     preserve the descriptor. Decimal rounding of the coordinates and Gaussian
+     noise need not preserve it because they change distances. Decimal rounding
+     is deterministic for a given molecule, so each precision is counted once
+     per unique molecule rather than treated as an independent trial. The
+     rounding is applied in memory with numpy.round; it is not a file round
+     trip through a serialized coordinate format.
 
 Geometries are MMFF-optimized (RDKit ETKDGv3). The resulting boundary margins,
 and therefore the measured flip fractions, depend on these particular
@@ -249,7 +251,7 @@ def random_rotation():
 
 
 def part_C_roundtrip():
-    print("\n=== Part C: round-trip duplicate test ===")
+    print("\n=== Part C: perturbation and duplicate test ===")
     eps = DEFAULT_EPS
     n_rep = 200
 
@@ -260,18 +262,18 @@ def part_C_roundtrip():
     for label, kind in [
         ("rigid motion (rot+trans)", "rigid"),
         ("atom permutation", "perm"),
-        ("file round-trip 6 dp", "rt6"),
-        ("file round-trip 4 dp", "rt4"),
-        ("file round-trip 3 dp", "rt3"),
+        ("decimal rounding 6 dp", "rt6"),
+        ("decimal rounding 4 dp", "rt4"),
+        ("decimal rounding 3 dp", "rt3"),
         ("sub-eps noise (s=eps/10)", "subnoise"),
     ]:
         fneg = trials = 0
         for name, smi, cls in PANEL:
             Z, X0, _ = build(smi)
             h0 = gh(Z, X0, eps)
-            # A fixed-decimal round trip is deterministic for a given
-            # molecule. Count it once. Rigid, permutation, and noise cases are
-            # genuinely resampled 21 times per molecule.
+            # Decimal rounding is deterministic for a given molecule. Count it
+            # once. Rigid, permutation, and noise cases are genuinely resampled
+            # 21 times per molecule.
             n_local = 1 if kind in ("rt6", "rt4", "rt3") else n_rep // len(PANEL) + 1
             for _ in range(n_local):
                 if kind == "rigid":
