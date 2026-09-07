@@ -122,7 +122,7 @@ def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
     namespace, not on molecule size. Using the birthday approximation
     ``P ~ n^2 / 2^(b+1)`` for ``b`` hash bits, the required length is
     ``ceil((2*log2(n) - log2(target_prob) - 1) / 4)`` hex characters, clamped
-    to ``[1, 64]`` (64 hex = full SHA-256, enough for ~1e38 items at 1e-9).
+    to ``[1, 64]`` (64 hex = full SHA-256, enough for ~1.5e34 items at 1e-9).
 
     Args:
         n_items: expected number of distinct geometries in one namespace.
@@ -238,15 +238,32 @@ def _as_exact_int(value, name: str) -> int:
 def _validate_atomic_nums(atomic_nums) -> np.ndarray:
     """Validate and normalize atomic numbers to an ``int64`` array.
 
-    Rejects booleans, non-finite and fractional values (``6.9``), and values
-    outside ``[1, _MAX_Z]`` *before* coercing to ``int``, so a fractional or
-    out-of-range input fails with a clear domain error rather than being
-    silently floored (``6.9`` -> carbon) or surfacing later as a symbol-lookup
-    ``KeyError`` (``119``).
+    Rejects booleans, complex values, non-finite and fractional values
+    (``6.9``), and values outside ``[1, _MAX_Z]`` *before* coercing to ``int``,
+    so a fractional or out-of-range input fails with a clear domain error rather
+    than being silently floored (``6.9`` -> carbon) or surfacing later as a
+    symbol-lookup ``KeyError`` (``119``).
+
+    Booleans and complex numbers are rejected against the *original* elements,
+    not the coerced array: ``np.asarray([6, True])`` collapses to a plain
+    integer array that hides the boolean, and ``np.asarray([6 + 1j])`` would
+    later discard the imaginary part. An object-dtype view preserves the
+    caller's Python scalars so these masked cases are caught. An already-coerced
+    numeric array cannot reveal a boolean the caller may have supplied, so that
+    scan is limited to Python sequences and object arrays, which retain the
+    information.
     """
     arr = np.asarray(atomic_nums)
     if arr.dtype == bool:
         raise ValueError("atomic numbers must be integers, not booleans")
+    if np.issubdtype(arr.dtype, np.complexfloating):
+        raise ValueError("atomic numbers must be real integers, not complex numbers")
+    if not isinstance(atomic_nums, np.ndarray) or arr.dtype == object:
+        for x in np.asarray(atomic_nums, dtype=object).reshape(-1):
+            if isinstance(x, (bool, np.bool_)):
+                raise ValueError("atomic numbers must be integers, not booleans")
+            if isinstance(x, numbers.Complex) and not isinstance(x, numbers.Real):
+                raise ValueError("atomic numbers must be real integers, not complex numbers")
     try:
         as_float = arr.astype(float).reshape(-1)
     except (TypeError, ValueError):
@@ -753,7 +770,7 @@ def hash_molecule(
             target corpus and probability.
         method: ``"frame"`` (default) or ``"canonical"``. The canonical
             method hashes the labeled distance matrix in a canonical atom
-            order (complete, but O(N^2) time and memory). The frame method
+            order (complete, but O(N^2) memory). The frame method
             hashes coordinates in the principal-axes frame of the Z-weighted
             gyration tensor -- normally O(N log N) time and O(N) memory,
             suited to proteins and other large systems. Degenerate principal

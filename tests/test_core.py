@@ -13,6 +13,7 @@ from hashmol3d.core import (
     _precision_to_decimals,
     _scaled_distances,
     _state_tag,
+    _validate_atomic_nums,
 )
 
 
@@ -237,6 +238,52 @@ class TestInputValidation:
         # bool is an int subclass but is not a meaningful length.
         with pytest.raises(ValueError):
             hash_molecule(z, coords, length=True)
+
+
+class TestValidateAtomicNums:
+    def test_accepts_ordinary_inputs(self):
+        assert _validate_atomic_nums([6, 1, 8]).tolist() == [6, 1, 8]
+        assert _validate_atomic_nums(np.array([6, 1, 8])).tolist() == [6, 1, 8]
+        # integer-valued floats are accepted and normalized
+        assert _validate_atomic_nums([6.0, 1.0]).tolist() == [6, 1]
+
+    def test_rejects_fractional_and_out_of_range(self):
+        with pytest.raises(ValueError, match="fractional"):
+            _validate_atomic_nums([6.9])
+        with pytest.raises(ValueError, match=r"\[1,"):
+            _validate_atomic_nums([119])
+        with pytest.raises(ValueError, match=r"\[1,"):
+            _validate_atomic_nums([0])
+
+    def test_rejects_plain_bool_array(self):
+        with pytest.raises(ValueError, match="boolean"):
+            _validate_atomic_nums([True, False])
+        with pytest.raises(ValueError, match="boolean"):
+            _validate_atomic_nums(np.array([True, True]))
+
+    def test_rejects_bool_hidden_in_mixed_sequence(self):
+        # ``np.asarray([6, True])`` collapses to an int array, hiding the bool;
+        # the original elements must still be inspected. (Reviewer round 2, #5)
+        with pytest.raises(ValueError, match="boolean"):
+            _validate_atomic_nums([6, True])
+        with pytest.raises(ValueError, match="boolean"):
+            _validate_atomic_nums(np.array([True, 6], dtype=object))
+
+    def test_rejects_complex(self):
+        # ``astype(float)`` would silently discard the imaginary part.
+        with pytest.raises(ValueError, match="complex"):
+            _validate_atomic_nums([6 + 1j])
+        with pytest.raises(ValueError, match="complex"):
+            _validate_atomic_nums(np.array([6 + 1j]))
+        with pytest.raises(ValueError, match="complex"):
+            _validate_atomic_nums(np.array([6 + 0j], dtype=object))
+
+    def test_rejects_through_public_api(self):
+        coords = [[0, 0, 0], [0, 0, 0.7]]
+        with pytest.raises(ValueError, match="boolean"):
+            hash_molecule([6, True], coords)
+        with pytest.raises(ValueError, match="complex"):
+            hash_molecule([6 + 1j, 1], coords)
 
 
 class TestDeterminism:

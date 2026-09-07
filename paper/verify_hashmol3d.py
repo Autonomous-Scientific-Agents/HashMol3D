@@ -233,11 +233,24 @@ check("degenerate-rounding fallback deterministic + invariant", ok)
 noisy = xw + rng.uniform(-1e-9, 1e-9, xw.shape)
 check("sub-precision noise stable", h(zw, noisy, precision=1e-4) == base)
 
-# 15. Rounding boundary illustration
-d1, d2 = 0.123450000001, 0.123449999999
-hb1 = h([1, 1], [[0, 0, 0], [0, 0, d1]], precision=1e-4)
-hb2 = h([1, 1], [[0, 0, 0], [0, 0, d2]], precision=1e-4)
-print(f"     rounding-boundary -> {'SAME' if hb1 == hb2 else 'DIFFER'} (residual boundary risk)")
+# 15. Rounding-boundary illustration: the two methods quantize different
+# quantities, so a perturbation that crosses one method's boundary need not
+# cross the other's. A bond length straddling a C distance-bin edge changes C
+# but not F; a length straddling an F centered-coordinate edge changes F but
+# not C. (F rounds the centered coordinates +/- d/2, so its boundaries fall at
+# different bond lengths than C's distance boundaries.)
+def _pair(d, method):
+    return h([1, 1], [[0, 0, 0], [0, 0, d]], precision=1e-4, method=method)
+
+
+# 0.12345 straddles a C distance boundary but not an F coordinate boundary.
+dc1, dc2 = 0.123450000001, 0.123449999999
+check("C boundary crossing changes C descriptor", _pair(dc1, "canonical") != _pair(dc2, "canonical"))
+check("same C boundary leaves F descriptor unchanged", _pair(dc1, "frame") == _pair(dc2, "frame"))
+# 0.12350 straddles an F coordinate boundary but not a C distance boundary.
+df1, df2 = 0.123500000001, 0.123499999999
+check("F boundary crossing changes F descriptor", _pair(df1, "frame") != _pair(df2, "frame"))
+check("same F boundary leaves C descriptor unchanged", _pair(df1, "canonical") == _pair(df2, "canonical"))
 
 # 16. Charge/mult do not affect geometry hash
 check("charge does not affect geom hash", h(zw, xw, charge=1) == h(zw, xw, charge=-2))

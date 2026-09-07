@@ -1,4 +1,4 @@
-# HashMol3D Specification v0.9.1
+# HashMol3D Specification v0.9.2
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
@@ -43,26 +43,34 @@ are a subset of the transformations that leave the eigenvalues of the
 non-relativistic molecular Hamiltonian unchanged, but the descriptor does
 **not** claim invariance under every spectrum-preserving operation.
 
-Invariance to small numerical noise is **not** guaranteed. A perturbation
-smaller than the requested precision usually leaves the hash unchanged,
-but a perturbation that crosses a quantization boundary or a
-frame-selection boundary (a near-degenerate principal axis, an anchor at
-its acceptance threshold) can change it. See §7 and the manuscript's
-finite-grid and stability analysis for the empirical rate.
+Invariance to small numerical noise is **not** guaranteed. Perturbations
+can change the descriptor when they cross quantization or frame-selection
+boundaries (a near-degenerate principal axis, an anchor at its acceptance
+threshold); their magnitude alone does not determine whether the
+identifier changes. In particular a perturbation smaller than the
+requested precision can still change the hash if it straddles a boundary,
+and one larger than the precision can leave it unchanged if it does not.
+See §7 and the manuscript's finite-grid and stability analysis for the
+empirical rate.
 
 The geometry hash is also **not** invariant under:
 
 - changes in any atomic number Z (isotopes share Z and therefore hash alike)
 - changes in the descriptor version tag
-- geometric distortions larger than the chosen precision
+- geometric distortions that move the quantized representation to a
+  different grid cell (a distortion larger than the chosen precision need
+  not do so, and a smaller one can)
 
 The default frame signature is furthermore **complete on its coordinate
 grid**: equal descriptors contain the same sorted element-labelled
 coordinates in an orthonormal canonical frame. The optional canonical
-distance signature is complete on its rounded-distance grid. Thus
-homometric configurations — distinct geometries with the same distance
-*multiset* — receive distinct hashes (except for a truncated SHA-256
-collision, §7, or the explicitly tagged stable-WL budget fallback, §4.4).
+distance signature is complete on its rounded-distance grid. Completeness
+concerns each method's specified *quantized* representation: quantization
+can merge distinct unrounded geometries into one grid cell. Subject to
+that quantization, homometric configurations — distinct geometries with
+the same distance *multiset* — receive distinct hashes (except for a
+truncated SHA-256 collision, §7, or the explicitly tagged stable-WL budget
+fallback, §4.4).
 
 The **state tag** (and therefore the full identifier) additionally
 changes with charge or multiplicity. Two states of the same geometry
