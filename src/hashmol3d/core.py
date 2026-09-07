@@ -139,14 +139,16 @@ def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
     bits = 2.0 * math.log2(n) - math.log2(target_prob) - 1.0
     hexlen = int(math.ceil(bits / 4.0))
     if hexlen > _MAX_LENGTH:
-        # The full SHA-256 digest cannot reach ``target_prob`` for this many
-        # items. Clamping silently would report a length that does not meet
-        # the requested bound, so signal the shortfall instead of hiding it.
+        # The birthday approximation ``P ~ n^2 / 2^(b+1)`` overestimates the
+        # collision probability once it leaves its small-probability regime, so
+        # a length estimate above the digest size does not prove the true
+        # probability at 256 bits exceeds ``target_prob``. Report the clamp
+        # without asserting a shortfall.
         warnings.warn(
-            f"a collision probability of {target_prob!r} for {n} items needs "
-            f"{hexlen} hex characters, exceeding the {_MAX_LENGTH}-character "
-            f"SHA-256 digest; returning {_MAX_LENGTH}. The actual collision "
-            "probability at this length is higher than requested.",
+            f"the birthday approximation requests {hexlen} hex characters for "
+            f"a collision probability of {target_prob!r} at {n} items, more "
+            f"than the {_MAX_LENGTH}-character SHA-256 digest; returning the "
+            f"full SHA-256 digest ({_MAX_LENGTH} hex characters).",
             UserWarning,
             stacklevel=2,
         )

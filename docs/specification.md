@@ -1,4 +1,4 @@
-# HashMol3D Specification v0.9.2
+# HashMol3D Specification v0.9.3
 
 **Status:** Draft standard
 **Canonical algorithm:** SHA-256
