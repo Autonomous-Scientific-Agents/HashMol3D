@@ -1,8 +1,8 @@
-# HashMol3D Specification v0.10.0
+# HashMol3D Specification v0.11.0
 
 **Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
-**Canonical version tag:** `7-FRAME-SHA256`
+**Canonical version tag:** `8-FRAME-SHA256`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
@@ -14,7 +14,7 @@ A HashMol3D identifier is a single ASCII string with three parts:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-b4db5388ff28342bdc809a83891e65ea`.
+For example: `H2Oq0m1-bac9655753f489d6cbfdb299d59adbda`.
 
 - **Hill formula** — carbon first if present, then hydrogen, then the
   remaining elements alphabetically by symbol. A count of 1 is omitted.
@@ -186,10 +186,16 @@ The default method normally takes O(N log N) time and O(N) memory:
    If `rho ≤ 64 * eps64 * R`, with `eps64 = 2^-52`, serialize the
    intrinsic line `(Z, 0, 0, rint((v_i·u3)s))`, minimizing over both axial
    signs. This accepts a line up to float64 roundoff, not an arbitrary
-   sub-grid bend. Other clouds with `R s < 10` use §4.1–4.4 with a warning.
+   sub-grid bend. Continue to the gap test for other clouds, including those
+   with `R s < 10`.
 4. Define relative gaps `g1=(λ2−λ1)/λ3` and `g2=(λ3−λ2)/λ3`.
    If both are at least **0.05**, use the eigenvectors in ascending
-   eigenvalue order, as in the v0.8 principal-frame method.
+   eigenvalue order, regardless of `R s`: no atom anchor is needed.
+   Otherwise, clouds with `R s < 10` use §4.1–4.4 with a warning. This
+   preserves the short-anchor safeguard and prevents a short finite bend
+   from entering the half-grid intrinsic-line rule below. The factor 10 is
+   a fixed anchor-conditioning policy, not an input-noise estimate or a
+   mathematical requirement for a principal-axis frame.
 5. If exactly one gap is below 0.05, preserve the isolated eigenvector
    `u`. For every atom form its projection into the degenerate plane,
    `p_i = v_i − (v_i·u)u`. If the isolated axis is the largest-moment
@@ -253,7 +259,7 @@ components, in this fixed order:
 
 Where:
 
-- `<version>` is a string, e.g. `7-FRAME-SHA256`.
+- `<version>` is a string, e.g. `8-FRAME-SHA256`.
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
 - `<z_ordered>` is the list of atomic numbers in canonical atom order,
   comma-separated (this always coincides with the ascending-sorted
@@ -272,9 +278,9 @@ written into the readable prefix of the identifier instead.
 
 Example using the default frame method (water, `precision = 1e-4`); this
 descriptor's SHA-256 digest, truncated to the default 32 hex characters,
-is the geometry hash `b4db5388ff28342bdc809a83891e65ea`:
+is the geometry hash `bac9655753f489d6cbfdb299d59adbda`:
 
-    V:7-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
+    V:8-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
 
 (The molecular-plane normal occupies the first axis. The two hydrogen rows
 precede oxygen after lexicographic sorting.)
@@ -316,11 +322,14 @@ To guarantee identical identifiers across machines:
 Any change to the descriptor format or semantics requires a new
 version tag.
 
-Version 7 adds the early collinearity check for small nonpoint clouds. It
-changes some coarse-grid frame requests from `C` to `F`. The version field is
-hashed, so **all version-7 digests differ from their version-6 counterparts**,
-even when their geometry bodies are unchanged. Recompute a corpus consistently
-when migrating; version-6 and version-7 identifiers must not be mixed.
+Version 7 introduced the early collinearity check for small nonpoint clouds.
+Version 8 additionally accepts separated principal moments before applying the
+minimum extent for atom anchors. This changes some coarse-grid requests from
+`C` to `F` (including water at 0.1 and 1 angstrom); the anchor and gap thresholds
+are unchanged. Because the version field is hashed, **all version-8 digests
+differ from versions 6 and 7**, even when the geometry body is unchanged.
+Recompute a corpus consistently when migrating; identifiers from different
+versions must not be mixed.
 
 ## 9. Future tagged extensions
 
@@ -352,8 +361,8 @@ result = hash_molecule(
     length=None,  # 32 hex (128-bit) if None
     method="frame",  # default; use "canonical" for the distance method
 )
-print(result.hash_str)  # H2Oq0m1-b4db5388ff28342bdc809a83891e65ea
-print(result.geometry_hash)  # b4db5388ff28342bdc809a83891e65ea
+print(result.hash_str)  # H2Oq0m1-bac9655753f489d6cbfdb299d59adbda
+print(result.geometry_hash)  # bac9655753f489d6cbfdb299d59adbda
 ```
 
 A file-based convenience wrapper is also provided:

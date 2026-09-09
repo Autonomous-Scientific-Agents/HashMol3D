@@ -135,9 +135,13 @@ for larger clouds.
 Anchors affect only frame construction: the original coordinates are always
 projected and hashed. All eight axis signs are evaluated, retaining parity
 invariance without handedness conventions. A 10-grid-unit minimum anchor
-length prevents sub-precision noise from defining a global orientation, and
-a 10,000-candidate budget bounds symmetry enumeration. Either condition
-selects the canonical distance method with a warning.
+length is a conservative policy for avoiding short vectors when defining an
+orientation; it is not a stability guarantee or an estimate of input noise.
+Version 8 applies the whole-cloud extent rejection only after accepting a
+well-conditioned principal-axis frame, which needs no atom anchors. Water
+therefore uses F at 0.1 and 1 angstrom grids. The actual transverse-anchor
+checks and the 10,000-candidate budget are unchanged; failure selects the
+canonical distance method with a warning.
 
 Generic cost is O(N log N) time and O(N) memory. An axial degeneracy with M
 tied anchors costs O(M N log N); a fully degenerate tensor with M tied atom

@@ -154,7 +154,7 @@ print(f"branch audit: {AUDIT_BRANCHES}")
 
 
 def _frame_branch(Z, coords):
-    """Classify the deterministic frame branch used by descriptor v7.
+    """Classify the deterministic frame branch used by descriptor v8.
 
     This mirrors the branch predicates in ``hashmol3d.core._frame_signature``;
     it is diagnostic only and does not participate in descriptor generation.
@@ -190,12 +190,13 @@ def _frame_branch(Z, coords):
         residual = float(np.linalg.norm(projected, axis=1).max())
         if residual <= 64.0 * np.finfo(np.float64).eps * float(radii.max()):
             return "line"
-        return "canonical-fallback"
 
     gap0 = float((lam[1] - lam[0]) / lam[2])
     gap1 = float((lam[2] - lam[1]) / lam[2])
     if min(gap0, gap1) >= 0.05:
         return "principal"
+    if max_radius_grid < 10.0:
+        return "canonical-fallback"
 
     if (gap0 < 0.05) != (gap1 < 0.05):
         unique_slot = 2 if gap0 < 0.05 else 0

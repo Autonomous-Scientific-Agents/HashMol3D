@@ -1,4 +1,4 @@
-"""Independent verification of the HashMol3D v7 default frame descriptor.
+"""Independent verification of the HashMol3D v8 default frame descriptor.
 
 The retained canonical option is checked explicitly where its distinct path
 or fallback behavior matters.
@@ -210,6 +210,12 @@ rfc = hash_molecule(
 )
 check(
     "ill-conditioned frame uses deterministic canonical fallback", rff.descriptor == rfc.descriptor
+)
+
+# Separated principal moments need no atom anchor, even on a coarse grid.
+check(
+    "coarse-grid water uses principal F without canonical search",
+    all("|F:" in hash_molecule(zw, xw, precision=p, node_budget=1).descriptor for p in (0.1, 1.0)),
 )
 
 # An exactly linear geometry bypasses the coarse-grid anchor-size guard.

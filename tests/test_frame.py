@@ -39,6 +39,29 @@ def _chain(n, seed):
 
 
 class TestFrameMethod:
+    @pytest.mark.parametrize("precision", [0.1, 1.0])
+    @pytest.mark.parametrize("scale", [0.01, 0.1, 1.0])
+    def test_short_principal_frame_needs_no_anchor(self, water, precision, scale, monkeypatch):
+        z, coords = water
+        coords = coords * scale
+        precision *= scale
+
+        def unexpected_distance_matrix(*args, **kwargs):
+            pytest.fail("separated principal moments must not allocate a distance matrix")
+
+        monkeypatch.setattr(core, "_scaled_distances", unexpected_distance_matrix)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = hash_molecule(z, coords, precision=precision, node_budget=1)
+            assert "|F:" in result.descriptor
+            rng = np.random.default_rng(83)
+            for t in range(20):
+                zz, cc = _scramble(z, coords, rng, reflect=t % 2 == 1)
+                assert (
+                    hash_molecule(zz, cc, precision=precision, node_budget=1).descriptor
+                    == result.descriptor
+                )
+
     def test_frame_is_default(self, chiral_chfclbr):
         z, coords = chiral_chfclbr
         assert (
@@ -204,6 +227,26 @@ class TestDegenerateFrames:
 
 
 class TestQM9NearLines:
+    @pytest.mark.parametrize(
+        "case_id, precision, expected",
+        [
+            ("gdb_2", 0.1, "C"),
+            ("gdb_3", 0.1, "F"),
+            ("gdb_3", 1.0, "F"),
+            ("gdb_484", 0.01, "C"),
+            ("gdb_14562", 0.01, "C"),
+            ("gdb_485", 0.001, "C"),
+            ("gdb_14563", 0.001, "C"),
+        ],
+    )
+    def test_coarse_grid_principal_and_anchor_decisions(self, case_id, precision, expected):
+        path = Path(__file__).resolve().parents[1] / "paper" / "qm9_frame_cases.json"
+        case = next(c for c in json.loads(path.read_text())["cases"] if c["qm9_id"] == case_id)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            result = hash_molecule(case["atomic_numbers"], case["coordinates"], precision=precision)
+        assert f"|{expected}:" in result.descriptor
+
     @pytest.mark.parametrize(
         "case_id, expected",
         [("gdb_25", "CFF"), ("gdb_14564", "CFF"), ("gdb_5", "FCF")],

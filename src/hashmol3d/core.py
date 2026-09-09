@@ -60,7 +60,7 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "7-FRAME-SHA256"
+DESCRIPTOR_VERSION = "8-FRAME-SHA256"
 
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
@@ -592,12 +592,18 @@ def _frame_signature(
         max_projected = float(np.linalg.norm(projected, axis=1).max())
         if max_projected <= _FRAME_LINEAR_REL_TOL * float(radii.max()):
             return _frame_body(line_rows(axis))
-        return None
 
     gap0 = float((lam[1] - lam[0]) / lam[2])
     gap1 = float((lam[2] - lam[1]) / lam[2])
     if min(gap0, gap1) >= _FRAME_GAP_MIN:
         return _frame_body(_rows_in_basis(z, c, vec, scale))
+
+    # Principal axes need no atom anchor: their conditioning is controlled by
+    # the relative moment gaps above, independently of the output grid. Only
+    # unresolved eigenspaces require the minimum anchor extent. Keep short
+    # finite bends out of the half-grid intrinsic-line rule below.
+    if max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
+        return None
 
     def quantized(values: np.ndarray) -> np.ndarray:
         scaled = values * scale

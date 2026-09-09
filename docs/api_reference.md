@@ -6,7 +6,7 @@ A HashMol3D identifier has the form:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-b4db5388ff28342bdc809a83891e65ea`.
+For example: `H2Oq0m1-bac9655753f489d6cbfdb299d59adbda`.
 
 - **Hill formula**: carbon first if present, then hydrogen, then the
   remaining elements alphabetically. A count of 1 is omitted

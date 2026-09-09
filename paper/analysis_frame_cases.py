@@ -1,7 +1,7 @@
-"""Reproduce the three QM9 near-line path decisions without a dataset download.
+"""Reproduce QM9 principal-axis and near-line path decisions without a dataset download.
 
 The JSON retains four-decimal SDF coordinates from the checksum-pinned corpus.
-Gap-threshold sweeps are diagnostics, not alternative version-7 settings.
+Gap-threshold sweeps are diagnostics, not alternative version-8 settings.
 Run: python paper/analysis_frame_cases.py (requires HashMol3D and NumPy).
 """
 
@@ -46,6 +46,7 @@ def diagnose(case, precision, threshold):
         "max_radius_angstrom": f"{radius:.12g}",
         "max_transverse_angstrom": f"{transverse:.12g}",
         "small_relative_gap": f"{(lam[1] - lam[0]) / lam[2]:.12g}",
+        "version_7_path": case["version_7_paths"][f"{precision:g}"] if threshold == 0.05 else "",
         "path": tag,
     }
 
@@ -55,7 +56,7 @@ def main():
     data = json.loads((here / "qm9_frame_cases.json").read_text())
     rows = []
     for case in data["cases"]:
-        for precision in (1.0, 0.1, 1e-4, 1e-5, 1e-6):
+        for precision in (1.0, 0.1, 0.01, 0.001, 1e-4, 1e-5, 1e-6):
             rows.append(diagnose(case, precision, 0.05))
         for threshold in (0.01, 0.001, 1e-6, 1e-8, 1e-10):
             rows.append(diagnose(case, 1e-4, threshold))
