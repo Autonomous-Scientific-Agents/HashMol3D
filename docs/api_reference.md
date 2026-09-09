@@ -81,10 +81,16 @@ res = hash_molecule(z, coords, length=L)
 
 `str(result)` returns `result.hash_str`.
 
-**Invariance:** the `geometry_hash` (and therefore the full identifier,
-at fixed charge and multiplicity) is invariant under permutation of
-atoms, rigid translation, rigid rotation, spatial inversion (parity),
-and sub-precision numerical noise.
+**Invariance:** in exact arithmetic the `geometry_hash` (and therefore the
+full identifier, at fixed charge and multiplicity) is invariant under
+permutation of atoms, rigid translation, rigid rotation, and spatial
+inversion (parity).
+
+Invariance under numerical noise is **not** guaranteed, including noise
+smaller than `precision`: see [specification §2](specification.md), which is
+normative here. A perturbation changes the identifier when it moves the
+quantized representation to a different grid cell, and its magnitude alone
+does not determine whether it does.
 
 ## `hash_xyz(path, **kwargs)`
 

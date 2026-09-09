@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 HERE = Path(__file__).resolve().parent
 PRECISIONS = (
     ("1", "1"),
@@ -88,17 +87,12 @@ def aggregate():
             total = next(row for row in stats if row["dataset"] == "TOTAL")
             collisions = {
                 int(row["bits"]): row
-                for row in _read_rows(
-                    HERE / f"collision_results_precision_{suffix}.csv"
-                )
+                for row in _read_rows(HERE / f"collision_results_precision_{suffix}.csv")
             }
             n_total = int(total["geometries"])
             n_distinct = int(total["distinct_full_digests"])
             excess = n_total - n_distinct
-            if any(
-                int(collisions[bits]["distinct_geometries"]) != n_distinct
-                for bits in BITS
-            ):
+            if any(int(collisions[bits]["distinct_geometries"]) != n_distinct for bits in BITS):
                 raise ValueError(f"inconsistent digest count at precision {precision}")
 
             summary_writer.writerow(
@@ -111,9 +105,7 @@ def aggregate():
                     "tag_F": total["tag_F"],
                     "tag_C": total["tag_C"],
                     **{
-                        f"truncation_collisions_{bits}bit": collisions[bits][
-                            "collisions"
-                        ]
+                        f"truncation_collisions_{bits}bit": collisions[bits]["collisions"]
                         for bits in BITS
                     },
                 }
@@ -132,9 +124,7 @@ def aggregate():
                         "geometries": count,
                         "distinct_full_digests": distinct,
                         "precision_merge_excess": merge_excess,
-                        "precision_merge_percent": (
-                            f"{100 * merge_excess / count:.6f}"
-                        ),
+                        "precision_merge_percent": (f"{100 * merge_excess / count:.6f}"),
                     }
                 )
 

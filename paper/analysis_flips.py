@@ -173,10 +173,19 @@ def part_A_flip_sweep():
             ps.append(p)
             rows.append(
                 dict(
-                    method=METHOD, name=name, cls=cls, N=n, npair=npair,
-                    eps=eps, sigma=sigma,
-                    ratio=ratio, trials=n_trials, flips=flips,
-                    p=p, ci_lo=lo, ci_hi=hi,
+                    method=METHOD,
+                    name=name,
+                    cls=cls,
+                    N=n,
+                    npair=npair,
+                    eps=eps,
+                    sigma=sigma,
+                    ratio=ratio,
+                    trials=n_trials,
+                    flips=flips,
+                    p=p,
+                    ci_lo=lo,
+                    ci_hi=hi,
                 )
             )
         curves[name] = (n, cls, ps)
@@ -194,18 +203,21 @@ def part_A_flip_sweep():
 
     # figure: flip prob vs sigma/eps, one line per molecule
     plt.figure(figsize=(6.4, 4.4))
-    styles = {"chain": "o-", "aromatic": "s-", "branched": "^-",
-              "cage": "D-", "heterogeneous": "v-"}
+    styles = {
+        "chain": "o-",
+        "aromatic": "s-",
+        "branched": "^-",
+        "cage": "D-",
+        "heterogeneous": "v-",
+    }
     for name, (n, cls, ps) in curves.items():
-        plt.plot(ratios, ps, styles.get(cls, "o-"), ms=4,
-                 label=f"{name} (N={n}, {cls})")
+        plt.plot(ratios, ps, styles.get(cls, "o-"), ms=4, label=f"{name} (N={n}, {cls})")
     plt.xscale("log")
     plt.xlabel(r"noise / precision  $\sigma/\varepsilon$")
     plt.ylabel("fraction of trials with changed descriptor")
     plt.title(r"Descriptor change fraction vs $\sigma/\varepsilon$ (500 trials each)")
     plt.grid(True, which="both", ls=":", alpha=0.5)
-    plt.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16),
-               ncol=2, fontsize=7, frameon=False)
+    plt.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, fontsize=7, frameon=False)
     plt.tight_layout()
     fp = output_path("fig_flips", "pdf")
     plt.savefig(fp, bbox_inches="tight")
@@ -216,20 +228,32 @@ def part_A_flip_sweep():
 # --------------------------------------------------------------------------
 def part_B_margins():
     print("\n=== Part B: quantization-boundary margins (eps = 1e-4 Angstrom) ===")
-    print(f"  {'mol':>12} {'N':>3} {'pairs':>5} {'min margin(A)':>13} "
-          f"{'median(A)':>10} {'frac<0.1eps':>11}")
+    print(
+        f"  {'mol':>12} {'N':>3} {'pairs':>5} {'min margin(A)':>13} "
+        f"{'median(A)':>10} {'frac<0.1eps':>11}"
+    )
     rows = []
     eps = DEFAULT_EPS
     for name, smi, cls in PANEL:
         Z, X0, _ = build(smi)
         m = boundary_margins(X0, eps)
         frac_fragile = float(np.mean(m < 0.1 * eps))
-        rows.append(dict(diagnostic="canonical-distance", name=name, cls=cls,
-                         N=len(Z), npair=len(m),
-                         min_margin=float(m.min()), median_margin=float(np.median(m)),
-                         frac_below_0p1eps=frac_fragile))
-        print(f"  {name:>12} {len(Z):>3} {len(m):>5} {m.min():>13.2e} "
-              f"{np.median(m):>10.2e} {frac_fragile:>11.3f}")
+        rows.append(
+            dict(
+                diagnostic="canonical-distance",
+                name=name,
+                cls=cls,
+                N=len(Z),
+                npair=len(m),
+                min_margin=float(m.min()),
+                median_margin=float(np.median(m)),
+                frac_below_0p1eps=frac_fragile,
+            )
+        )
+        print(
+            f"  {name:>12} {len(Z):>3} {len(m):>5} {m.min():>13.2e} "
+            f"{np.median(m):>10.2e} {frac_fragile:>11.3f}"
+        )
     csv_path = output_path("boundary_margins", "csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()), lineterminator="\n")
@@ -268,7 +292,7 @@ def part_C_roundtrip():
         ("sub-eps noise (s=eps/10)", "subnoise"),
     ]:
         fneg = trials = 0
-        for name, smi, cls in PANEL:
+        for _name, smi, _cls in PANEL:
             Z, X0, _ = build(smi)
             h0 = gh(Z, X0, eps)
             # Decimal rounding is deterministic for a given molecule. Count it
@@ -297,8 +321,9 @@ def part_C_roundtrip():
                     fneg += 1
                 trials += 1
         rate = fneg / trials
-        fn_rows.append(dict(method=METHOD, transform=label, trials=trials,
-                            false_neg=fneg, rate=rate))
+        fn_rows.append(
+            dict(method=METHOD, transform=label, trials=trials, false_neg=fneg, rate=rate)
+        )
         print(f"  {label:>22} {trials:>7} {fneg:>10} {rate:>8.3f}")
 
     # ---- C2: digest-collision sanity check on distinct descriptors ----
@@ -310,11 +335,13 @@ def part_C_roundtrip():
     # collision). We also report how many pairs are quantized-identical (a
     # legitimate coarse-grid merge) to characterize deduplication behavior.
     print("\n  C2 digest-collision sanity check + quantized-identical pairs:")
-    print(f"  {'eps(A)':>10} {'distinct_pairs':>14} {'false_merge':>12} "
-          f"{'rate':>10} {'quant_ident':>12}")
+    print(
+        f"  {'eps(A)':>10} {'distinct_pairs':>14} {'false_merge':>12} "
+        f"{'rate':>10} {'quant_ident':>12}"
+    )
     fm_rows = []
     conf_sets = []
-    for name, smi, cls in [p for p in PANEL if p[2] in ("chain", "heterogeneous")]:
+    for name, smi, _cls in [p for p in PANEL if p[2] in ("chain", "heterogeneous")]:
         mol = Chem.AddHs(Chem.MolFromSmiles(smi))
         params = AllChem.ETKDGv3()
         params.randomSeed = 7
@@ -325,39 +352,73 @@ def part_C_roundtrip():
         conf_sets.append((name, Z, confs))
     for eps_t in [1e-1, 1e-2, 1e-3, 1e-4]:
         distinct_pairs = false_merge = quant_ident = 0
-        for name, Z, confs in conf_sets:
+        for _name, Z, confs in conf_sets:
             hd = [gh_desc(Z, c, eps_t) for c in confs]
             for i in range(len(hd)):
                 for j in range(i + 1, len(hd)):
                     (hi, di), (hj, dj) = hd[i], hd[j]
                     if di == dj:
-                        quant_ident += 1          # same quantized geometry: legit merge
+                        quant_ident += 1  # same quantized geometry: legit merge
                         continue
-                    distinct_pairs += 1           # genuinely distinct at this grid
+                    distinct_pairs += 1  # genuinely distinct at this grid
                     if hi == hj:
-                        false_merge += 1          # different descriptor, same hash: collision
+                        false_merge += 1  # different descriptor, same hash: collision
         # This small number of comparisons cannot validate the cryptographic
         # collision rate; the result is retained only as a consistency check.
         rate = false_merge / distinct_pairs if distinct_pairs else 0.0
-        fm_rows.append(dict(method=METHOD, eps=eps_t, distinct_pairs=distinct_pairs,
-                            false_merge=false_merge, rate=rate, quant_ident=quant_ident))
-        print(f"  {eps_t:>10.0e} {distinct_pairs:>14} {false_merge:>12} "
-              f"{rate:>10.4f} {quant_ident:>12}")
+        fm_rows.append(
+            dict(
+                method=METHOD,
+                eps=eps_t,
+                distinct_pairs=distinct_pairs,
+                false_merge=false_merge,
+                rate=rate,
+                quant_ident=quant_ident,
+            )
+        )
+        print(
+            f"  {eps_t:>10.0e} {distinct_pairs:>14} {false_merge:>12} "
+            f"{rate:>10.4f} {quant_ident:>12}"
+        )
 
     csv_path = output_path("roundtrip", "csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(["method", "section", "key", "trials_or_pairs", "count", "rate"])
         for r in fn_rows:
-            w.writerow([METHOD, "descriptor_change", r["transform"], r["trials"],
-                        r["false_neg"], r["rate"]])
+            w.writerow(
+                [
+                    METHOD,
+                    "descriptor_change",
+                    r["transform"],
+                    r["trials"],
+                    r["false_neg"],
+                    r["rate"],
+                ]
+            )
         for r in fm_rows:
-            w.writerow([METHOD, "false_merge", f"eps={r['eps']:.0e}", r["distinct_pairs"],
-                        r["false_merge"], r["rate"]])
-            w.writerow([METHOD, "quant_identical", f"eps={r['eps']:.0e}",
-                        r["distinct_pairs"] + r["quant_ident"],
-                        r["quant_ident"], r["quant_ident"] / (r["distinct_pairs"] + r["quant_ident"])
-                        if (r["distinct_pairs"] + r["quant_ident"]) else 0.0])
+            w.writerow(
+                [
+                    METHOD,
+                    "false_merge",
+                    f"eps={r['eps']:.0e}",
+                    r["distinct_pairs"],
+                    r["false_merge"],
+                    r["rate"],
+                ]
+            )
+            w.writerow(
+                [
+                    METHOD,
+                    "quant_identical",
+                    f"eps={r['eps']:.0e}",
+                    r["distinct_pairs"] + r["quant_ident"],
+                    r["quant_ident"],
+                    r["quant_ident"] / (r["distinct_pairs"] + r["quant_ident"])
+                    if (r["distinct_pairs"] + r["quant_ident"])
+                    else 0.0,
+                ]
+            )
     print(f"  wrote {os.path.basename(csv_path)}")
     return fn_rows, fm_rows
 
