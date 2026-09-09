@@ -5,7 +5,9 @@ gyration tensor when its eigenvalues are separated. Degenerate eigenspaces
 are resolved by intrinsic point/line descriptors or canonical atom anchors.
 """
 
+import json
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -134,6 +136,30 @@ class TestDegenerateFrames:
         coords = np.array([[0.0, 0.0, -0.7], [0.0, 0.0, 0.7]])
         self._assert_frame_invariant(z, coords)
 
+    @pytest.mark.parametrize("precision", [1.0, 0.1, 0.01, 1e-4, 1e-6])
+    @pytest.mark.parametrize("extent", [0.2, 2.0])
+    def test_exact_line_precedes_anchor_size_guard(self, precision, extent, monkeypatch):
+        z = np.array([6, 6, 6])
+        coords = np.array([[-extent / 2, 0, 0], [0, 0, 0], [extent / 2, 0, 0]])
+
+        def unexpected_distance_matrix(*args, **kwargs):
+            pytest.fail("an exact line must not allocate a distance matrix")
+
+        monkeypatch.setattr(core, "_scaled_distances", unexpected_distance_matrix)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            base = hash_molecule(z, coords, precision=precision, node_budget=1)
+            assert "|F:" in base.descriptor
+            rng = np.random.default_rng(71)
+            for t in range(10):
+                zz, cc = _scramble(z, coords, rng, reflect=t % 2 == 1)
+                other = hash_molecule(zz, cc, precision=precision, node_budget=1)
+                assert other.descriptor == base.descriptor
+
+    def test_short_line_keeps_resolved_axial_coordinates(self):
+        res = hash_molecule([6, 6], [[-1, 0, 0], [1, 0, 0]], precision=1.0)
+        assert res.descriptor.endswith("|F:6:0,0,-1;6:0,0,1")
+
     def test_methane_spherical_top(self):
         a = 1.09 / np.sqrt(3)
         coords = np.array([[0, 0, 0], [a, a, a], [a, -a, -a], [-a, a, -a], [-a, -a, a]], float)
@@ -177,10 +203,28 @@ class TestDegenerateFrames:
         assert res.descriptor.endswith("|F:6:0,0,0")
 
 
+class TestQM9NearLines:
+    @pytest.mark.parametrize(
+        "case_id, expected",
+        [("gdb_25", "CFF"), ("gdb_14564", "CFF"), ("gdb_5", "FCF")],
+    )
+    def test_precision_changes_which_molecule_needs_c(self, case_id, expected):
+        path = Path(__file__).resolve().parents[1] / "paper" / "qm9_frame_cases.json"
+        cases = json.loads(path.read_text())["cases"]
+        case = next(case for case in cases if case["qm9_id"] == case_id)
+        for precision, tag in zip((1e-4, 1e-5, 1e-6), expected):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                result = hash_molecule(
+                    case["atomic_numbers"], case["coordinates"], precision=precision
+                )
+            assert result.descriptor.rsplit("|", 1)[1].startswith(tag + ":")
+
+
 class TestFrameFallback:
     def test_ill_conditioned_anchor_falls_back(self):
-        z = np.array([6, 6])
-        coords = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+        z = np.array([6, 6, 6])
+        coords = np.array([[-1.0, 0.0, 0.0], [0.0, 0.01, 0.0], [1.0, 0.0, 0.0]])
         with pytest.warns(UserWarning, match="stable canonical frame"):
             res = hash_molecule(z, coords, precision=1.0, method="frame")
         canonical = hash_molecule(z, coords, precision=1.0, method="canonical")

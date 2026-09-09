@@ -60,15 +60,15 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "6-FRAME-SHA256"
+DESCRIPTOR_VERSION = "7-FRAME-SHA256"
 
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
 # distinct geometries share a single namespace -- not by molecule size. For a
 # namespace of n distinct geometries hashed into b = 4*length bits, the
 # expected number of birthday collisions is ~ n^2 / 2^(b+1). 32 hex chars
-# (128 bits) keeps that below ~1 for corpora up to ~10^16 geometries and below
-# 1e-9 up to ~10^14; use hash_length_for() to size the hash to a specific
+# (128 bits) keeps that below ~1 for corpora up to ~2.6e19 geometries and below
+# 1e-9 up to ~8.2e14; use hash_length_for() to size the hash to a specific
 # corpus and target probability. SHA-256 caps us at 64 hex chars (256 bits).
 DEFAULT_LENGTH = 32
 _MAX_LENGTH = 64
@@ -103,6 +103,10 @@ _FRAME_GAP_MIN = 0.05
 # distance fallback instead. Exact point-like and linear geometries are
 # handled separately and therefore do not need artificial transverse axes.
 _FRAME_ANCHOR_MIN_GRID = 10.0
+
+# Relative residual accepted as collinear up to float64 roundoff. This is
+# independent of the requested grid: it must not flatten a resolved bend.
+_FRAME_LINEAR_REL_TOL = 64.0 * np.finfo(np.float64).eps
 
 # Canonically tied anchors must all be evaluated. Bound that work so an
 # adversarial highly symmetric geometry cannot turn the frame method into an
@@ -153,7 +157,23 @@ def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
 
 @dataclass(frozen=True)
 class HashMol3DResult:
-    """The result of hashing a molecular geometry."""
+    """The result of hashing a molecular geometry.
+
+    ``min_margin`` is a stability diagnostic, not part of the descriptor or
+    the hash: it is the smallest distance, in grid units, from any quantized
+    value that entered the descriptor to a rounding edge (a half-integer
+    multiple of the grid). It lies in ``[0.0, 0.5]``; ``0.0`` means a value
+    sits exactly on an edge, so float64 round-off alone can move it to the
+    adjacent grid cell, and ``0.5`` means every value sits at a cell centre.
+
+    The quantized values are a function of the geometry, so this margin is a
+    deterministic property of ``(geometry, precision, method)`` rather than a
+    per-call random quantity. A geometry whose margin comfortably exceeds a
+    pipeline's coordinate-noise level, expressed in the same grid units, will
+    keep its identifier under re-orientation and relabeling; one whose margin
+    is below that level will not. See ``docs/design_notes.md`` for how to turn
+    a noise floor into a margin requirement.
+    """
 
     hash_str: str
     formula: str
@@ -163,6 +183,7 @@ class HashMol3DResult:
     charge: int
     multiplicity: int
     descriptor: str
+    min_margin: float
 
     def __str__(self) -> str:
         return self.hash_str
@@ -264,8 +285,8 @@ def _validate_atomic_nums(atomic_nums) -> np.ndarray:
                 raise ValueError("atomic numbers must be real integers, not complex numbers")
     try:
         as_float = arr.astype(float).reshape(-1)
-    except (TypeError, ValueError):
-        raise ValueError("atomic numbers must be integers in [1, %d]" % _MAX_Z)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"atomic numbers must be integers in [1, {_MAX_Z}]") from err
     if as_float.size == 0:
         return as_float.astype(np.int64)
     if not np.all(np.isfinite(as_float)):
@@ -335,6 +356,38 @@ def _scaled_distances(coords: np.ndarray, decimals: int) -> np.ndarray:
     q = np.rint(scaled).astype(np.int64)
     np.fill_diagonal(q, 0)
     return q
+
+
+def _edge_margin(scaled: np.ndarray) -> float:
+    """Smallest distance from any scaled value to a rounding edge, in grid units.
+
+    ``rint`` splits the real line at half-integers, so the margin of a scaled
+    value ``v`` is ``|v - floor(v) - 0.5|``: zero when ``v`` sits exactly on an
+    edge (round-half-to-even then decides the cell, and float64 round-off alone
+    can flip it), and ``0.5`` when ``v`` sits at a cell centre. The minimum over
+    the values that entered a descriptor bounds how much perturbation that
+    descriptor tolerates. An empty input has nothing to round, so it reports the
+    maximally safe ``0.5``.
+    """
+    v = np.asarray(scaled, dtype=float).reshape(-1)
+    if v.size == 0:
+        return 0.5
+    return float(np.abs(v - np.floor(v) - 0.5).min())
+
+
+def _distance_edge_margin(coords: np.ndarray, decimals: int) -> float:
+    """Rounding-edge margin of the scaled pair distances of §4.1.
+
+    Recomputed rather than returned by :func:`_scaled_distances`, whose integer
+    result has already discarded the fractional parts. Only the strict upper
+    triangle is serialized into a ``C`` body, so only it is measured; the zero
+    diagonal is exact and never at risk.
+    """
+    if coords.shape[0] < 2:
+        return 0.5
+    iu, ju = np.triu_indices(coords.shape[0], k=1)
+    diff = coords[iu] - coords[ju]
+    return _edge_margin(np.linalg.norm(diff, axis=-1) * (10.0**decimals))
 
 
 class SearchBudgetExceeded(RuntimeError):
@@ -486,8 +539,13 @@ _ALL_AXIS_SIGNS = tuple((sx, sy, sz) for sx in (1, -1) for sy in (1, -1) for sz 
 
 def _rows_in_basis(
     z: np.ndarray, centered: np.ndarray, basis: np.ndarray, scale: float
-) -> np.ndarray:
-    """Quantize coordinates in an orthonormal basis and resolve axis signs."""
+) -> tuple[np.ndarray, float]:
+    """Quantize coordinates in an orthonormal basis and resolve axis signs.
+
+    Returns the winning sorted rows together with the rounding-edge margin of
+    the scaled coordinates they came from. Sign resolution permutes and negates
+    already-quantized integers, so it cannot change the margin.
+    """
     scaled = (centered @ basis) * scale
     if scaled.size and float(np.abs(scaled).max()) >= _MAX_SCALED:
         raise ValueError(
@@ -495,19 +553,23 @@ def _rows_in_basis(
             "exceed the exact-integer range; use a coarser precision"
         )
     q = np.rint(scaled).astype(np.int64)
-    return _sorted_signed_rows(z, q, _ALL_AXIS_SIGNS)
+    return _sorted_signed_rows(z, q, _ALL_AXIS_SIGNS), _edge_margin(scaled)
 
 
-def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str]:
+def _frame_body(best: np.ndarray, margin: float) -> tuple[str, tuple[int, ...], str, float]:
     """Serialize a winning frame row array as an ``F`` signature."""
     body = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in best.tolist())
-    return "F", tuple(int(v) for v in best[:, 0].tolist()), body
+    return "F", tuple(int(v) for v in best[:, 0].tolist()), body, margin
 
 
 def _frame_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
-) -> tuple[str, tuple[int, ...], str] | None:
+) -> tuple[str, tuple[int, ...], str, float] | None:
     """Canonical frame signature, or ``None`` for the distance fallback.
+
+    The fourth element is the rounding-edge margin (:func:`_edge_margin`) of the
+    scaled coordinates of the *winning* candidate frame, reported for stability
+    screening; it never enters the descriptor.
 
     Coordinates are expressed in the eigenbasis of the Z-weighted gyration
     tensor (axes ordered by ascending eigenvalue), quantized to the
@@ -560,18 +622,10 @@ def _frame_signature(
     # meaningful, and every coordinate necessarily rounds to zero.
     if max_radius_grid < 0.5:
         q = np.zeros((n, 3), dtype=np.int64)
-        return _frame_body(_sorted_signed_rows(z, q, ((1, 1, 1),)))
+        # Every coordinate is an exact zero, i.e. a cell centre: maximal margin.
+        return _frame_body(_sorted_signed_rows(z, q, ((1, 1, 1),)), 0.5)
 
-    # A non-point geometry this small has no well-conditioned atom anchor.
-    if not lam[2] > 0.0 or max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
-        return None
-
-    gap0 = float((lam[1] - lam[0]) / lam[2])
-    gap1 = float((lam[2] - lam[1]) / lam[2])
-    if min(gap0, gap1) >= _FRAME_GAP_MIN:
-        return _frame_body(_rows_in_basis(z, c, vec, scale))
-
-    def line_rows(axis: np.ndarray) -> np.ndarray:
+    def line_rows(axis: np.ndarray) -> tuple[np.ndarray, float]:
         q = np.zeros((n, 3), dtype=np.int64)
         scaled_axial = (c @ axis) * scale
         if scaled_axial.size and float(np.abs(scaled_axial).max()) >= _MAX_SCALED:
@@ -582,7 +636,32 @@ def _frame_signature(
         # The nonzero intrinsic coordinate occupies the largest-moment slot,
         # matching ascending eigenvalue order for an exact line.
         q[:, 2] = np.rint(scaled_axial).astype(np.int64)
-        return _sorted_signed_rows(z, q, ((1, 1, 1), (1, 1, -1)))
+        # The two transverse columns are exact zeros; only the axial column is
+        # rounded, so it alone can sit near an edge.
+        return (
+            _sorted_signed_rows(z, q, ((1, 1, 1), (1, 1, -1))),
+            _edge_margin(scaled_axial),
+        )
+
+    if not lam[2] > 0.0:
+        return None
+
+    # A true line needs only its isolated longitudinal axis, even when its
+    # extent is too small for the general atom-anchor rule. Recognize it up
+    # to relative float64 roundoff, not by a grid-dependent bend tolerance.
+    # Larger systems retain the existing intrinsic-line/anchor decisions.
+    if max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
+        axis = vec[:, 2]
+        projected = c - np.outer(c @ axis, axis)
+        max_projected = float(np.linalg.norm(projected, axis=1).max())
+        if max_projected <= _FRAME_LINEAR_REL_TOL * float(radii.max()):
+            return _frame_body(*line_rows(axis))
+        return None
+
+    gap0 = float((lam[1] - lam[0]) / lam[2])
+    gap1 = float((lam[2] - lam[1]) / lam[2])
+    if min(gap0, gap1) >= _FRAME_GAP_MIN:
+        return _frame_body(*_rows_in_basis(z, c, vec, scale))
 
     def quantized(values: np.ndarray) -> np.ndarray:
         scaled = values * scale
@@ -594,17 +673,18 @@ def _frame_signature(
         return np.rint(scaled).astype(np.int64)
 
     best: np.ndarray | None = None
+    best_margin = 0.5
     candidates = 0
 
     def consider(basis: np.ndarray) -> bool:
         """Evaluate one basis; return false when the budget is exhausted."""
-        nonlocal best, candidates
+        nonlocal best, best_margin, candidates
         candidates += 1
         if candidates > _FRAME_CANDIDATE_BUDGET:
             return False
-        cand = _rows_in_basis(z, c, basis, scale)
+        cand, cand_margin = _rows_in_basis(z, c, basis, scale)
         if best is None or _lex_less(cand, best):
-            best = cand
+            best, best_margin = cand, cand_margin
         return True
 
     # One isolated eigenvalue leaves only a two-dimensional plane to anchor.
@@ -622,7 +702,7 @@ def _frame_signature(
         # information to resolve. Small numerical residuals must not invent an
         # orientation in its null plane.
         if unique_slot == 2 and max_projected_grid < 0.5:
-            return _frame_body(line_rows(axis))
+            return _frame_body(*line_rows(axis))
         if max_projected_grid < _FRAME_ANCHOR_MIN_GRID:
             return None
 
@@ -644,7 +724,7 @@ def _frame_signature(
             if not consider(basis):
                 return None
         assert best is not None
-        return _frame_body(best)
+        return _frame_body(best, best_margin)
 
     # All three moments are near-degenerate. A far, heavy atom supplies the
     # first axis; a maximally non-collinear second atom supplies the plane.
@@ -663,8 +743,13 @@ def _frame_signature(
         max_projected_grid = float(projected_norm.max()) * scale
         if max_projected_grid < _FRAME_ANCHOR_MIN_GRID:
             # This can occur only for a marginally non-point cloud; a true
-            # line would have an isolated largest eigenvalue above.
-            return None
+            # line would have an isolated largest eigenvalue above. Canonically
+            # tied first anchors share their key but not necessarily the
+            # transverse extent measured about them, so rejecting this anchor
+            # must not reject the branch: escaping here would make the outcome
+            # depend on the order the tied anchors were visited in, i.e. on the
+            # caller's atom labeling.
+            continue
         q_projected = quantized(projected_norm)
         q_along = quantized(np.abs(along))
         second_keys = [
@@ -673,7 +758,8 @@ def _frame_signature(
             if j != i and q_projected[j] > 0
         ]
         if not second_keys:
-            return None
+            # No non-collinear partner for this anchor; try the next tied one.
+            continue
         winning_second_key = max(second_keys)
         second_anchors = [
             j
@@ -691,8 +777,12 @@ def _frame_signature(
             if not consider(basis):
                 return None
 
-    assert best is not None
-    return _frame_body(best)
+    if best is None:
+        # Every canonically tied first anchor was ill-conditioned. Reporting
+        # that as one whole-branch failure keeps the decision a function of the
+        # geometry rather than of the input atom order.
+        return None
+    return _frame_body(best, best_margin)
 
 
 def _format_descriptor(
@@ -779,7 +869,11 @@ def hash_molecule(
         ValueError: if input or an option is invalid.
 
     Returns:
-        :class:`HashMol3DResult`.
+        :class:`HashMol3DResult`. Its ``min_margin`` field reports how far the
+        descriptor's quantized values sit from a rounding edge, in grid units;
+        compare it against your coordinate-noise floor divided by ``precision``
+        to decide whether this geometry's identifier is stable under
+        re-orientation. It is a diagnostic only and never enters the hash.
     """
     atomic_nums = _validate_atomic_nums(atomic_nums)
     coords = np.asarray(coords, dtype=float)
@@ -801,10 +895,10 @@ def hash_molecule(
         # Accept any integer type (incl. NumPy integers) but not bool, which
         # is an int subclass and would silently truncate the hash.
         if isinstance(length, bool) or not isinstance(length, numbers.Integral):
-            raise ValueError("length must be an int in [1, 64]")
+            raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
         length = int(length)
-        if not (1 <= length <= 64):
-            raise ValueError("length must be an int in [1, 64]")
+        if not (1 <= length <= _MAX_LENGTH):
+            raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
 
     if method not in ("canonical", "frame"):
         raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
@@ -838,8 +932,10 @@ def hash_molecule(
             )
     if signature is None:
         qmat = _scaled_distances(coords, decimals)
-        signature = _canonical_signature(atomic_nums, qmat, node_budget)
-    tag, z_ordered, body = signature
+        tag, z_ordered, body = _canonical_signature(atomic_nums, qmat, node_budget)
+        min_margin = _distance_edge_margin(coords, decimals)
+    else:
+        tag, z_ordered, body, min_margin = signature
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
 
@@ -855,6 +951,7 @@ def hash_molecule(
         charge=charge,
         multiplicity=used_mult,
         descriptor=descriptor,
+        min_margin=min_margin,
     )
 
 

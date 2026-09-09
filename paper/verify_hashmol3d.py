@@ -1,4 +1,4 @@
-"""Independent verification of the HashMol3D v6 default frame descriptor.
+"""Independent verification of the HashMol3D v7 default frame descriptor.
 
 The retained canonical option is checked explicitly where its distinct path
 or fallback behavior matters.
@@ -197,19 +197,24 @@ rwf = hash_molecule(zw, xw, method="frame")
 rwc = hash_molecule(zw, xw, method="canonical")
 check(
     "explicit canonical option retained with distinct C/F descriptors",
-    "|F:" in rwf.descriptor and "|C:" in rwc.descriptor
-    and rwf.geometry_hash != rwc.geometry_hash,
+    "|F:" in rwf.descriptor and "|C:" in rwc.descriptor and rwf.geometry_hash != rwc.geometry_hash,
 )
 
 # 12d. An ill-conditioned frame request deterministically uses the complete
 # canonical fallback; canonical exhaustion is checked separately below.
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
-    rff = hash_molecule([6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0)
+    rff = hash_molecule([6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0)
 rfc = hash_molecule(
-    [6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0, method="canonical"
+    [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, method="canonical"
 )
-check("ill-conditioned frame uses deterministic canonical fallback", rff.descriptor == rfc.descriptor)
+check(
+    "ill-conditioned frame uses deterministic canonical fallback", rff.descriptor == rfc.descriptor
+)
+
+# An exactly linear geometry bypasses the coarse-grid anchor-size guard.
+rl = hash_molecule([6, 6], [[-1, 0, 0], [1, 0, 0]], precision=1.0, node_budget=1)
+check("coarse-grid exact line uses intrinsic F", rl.descriptor.endswith("|F:6:0,0,-1;6:0,0,1"))
 
 # 13. Degenerate rounding exhausts the canonical budget without a result.
 xd = rng.uniform(0, 0.01, size=(12, 3))
@@ -229,6 +234,7 @@ check("degenerate-rounding budget exhaustion deterministic + invariant", ok)
 noisy = xw + rng.uniform(-1e-9, 1e-9, xw.shape)
 check("sub-precision noise stable", h(zw, noisy, precision=1e-4) == base)
 
+
 # 15. Rounding-boundary illustration: the two methods quantize different
 # quantities, so a perturbation that crosses one method's boundary need not
 # cross the other's. A bond length straddling a C distance-bin edge changes C
@@ -241,12 +247,17 @@ def _pair(d, method):
 
 # 0.12345 straddles a C distance boundary but not an F coordinate boundary.
 dc1, dc2 = 0.123450000001, 0.123449999999
-check("C boundary crossing changes C descriptor", _pair(dc1, "canonical") != _pair(dc2, "canonical"))
+check(
+    "C boundary crossing changes C descriptor", _pair(dc1, "canonical") != _pair(dc2, "canonical")
+)
 check("same C boundary leaves F descriptor unchanged", _pair(dc1, "frame") == _pair(dc2, "frame"))
 # 0.12350 straddles an F coordinate boundary but not a C distance boundary.
 df1, df2 = 0.123500000001, 0.123499999999
 check("F boundary crossing changes F descriptor", _pair(df1, "frame") != _pair(df2, "frame"))
-check("same F boundary leaves C descriptor unchanged", _pair(df1, "canonical") == _pair(df2, "canonical"))
+check(
+    "same F boundary leaves C descriptor unchanged",
+    _pair(df1, "canonical") == _pair(df2, "canonical"),
+)
 
 # 16. Charge/mult do not affect geometry hash
 check("charge does not affect geom hash", h(zw, xw, charge=1) == h(zw, xw, charge=-2))

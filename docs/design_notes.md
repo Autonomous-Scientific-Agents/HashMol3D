@@ -125,7 +125,12 @@ plane. With three degenerate moments, a canonically keyed non-collinear atom
 pair constructs the frame. Every invariantly tied anchor is evaluated and
 the smallest sorted coordinate-row descriptor wins. Point-like and linear
 sets are serialized in zero and one intrinsic dimensions, so arbitrary null
-axes are never invented.
+axes are never invented. Version 7 recognizes a short exact line before the
+minimum-size guard: its maximum transverse residual must be at most
+`64 * eps64 * R`, where `R` is the maximum centered radius and `eps64 = 2^-52`.
+This removes a coarse-grid fallback without treating a finite bend as exact
+collinearity. The ordinary half-grid intrinsic-line rule remains in effect
+for larger clouds.
 
 Anchors affect only frame construction: the original coordinates are always
 projected and hashed. All eight axis signs are evaluated, retaining parity
@@ -164,14 +169,57 @@ distances. Both use `-log10(precision)` decimal places. Two conformers that
 differ by less than `precision` may collide; two that differ by more will
 usually not.
 
-There is a residual rounding-boundary risk: a distance of exactly
-`x.xxxx5` may round to two different values depending on numerical
-noise. Choose `precision` generously larger than the geometric noise
-floor of your pipeline. The canonical distance method keeps this damage
-local — only distances sitting near a bin edge are at risk. A frame rotates
-all coordinates together, so its noise is global; the eigenvalue-gap and
-anchor-conditioning thresholds bound that risk, but callers needing maximum
-rounding robustness can still request `method="canonical"`.
+### The rounding-boundary risk, quantified
+
+A value of exactly `x.xxxx5` may round either way depending on numerical noise,
+so `precision` should be chosen generously larger than the geometric noise floor
+of the pipeline. Two properties make that advice actionable.
+
+**It is a per-geometry certificate, not a probability.** The quantized values
+are a function of the geometry, so whether any of them sits near a rounding edge
+is fixed once `(geometry, precision, method)` is fixed. A conformer is either
+fragile for every orientation or safe for every orientation. `hash_molecule`
+therefore reports `min_margin`: the smallest distance, in grid units, from any
+quantized value to a `rint` edge. Compare it against the pipeline's coordinate
+noise expressed in the same units — `sigma / precision` — and screen the corpus
+before committing identifiers to a database.
+
+**Risk grows with the number of quantized values, so the frame method is the
+more robust one.** The flip probability under a *global* perturbation of size
+`sigma` is approximately `K · 2 sigma / precision`, where `K` is the number of
+values the descriptor rounds: `3N` for the frame method against `N(N−1)/2` for
+the canonical distance matrix. The two cross near `N = 7` and diverge from
+there. Measured over 60 random geometries per point at `precision = 1e-4` with
+coordinates rounded to six decimals, the fraction of re-orientations that
+changed the identifier was:
+
+| N | frame | canonical |
+| --- | --- | --- |
+| 8 | 0.08 | 0.09 |
+| 16 | 0.15 | 0.32 |
+| 32 | 0.25 | 0.80 |
+| 64 | 0.41 | 1.00 |
+
+The older guidance here — that callers needing maximum rounding robustness
+should request `method="canonical"` — was drawn from the single-atom
+displacement case, where distance noise is genuinely local: moving one atom
+perturbs only its `N−1` distances. Re-orientation, coordinate rounding, and
+file round-trips are not local; they move every distance at once, and then the
+`N(N−1)/2` count dominates. Prefer the default frame method for stability as
+well as for cost, and reserve `method="canonical"` for its completeness on the
+rounded-distance grid and for the degenerate cases the frame path declines.
+
+Two caveats on the frame side. Its axes are derived from all atoms, so a
+perturbation is amplified by roughly `1/gap` before it reaches a coordinate;
+`min_margin` is measured on the coordinates themselves, so a safe threshold
+carries that factor. And exactly-representable coordinates land on rounding
+edges far more often than distances do — an idealized ring radius or cube
+half-edge is a round number by construction, while the distances derived from it
+usually are not. An ideal D6h benzene at a 0.01 Å grid has
+`1.39·cos 60° = 0.695 Å` exactly on an edge and changes identifier under
+nothing worse than a rigid rotation, while the distance method is clean on the
+same input. Screen idealized and symmetrized geometries with `min_margin`
+before trusting them at coarse grids.
 
 ## Dependencies
 

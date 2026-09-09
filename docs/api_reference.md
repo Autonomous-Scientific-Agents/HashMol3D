@@ -6,7 +6,7 @@ A HashMol3D identifier has the form:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf`.
+For example: `H2Oq0m1-b4db5388ff28342bdc809a83891e65ea`.
 
 - **Hill formula**: carbon first if present, then hydrogen, then the
   remaining elements alphabetically. A count of 1 is omitted
@@ -78,13 +78,39 @@ res = hash_molecule(z, coords, length=L)
 - `charge`: charge used
 - `multiplicity`: multiplicity used
 - `descriptor`: raw descriptor string that was hashed (for debugging)
+- `min_margin`: stability diagnostic in `[0.0, 0.5]` — the smallest distance,
+  in grid units, from any quantized value in the descriptor to a `rint`
+  rounding edge. Not part of the descriptor or the hash. `0.0` means a value
+  sits exactly on an edge, so float64 round-off alone can move it to the
+  neighbouring cell; `0.5` means every value sits at a cell centre. Compare it
+  against your coordinate-noise floor divided by `precision` to decide whether
+  a geometry's identifier will survive re-orientation (see below).
 
 `str(result)` returns `result.hash_str`.
 
 **Invariance:** the `geometry_hash` (and therefore the full identifier,
 at fixed charge and multiplicity) is invariant under permutation of
-atoms, rigid translation, rigid rotation, spatial inversion (parity),
-and sub-precision numerical noise.
+atoms, rigid translation, rigid rotation, and spatial inversion (parity)
+in exact arithmetic.
+
+It is **not** guaranteed invariant under numerical noise, not even noise
+smaller than `precision`: a perturbation changes the identifier exactly when it
+carries a quantized value across a rounding edge, so its magnitude alone does
+not decide the outcome (specification §2). Whether a *particular* geometry is
+at risk is decided by `min_margin`, and because the quantized values are a
+function of the geometry, that is a deterministic property of
+`(geometry, precision, method)` rather than a per-call risk:
+
+```python
+res = hash_molecule(z, coords, precision=1e-4)
+noise_in_grid_units = 5e-7 / 1e-4  # e.g. coordinates stored to 6 decimals
+if res.min_margin < noise_in_grid_units:
+    ...  # this geometry may change identifier when re-oriented
+```
+
+Screening a corpus this way before depositing identifiers is cheaper than
+discovering the instability later. See `docs/design_notes.md` for how the risk
+scales with atom count and method.
 
 ## `hash_xyz(path, **kwargs)`
 

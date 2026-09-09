@@ -15,7 +15,7 @@ behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
 The identifier has the form `<formula><state>-<hash>`, e.g.
-`H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf`. See the
+`H2Oq0m1-b4db5388ff28342bdc809a83891e65ea`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
@@ -28,7 +28,13 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 | `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |
 |      | `--method`       | frame  | Descriptor method: `frame` or `canonical` |
 |      | `--node-budget`  | 10000 | Maximum canonical search states, also after frame fallback |
-| `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
+| `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, metadata, and `min_margin` |
+
+`min_margin` is the stability diagnostic described in
+[specification §2](specification.md): grid units from the nearest rounding
+edge, in `[0, 0.5]`. A value near zero means this geometry can change
+identifier under float64 round-off alone; compare it against your coordinate
+noise divided by `--precision`.
 
 ## Examples
 
@@ -61,7 +67,7 @@ Find all stored states of the same geometry by suffix-matching the
 `geometry_hash` portion (after the `-`):
 
 ```bash
-grep -E -- "-9a3a21fa2c3b6f0d4cb8acb76a18eccf" identifiers.txt
+grep -E -- "-b4db5388ff28342bdc809a83891e65ea" identifiers.txt
 ```
 
 ## Exit codes

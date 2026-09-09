@@ -113,6 +113,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
         print(f"precision:     {result.precision}")
         print(f"charge:        {result.charge}")
         print(f"multiplicity:  {result.multiplicity}")
+        print(f"min_margin:    {result.min_margin:.6g}  (grid units to a rounding edge)")
     else:
         print(result.hash_str)
     return 0
