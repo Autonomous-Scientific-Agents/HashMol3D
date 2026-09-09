@@ -20,7 +20,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ruff
-        run: pip install ruff
+        # Pinned: an unpinned linter turns every new ruff release into a
+        # surprise red build on an unchanged tree. Bump deliberately.
+        run: pip install ruff==0.16.6
       - name: Lint
         run: ruff check .
       - name: Format check

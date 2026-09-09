@@ -290,7 +290,8 @@ implementation uses a fixed default of 32 hex characters (128 bits).
 Collision resistance is a property of the namespace, not of molecule
 size: for `n` distinct geometries hashed into `b = 4·length` bits, the
 expected number of birthday collisions is `~ n² / 2^{b+1}`. The 128-bit
-default keeps that below one for corpora up to ~10¹⁶ geometries. Callers
+default keeps that below one for corpora up to ~2.6×10¹⁹ geometries, and
+below 10⁻⁹ up to ~8.2×10¹⁴. Callers
 who know their corpus size may pick `length` accordingly (the reference
 implementation provides `hash_length_for(n_items, target_prob)`), or pin
 any fixed value in `[1, 64]`.
@@ -337,7 +338,7 @@ The reference implementation uses only NumPy and the Python standard
 library; in particular it does **not** depend on RDKit or any
 cheminformatics toolkit.
 
-## 10. Reference API
+## 11. Reference API
 
 ```python
 from hashmol3d import hash_molecule

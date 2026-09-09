@@ -18,6 +18,22 @@ def test_returns_result(water):
     assert str(res) == res.hash_str
 
 
+def test_documented_water_identifier(water):
+    """Pin the identifier quoted throughout the docs for descriptor version 7.
+
+    README.md, docs/specification.md, docs/api_reference.md and
+    docs/cli_usage.md all quote this value; a descriptor change that is not
+    accompanied by a version bump and a docs sweep should fail here.
+    """
+    z, coords = water
+    res = hash_molecule(z, coords)
+    assert res.version == "7-FRAME-SHA256"
+    assert res.descriptor == (
+        "V:7-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
+    )
+    assert res.hash_str == "H2Oq0m1-b4db5388ff28342bdc809a83891e65ea"
+
+
 def test_descriptor_contains_geometry_fields(water):
     z, coords = water
     res = hash_molecule(z, coords)

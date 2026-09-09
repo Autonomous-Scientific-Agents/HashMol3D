@@ -69,18 +69,17 @@ from pyscf.geomopt.geometric_solver import optimize
 EPS_REF = 1e-4  # default distance precision (Angstrom)
 
 # Symmetric displacement grid (Angstrom) for the force-constant fit.
-DELTAS = np.array([-0.02, -0.016, -0.012, -0.008, -0.004,
-                   0.0, 0.004, 0.008, 0.012, 0.016, 0.02])
+DELTAS = np.array([-0.02, -0.016, -0.012, -0.008, -0.004, 0.0, 0.004, 0.008, 0.012, 0.016, 0.02])
 
 # geomeTRIC convergence criteria (tighter than the geomeTRIC defaults);
 # reported verbatim in the paper. Units follow the geomeTRIC/pyscf convention:
 # energy in Ha, gradients in Ha/Bohr, displacements in Angstrom.
 CONV = dict(
-    convergence_energy=1e-7,   # Ha
-    convergence_grms=1e-4,     # Ha/Bohr
-    convergence_gmax=2e-4,     # Ha/Bohr
-    convergence_drms=8e-4,     # Angstrom
-    convergence_dmax=1.2e-3,   # Angstrom
+    convergence_energy=1e-7,  # Ha
+    convergence_grms=1e-4,  # Ha/Bohr
+    convergence_gmax=2e-4,  # Ha/Bohr
+    convergence_drms=8e-4,  # Angstrom
+    convergence_dmax=1.2e-3,  # Angstrom
 )
 
 
@@ -193,9 +192,20 @@ def scan_coordinate(Z, X0, level, atom_idx, e0):
     nz = np.array(dmax) > 0
     slope = float(np.mean(np.array(dmax)[nz] / np.abs(DELTAS)[nz]))
     eres = 0.5 * k * EPS_REF**2
-    return dict(atom=atom_idx, neighbor=j, k=k, sig_k=sig_k, a=a, sig_a=sig_a,
-                r2=r2, dmax_slope=slope, eres=eres, conv_all=conv_all,
-                deltas=DELTAS.tolist(), de=de.tolist())
+    return dict(
+        atom=atom_idx,
+        neighbor=j,
+        k=k,
+        sig_k=sig_k,
+        a=a,
+        sig_a=sig_a,
+        r2=r2,
+        dmax_slope=slope,
+        eres=eres,
+        conv_all=conv_all,
+        deltas=DELTAS.tolist(),
+        de=de.tolist(),
+    )
 
 
 def stiff_atom_choices(Z, X):
@@ -220,14 +230,16 @@ def stiff_atom_choices(Z, X):
 
 def main():
     import hashmol3d
+
     print(f"HashMol3D package version: {hashmol3d.__version__}")
-    print(f"energy calibration levels: HF/STO-3G (all), B3LYP/def2-SVP (subset)")
+    print("energy calibration levels: HF/STO-3G (all), B3LYP/def2-SVP (subset)")
     print(f"geomeTRIC criteria: {CONV}")
     n_doubles = [1, 2, 3, 4, 5, 6, 7, 8]  # C2H4 .. C16H18 (matches tab:precision)
     subset_check = {1, 4}  # which n_double get the B3LYP/def2-SVP cross-check
 
     rows = []
-    fig_N, fig_eres, fig_eres_b3lyp, fig_kmax = [], [], [], []
+    fig_N, fig_eres, fig_kmax = [], [], []
+    # The B3LYP/def2-SVP cross-check series is collected separately below.
     fig_Nb, fig_eresb = [], []
     for nd in n_doubles:
         Z, X_mmff = build_mmff(nd)
@@ -258,12 +270,24 @@ def main():
             )
 
         row = dict(
-            name=name, n=n, nC=nC, scf_converged=scf_ok, max_grad=gmax, e0=e0,
-            k_CH=sH["k"], sig_k_CH=sH["sig_k"], a_CH=sH["a"], r2_CH=sH["r2"],
+            name=name,
+            n=n,
+            nC=nC,
+            scf_converged=scf_ok,
+            max_grad=gmax,
+            e0=e0,
+            k_CH=sH["k"],
+            sig_k_CH=sH["sig_k"],
+            a_CH=sH["a"],
+            r2_CH=sH["r2"],
             nbr_CH=sH["neighbor"],
-            k_Cdisp=sC["k"], sig_k_Cdisp=sC["sig_k"], a_Cdisp=sC["a"],
-            r2_Cdisp=sC["r2"], nbr_Cdisp=sC["neighbor"],
-            k_probe_max=stiff["k"], local_scale_1e4=stiff["eres"],
+            k_Cdisp=sC["k"],
+            sig_k_Cdisp=sC["sig_k"],
+            a_Cdisp=sC["a"],
+            r2_Cdisp=sC["r2"],
+            nbr_Cdisp=sC["neighbor"],
+            k_probe_max=stiff["k"],
+            local_scale_1e4=stiff["eres"],
         )
 
         # ---- subset cross-check at B3LYP/def2-SVP ----
@@ -296,11 +320,29 @@ def main():
     csv_path = os.path.join(_here, "energy_results.csv")
     keys = sorted({k for r in rows for k in r})
     # keep a stable, readable leading order
-    lead = ["name", "n", "nC", "scf_converged", "max_grad", "e0",
-            "k_CH", "sig_k_CH", "a_CH", "r2_CH", "nbr_CH",
-            "k_Cdisp", "sig_k_Cdisp", "a_Cdisp", "r2_Cdisp", "nbr_Cdisp",
-            "k_probe_max", "local_scale_1e4",
-            "k_probe_max_b3lyp", "local_scale_1e4_b3lyp", "max_grad_b3lyp"]
+    lead = [
+        "name",
+        "n",
+        "nC",
+        "scf_converged",
+        "max_grad",
+        "e0",
+        "k_CH",
+        "sig_k_CH",
+        "a_CH",
+        "r2_CH",
+        "nbr_CH",
+        "k_Cdisp",
+        "sig_k_Cdisp",
+        "a_Cdisp",
+        "r2_Cdisp",
+        "nbr_Cdisp",
+        "k_probe_max",
+        "local_scale_1e4",
+        "k_probe_max_b3lyp",
+        "local_scale_1e4_b3lyp",
+        "max_grad_b3lyp",
+    ]
     fields = [k for k in lead if k in keys] + [k for k in keys if k not in lead]
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -311,10 +353,14 @@ def main():
 
     # ---- figure: selected local quadratic scale vs N ----
     plt.figure(figsize=(6.4, 4.2))
-    plt.plot(fig_N, fig_eres, "o-", label=r"HF/STO-3G: $\frac{1}{2}k_{\rm probe}\varepsilon^2$ at $\varepsilon=10^{-4}$ Å")
+    plt.plot(
+        fig_N,
+        fig_eres,
+        "o-",
+        label=r"HF/STO-3G: $\frac{1}{2}k_{\rm probe}\varepsilon^2$ at $\varepsilon=10^{-4}$ Å",
+    )
     if fig_Nb:
-        plt.plot(fig_Nb, fig_eresb, "s--", color="seagreen",
-                 label=r"B3LYP/def2-SVP cross-check")
+        plt.plot(fig_Nb, fig_eresb, "s--", color="seagreen", label=r"B3LYP/def2-SVP cross-check")
     plt.xlabel("number of atoms $N$")
     plt.ylabel("selected local quadratic scale (Hartree)")
     plt.yscale("log")

@@ -382,10 +382,7 @@ def main():
     print("    energy-resolution bound for descriptor equality.")
     print(f"{'mol':>10} {'N':>4} {'|dE_HF|(Ha)':>12} {'|dNRE|(Ha)':>12}")
     for r in rows:
-        print(
-            f"{r['name']:>10} {r['n']:>4} {r['stretch_dE']:>12.2e} "
-            f"{r['stretch_dnre']:>12.2e}"
-        )
+        print(f"{r['name']:>10} {r['n']:>4} {r['stretch_dE']:>12.2e} {r['stretch_dnre']:>12.2e}")
 
     # ---- Figure 1: distance-change amplification vs chain length ----
     plt.figure(figsize=(6.4, 4.2))

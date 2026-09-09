@@ -67,8 +67,8 @@ DESCRIPTOR_VERSION = "7-FRAME-SHA256"
 # distinct geometries share a single namespace -- not by molecule size. For a
 # namespace of n distinct geometries hashed into b = 4*length bits, the
 # expected number of birthday collisions is ~ n^2 / 2^(b+1). 32 hex chars
-# (128 bits) keeps that below ~1 for corpora up to ~10^16 geometries and below
-# 1e-9 up to ~10^14; use hash_length_for() to size the hash to a specific
+# (128 bits) keeps that below ~1 for corpora up to ~2.6e19 geometries and below
+# 1e-9 up to ~8.2e14; use hash_length_for() to size the hash to a specific
 # corpus and target probability. SHA-256 caps us at 64 hex chars (256 bits).
 DEFAULT_LENGTH = 32
 _MAX_LENGTH = 64
@@ -268,8 +268,8 @@ def _validate_atomic_nums(atomic_nums) -> np.ndarray:
                 raise ValueError("atomic numbers must be real integers, not complex numbers")
     try:
         as_float = arr.astype(float).reshape(-1)
-    except (TypeError, ValueError):
-        raise ValueError("atomic numbers must be integers in [1, %d]" % _MAX_Z)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"atomic numbers must be integers in [1, {_MAX_Z}]") from err
     if as_float.size == 0:
         return as_float.astype(np.int64)
     if not np.all(np.isfinite(as_float)):
@@ -816,10 +816,10 @@ def hash_molecule(
         # Accept any integer type (incl. NumPy integers) but not bool, which
         # is an int subclass and would silently truncate the hash.
         if isinstance(length, bool) or not isinstance(length, numbers.Integral):
-            raise ValueError("length must be an int in [1, 64]")
+            raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
         length = int(length)
-        if not (1 <= length <= 64):
-            raise ValueError("length must be an int in [1, 64]")
+        if not (1 <= length <= _MAX_LENGTH):
+            raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
 
     if method not in ("canonical", "frame"):
         raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")

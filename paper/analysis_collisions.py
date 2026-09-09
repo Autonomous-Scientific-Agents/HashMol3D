@@ -64,7 +64,6 @@ Outputs: a printed report, a CSV of the length sweep, and a PDF figure.
 from __future__ import annotations
 
 import csv
-import glob
 import math
 import os
 import sys
@@ -105,9 +104,7 @@ def _precision_label(value):
 PRECISION_LABEL = _precision_label(PRECISION)
 METHOD_SUFFIX = "" if METHOD == "frame" else "_canonical"
 PRECISION_SUFFIX = "" if PRECISION == 1e-4 else f"_precision_{PRECISION_LABEL}"
-OUTPUT_SUFFIX = os.environ.get(
-    "HM3D_OUTPUT_SUFFIX", METHOD_SUFFIX + PRECISION_SUFFIX
-)
+OUTPUT_SUFFIX = os.environ.get("HM3D_OUTPUT_SUFFIX", METHOD_SUFFIX + PRECISION_SUFFIX)
 # Cap on MD17 frames per molecule; 0 (default) means use the complete
 # trajectory, reproducing the counts reported in the paper. Set a positive
 # value to subsample large trajectories for a quicker run.
@@ -418,10 +415,7 @@ def main(allow_partial=False):
     # ---- combined report ----
     U_all = set(all_digests)
     total = len(all_digests)
-    print(
-        f"\nTOTAL: {total} geometries hashed; {len(U_all)} distinct full "
-        f"256-bit digests."
-    )
+    print(f"\nTOTAL: {total} geometries hashed; {len(U_all)} distinct full 256-bit digests.")
     print(f"Frame-branch audit: {dict(all_branches)}")
 
     # Per-dataset path and throughput statistics.  Wall times include dataset
@@ -430,34 +424,65 @@ def main(allow_partial=False):
     suffix = OUTPUT_SUFFIX + ("_partial" if allow_partial else "")
     stats_path = os.path.join(_here, f"dataset_stats{suffix}.csv")
     branch_names = [
-        "principal", "one-axis-anchor", "two-atom-anchor", "line", "point",
-        "canonical-fallback", "canonical-request",
+        "principal",
+        "one-axis-anchor",
+        "two-atom-anchor",
+        "line",
+        "point",
+        "canonical-fallback",
+        "canonical-request",
         "not-audited",
     ]
     with open(stats_path, "w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
-        w.writerow([
-            "dataset", "method", "geometries", "distinct_full_digests",
-            "tag_F", "tag_C", *branch_names, "seconds",
-            "geometries_per_second", "hash_seconds", "hashes_per_second",
-        ])
+        w.writerow(
+            [
+                "dataset",
+                "method",
+                "geometries",
+                "distinct_full_digests",
+                "tag_F",
+                "tag_C",
+                *branch_names,
+                "seconds",
+                "geometries_per_second",
+                "hash_seconds",
+                "hashes_per_second",
+            ]
+        )
         for name, row in per_dataset.items():
-            w.writerow([
-                name, METHOD, row["count"], row["distinct"],
-                row["tags"]["F"], row["tags"]["C"],
-                *(row["branches"][b] for b in branch_names),
-                f"{row['seconds']:.6f}", f"{row['count'] / row['seconds']:.3f}",
-                f"{row['hash_seconds']:.6f}",
-                f"{row['count'] / row['hash_seconds']:.3f}",
-            ])
+            w.writerow(
+                [
+                    name,
+                    METHOD,
+                    row["count"],
+                    row["distinct"],
+                    row["tags"]["F"],
+                    row["tags"]["C"],
+                    *(row["branches"][b] for b in branch_names),
+                    f"{row['seconds']:.6f}",
+                    f"{row['count'] / row['seconds']:.3f}",
+                    f"{row['hash_seconds']:.6f}",
+                    f"{row['count'] / row['hash_seconds']:.3f}",
+                ]
+            )
         total_seconds = sum(row["seconds"] for row in per_dataset.values())
         total_hash_seconds = sum(row["hash_seconds"] for row in per_dataset.values())
-        w.writerow([
-            "TOTAL", METHOD, total, len(U_all), all_tags["F"], all_tags["C"],
-            *(all_branches[b] for b in branch_names),
-            f"{total_seconds:.6f}", f"{total / total_seconds:.3f}",
-            f"{total_hash_seconds:.6f}", f"{total / total_hash_seconds:.3f}",
-        ])
+        w.writerow(
+            [
+                "TOTAL",
+                METHOD,
+                total,
+                len(U_all),
+                all_tags["F"],
+                all_tags["C"],
+                *(all_branches[b] for b in branch_names),
+                f"{total_seconds:.6f}",
+                f"{total / total_seconds:.3f}",
+                f"{total_hash_seconds:.6f}",
+                f"{total / total_hash_seconds:.3f}",
+            ]
+        )
     print(f"Wrote {stats_path}")
     print(
         f"Descriptor-path audit over all {total} geometries: "
@@ -508,9 +533,7 @@ def main(allow_partial=False):
     print(f"Wrote {csv_path}")
 
     if not SKIP_FIGURE:
-        make_figure(
-            [(L, 4 * L, c) for L, _, _, c in sweep], n_distinct, suffix=suffix
-        )
+        make_figure([(L, 4 * L, c) for L, _, _, c in sweep], n_distinct, suffix=suffix)
 
 
 def make_figure(rows, n_distinct, suffix=""):
