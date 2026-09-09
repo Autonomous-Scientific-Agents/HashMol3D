@@ -174,9 +174,13 @@ class TestCanonicalSearchBudget:
     def test_frame_fallback_obeys_node_budget(self):
         with pytest.warns(UserWarning, match="falling back"):
             with pytest.raises(SearchBudgetExceeded):
-                hash_molecule([6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0, node_budget=1)
+                hash_molecule(
+                    [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, node_budget=1
+                )
         with pytest.warns(UserWarning, match="falling back"):
-            res = hash_molecule([6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0, node_budget=3)
+            res = hash_molecule(
+                [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, node_budget=3
+            )
         assert "|C:" in res.descriptor
 
     @pytest.mark.parametrize("budget", [0, -1, True, np.bool_(True), 1.5, 3.0, "3", None])

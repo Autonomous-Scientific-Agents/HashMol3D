@@ -1,4 +1,4 @@
-"""Independent verification of the HashMol3D v6 default frame descriptor.
+"""Independent verification of the HashMol3D v7 default frame descriptor.
 
 The retained canonical option is checked explicitly where its distinct path
 or fallback behavior matters.
@@ -205,11 +205,15 @@ check(
 # canonical fallback; canonical exhaustion is checked separately below.
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
-    rff = hash_molecule([6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0)
+    rff = hash_molecule([6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0)
 rfc = hash_molecule(
-    [6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0, method="canonical"
+    [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, method="canonical"
 )
 check("ill-conditioned frame uses deterministic canonical fallback", rff.descriptor == rfc.descriptor)
+
+# An exactly linear geometry bypasses the coarse-grid anchor-size guard.
+rl = hash_molecule([6, 6], [[-1, 0, 0], [1, 0, 0]], precision=1.0, node_budget=1)
+check("coarse-grid exact line uses intrinsic F", rl.descriptor.endswith("|F:6:0,0,-1;6:0,0,1"))
 
 # 13. Degenerate rounding exhausts the canonical budget without a result.
 xd = rng.uniform(0, 0.01, size=(12, 3))

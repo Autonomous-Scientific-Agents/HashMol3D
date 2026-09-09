@@ -60,7 +60,7 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "6-FRAME-SHA256"
+DESCRIPTOR_VERSION = "7-FRAME-SHA256"
 
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
@@ -103,6 +103,10 @@ _FRAME_GAP_MIN = 0.05
 # distance fallback instead. Exact point-like and linear geometries are
 # handled separately and therefore do not need artificial transverse axes.
 _FRAME_ANCHOR_MIN_GRID = 10.0
+
+# Relative residual accepted as collinear up to float64 roundoff. This is
+# independent of the requested grid: it must not flatten a resolved bend.
+_FRAME_LINEAR_REL_TOL = 64.0 * np.finfo(np.float64).eps
 
 # Canonically tied anchors must all be evaluated. Bound that work so an
 # adversarial highly symmetric geometry cannot turn the frame method into an
@@ -562,15 +566,6 @@ def _frame_signature(
         q = np.zeros((n, 3), dtype=np.int64)
         return _frame_body(_sorted_signed_rows(z, q, ((1, 1, 1),)))
 
-    # A non-point geometry this small has no well-conditioned atom anchor.
-    if not lam[2] > 0.0 or max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
-        return None
-
-    gap0 = float((lam[1] - lam[0]) / lam[2])
-    gap1 = float((lam[2] - lam[1]) / lam[2])
-    if min(gap0, gap1) >= _FRAME_GAP_MIN:
-        return _frame_body(_rows_in_basis(z, c, vec, scale))
-
     def line_rows(axis: np.ndarray) -> np.ndarray:
         q = np.zeros((n, 3), dtype=np.int64)
         scaled_axial = (c @ axis) * scale
@@ -583,6 +578,26 @@ def _frame_signature(
         # matching ascending eigenvalue order for an exact line.
         q[:, 2] = np.rint(scaled_axial).astype(np.int64)
         return _sorted_signed_rows(z, q, ((1, 1, 1), (1, 1, -1)))
+
+    if not lam[2] > 0.0:
+        return None
+
+    # A true line needs only its isolated longitudinal axis, even when its
+    # extent is too small for the general atom-anchor rule. Recognize it up
+    # to relative float64 roundoff, not by a grid-dependent bend tolerance.
+    # Larger systems retain the existing intrinsic-line/anchor decisions.
+    if max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
+        axis = vec[:, 2]
+        projected = c - np.outer(c @ axis, axis)
+        max_projected = float(np.linalg.norm(projected, axis=1).max())
+        if max_projected <= _FRAME_LINEAR_REL_TOL * float(radii.max()):
+            return _frame_body(line_rows(axis))
+        return None
+
+    gap0 = float((lam[1] - lam[0]) / lam[2])
+    gap1 = float((lam[2] - lam[1]) / lam[2])
+    if min(gap0, gap1) >= _FRAME_GAP_MIN:
+        return _frame_body(_rows_in_basis(z, c, vec, scale))
 
     def quantized(values: np.ndarray) -> np.ndarray:
         scaled = values * scale

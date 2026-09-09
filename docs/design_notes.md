@@ -125,7 +125,12 @@ plane. With three degenerate moments, a canonically keyed non-collinear atom
 pair constructs the frame. Every invariantly tied anchor is evaluated and
 the smallest sorted coordinate-row descriptor wins. Point-like and linear
 sets are serialized in zero and one intrinsic dimensions, so arbitrary null
-axes are never invented.
+axes are never invented. Version 7 recognizes a short exact line before the
+minimum-size guard: its maximum transverse residual must be at most
+`64 * eps64 * R`, where `R` is the maximum centered radius and `eps64 = 2^-52`.
+This removes a coarse-grid fallback without treating a finite bend as exact
+collinearity. The ordinary half-grid intrinsic-line rule remains in effect
+for larger clouds.
 
 Anchors affect only frame construction: the original coordinates are always
 projected and hashed. All eight axis signs are evaluated, retaining parity

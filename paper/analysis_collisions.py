@@ -49,7 +49,7 @@ artifacts. ``HM3D_PRECISION`` selects an accepted power-of-ten grid. Nondefault
 precisions receive an automatic filename suffix unless ``HM3D_OUTPUT_SUFFIX``
 is set explicitly. ``HM3D_AUDIT_BRANCHES=0`` skips the duplicate diagnostic
 eigendecomposition, and ``HM3D_SKIP_FIGURE=1`` suppresses per-run plots; these
-options do not change descriptor construction or the emitted F/C/W tags.
+options do not change descriptor construction or the emitted F/C tags.
 
 Dataset sources (download once into $HM3D_DATA, default /tmp/datasets):
   * QM9 (gdb9.sdf): https://doi.org/10.6084/m9.figshare.978904  (Ramakrishnan
@@ -157,7 +157,7 @@ print(f"branch audit: {AUDIT_BRANCHES}")
 
 
 def _frame_branch(Z, coords):
-    """Classify the deterministic frame branch used by descriptor v6.
+    """Classify the deterministic frame branch used by descriptor v7.
 
     This mirrors the branch predicates in ``hashmol3d.core._frame_signature``;
     it is diagnostic only and does not participate in descriptor generation.
@@ -185,7 +185,14 @@ def _frame_branch(Z, coords):
     max_radius_grid = float(radii.max()) * scale
     if max_radius_grid < 0.5:
         return "point"
-    if not lam[2] > 0.0 or max_radius_grid < 10.0:
+    if not lam[2] > 0.0:
+        return "canonical-fallback"
+    if max_radius_grid < 10.0:
+        axis = vec[:, 2]
+        projected = c - np.outer(c @ axis, axis)
+        residual = float(np.linalg.norm(projected, axis=1).max())
+        if residual <= 64.0 * np.finfo(np.float64).eps * float(radii.max()):
+            return "line"
         return "canonical-fallback"
 
     gap0 = float((lam[1] - lam[0]) / lam[2])
