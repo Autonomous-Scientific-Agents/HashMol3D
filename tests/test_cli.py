@@ -77,3 +77,23 @@ def test_cli_bad_xyz_is_clean_error(tmp_path, capsys):
     assert rc == 1
     err = capsys.readouterr().err
     assert "hashmol3d:" in err
+
+
+def test_cli_budget_exhaustion_and_retry(tmp_path, capsys):
+    path = _write_water(tmp_path)
+    for verbose in ([], ["-v"]):
+        assert cli([path, "--method", "canonical", "--node-budget", "2", *verbose]) == 1
+        out = capsys.readouterr()
+        assert out.out == ""
+        assert "no identifier or hash was created" in out.err
+        assert "--node-budget" in out.err
+        assert "Traceback" not in out.err
+    assert cli([path, "--method", "canonical", "--node-budget", "3"]) == 0
+    assert capsys.readouterr().out.strip() == hash_xyz(path, method="canonical").hash_str
+
+
+def test_cli_invalid_node_budget(tmp_path, capsys):
+    assert cli([_write_water(tmp_path), "--node-budget", "0"]) == 1
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "node_budget must be a positive integer" in out.err

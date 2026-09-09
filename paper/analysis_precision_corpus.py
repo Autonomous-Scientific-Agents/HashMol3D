@@ -60,7 +60,6 @@ def aggregate():
         "precision_merge_percent",
         "tag_F",
         "tag_C",
-        "tag_W",
         *(f"truncation_collisions_{bits}bit" for bits in BITS),
     ]
     dataset_fields = [
@@ -111,7 +110,6 @@ def aggregate():
                     "precision_merge_percent": f"{100 * excess / n_total:.6f}",
                     "tag_F": total["tag_F"],
                     "tag_C": total["tag_C"],
-                    "tag_W": total["tag_W"],
                     **{
                         f"truncation_collisions_{bits}bit": collisions[bits][
                             "collisions"

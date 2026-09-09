@@ -347,13 +347,13 @@ def main(allow_partial=False):
     datasets = _resolve_datasets(allow_partial)
     per_dataset = {}  # name -> dataset statistics
     all_digests = []
-    all_tags = {"C": 0, "W": 0, "F": 0}
+    all_tags = {"C": 0, "F": 0}
     all_branches = Counter()
     count_mismatch = False
 
     for name, spec, paths in datasets:
         digests, meta = [], {"natoms": [], "elements": set()}
-        tags = {"C": 0, "W": 0, "F": 0}
+        tags = {"C": 0, "F": 0}
         branches = Counter()
         started = time.perf_counter()
         if spec["kind"] == "qm9":
@@ -363,7 +363,7 @@ def main(allow_partial=False):
                 f"{name}: {n} geometries, {len(set(digests))} distinct, "
                 f"N in [{min(meta['natoms'])},{max(meta['natoms'])}], "
                 f"{len(meta['elements'])} elements, "
-                f"tags C={tags['C']} W={tags['W']} F={tags['F']}, "
+                f"tags C={tags['C']} F={tags['F']}, "
                 f"{elapsed:.2f} s ({n / elapsed:.0f} geometries/s), "
                 f"branches={dict(branches)}"
             )
@@ -376,7 +376,7 @@ def main(allow_partial=False):
             print(
                 f"{name}: {n} geometries (stride {stride} of {M}), "
                 f"{len(set(digests))} distinct, N={meta['natoms'][0]}, "
-                f"tags C={tags['C']} W={tags['W']} F={tags['F']}, "
+                f"tags C={tags['C']} F={tags['F']}, "
                 f"{elapsed:.2f} s ({n / elapsed:.0f} geometries/s), "
                 f"branches={dict(branches)}"
             )
@@ -431,13 +431,13 @@ def main(allow_partial=False):
         w = csv.writer(f, lineterminator="\n")
         w.writerow([
             "dataset", "method", "geometries", "distinct_full_digests",
-            "tag_F", "tag_C", "tag_W", *branch_names, "seconds",
+            "tag_F", "tag_C", *branch_names, "seconds",
             "geometries_per_second", "hash_seconds", "hashes_per_second",
         ])
         for name, row in per_dataset.items():
             w.writerow([
                 name, METHOD, row["count"], row["distinct"],
-                row["tags"]["F"], row["tags"]["C"], row["tags"]["W"],
+                row["tags"]["F"], row["tags"]["C"],
                 *(row["branches"][b] for b in branch_names),
                 f"{row['seconds']:.6f}", f"{row['count'] / row['seconds']:.3f}",
                 f"{row['hash_seconds']:.6f}",
@@ -447,16 +447,14 @@ def main(allow_partial=False):
         total_hash_seconds = sum(row["hash_seconds"] for row in per_dataset.values())
         w.writerow([
             "TOTAL", METHOD, total, len(U_all), all_tags["F"], all_tags["C"],
-            all_tags["W"], *(all_branches[b] for b in branch_names),
+            *(all_branches[b] for b in branch_names),
             f"{total_seconds:.6f}", f"{total / total_seconds:.3f}",
             f"{total_hash_seconds:.6f}", f"{total / total_hash_seconds:.3f}",
         ])
     print(f"Wrote {stats_path}")
     print(
         f"Descriptor-path audit over all {total} geometries: "
-        f"C={all_tags['C']} (complete), W={all_tags['W']} (fallback), "
-        f"F={all_tags['F']} (frame).  "
-        f"W fraction = {all_tags['W'] / total:.3e}"
+        f"C={all_tags['C']} (complete), F={all_tags['F']} (frame)."
     )
 
     lengths = list(range(4, 33, 2))

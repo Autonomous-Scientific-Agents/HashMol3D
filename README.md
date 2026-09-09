@@ -1,7 +1,11 @@
 # HashMol3D
 
-**HashMol3D** is a standard, deterministic 3D molecular geometry identifier
-for computational chemistry, machine learning, and HPC workflows.
+**HashMol3D** is a Python library that implements deterministic 3D molecular
+geometry identifiers and hashes for computational chemistry, machine learning,
+and HPC workflows. The library provides the implementation used to develop and
+define a proposed identifier standard. The accompanying paper describes the
+software and methods and proposes that standard; the
+[specification](docs/specification.md) is a draft, not an adopted standard.
 
 It produces a **readable** identifier of the form
 
@@ -21,7 +25,7 @@ canonical frame, sorts the element-labelled coordinate rows, and hashes that
 complete representation. Ordinary geometries use the principal axes of the
 Z-weighted gyration tensor. Point-like, linear, symmetric-top, and spherical-
 top geometries use intrinsic coordinates or canonical atom anchors, so exact
-symmetry does not require a random perturbation. The older canonical labelled
+symmetry does not require a random perturbation. The canonical labelled
 distance-matrix method remains available as `method="canonical"`.
 
 Charge and spin multiplicity live in the readable prefix, **not** in
@@ -57,9 +61,13 @@ hash_molecule(z, coords, length=hash_length_for(10**9))
 
 (recommended hex length; the default of 32 covers up to ~8·10¹⁴ items at `p=1e-9`.)
 
-It deliberately does **not** distinguish enantiomers (which share their
-Hamiltonian eigenvalues). The reference implementation depends only on
-NumPy.
+The current format deliberately does **not** distinguish enantiomers, and
+isotopes share the same atomic number and therefore the same identifier at
+fixed coordinates and electronic state. The proposed standard can be extended
+with new tags for enantiomer-sensitive stereochemistry and isotope labels.
+Those extensions would require defined canonicalization rules and a new
+descriptor version; they are not implemented in this release. The library
+depends only on NumPy.
 
 ## Canonical frame method
 
@@ -76,7 +84,22 @@ axis and canonically anchors only the ambiguous subspace. Linear and point-
 like systems are represented in their intrinsic dimension. Canonically tied
 anchors are all evaluated up to a 10,000-candidate budget. Ill-conditioned
 or over-budget cases emit `UserWarning` and use the complete distance method.
-The path is visible in `result.descriptor` (`F:` versus `C:`/`W:`).
+The path is visible in `result.descriptor` (`F:` versus `C:`). Canonical
+search must finish within `node_budget` (default 10,000 visited states),
+including after frame fallback. If it exhausts that budget, Python raises
+`SearchBudgetExceeded`; the CLI prints an error to stderr and exits with code
+1. No descriptor, hash, or identifier is created. Increase the budget and retry:
+
+```python
+hash_molecule(z, coords, node_budget=100_000)
+```
+
+```bash
+hashmol3d --node-budget 100000 molecule.xyz
+```
+
+A larger canonical node budget permits more work but does not change a
+successfully completed descriptor. No weaker summary is substituted.
 
 For an explicitly distance-based descriptor, use:
 
@@ -87,13 +110,33 @@ hash_molecule(z, coords, method="canonical")
 Hashes from different descriptor paths are not comparable; use the same
 method and descriptor version throughout a corpus.
 
-HashMol3D IDs are **stable across machines**, **reproducible**, and ideal for:
+With the stated [portability conditions](docs/specification.md#8-determinism-and-portability),
+the identifiers support:
 - workflow deduplication  
 - caching  
 - large QC datasets  
 - MD conformer tracking  
 - ML potential datasets  
 - LLM scientific agents  
+
+## Descriptor tags
+
+The geometry hash is computed from a UTF-8 descriptor with fields in this order:
+
+```text
+V:<version>|P:<precision>|Z:<atomic numbers>|F:<coordinate rows>
+V:<version>|P:<precision>|Z:<atomic numbers>|C:<distance matrix upper triangle>
+```
+
+- `V` identifies the descriptor format and canonicalization rules (currently
+  `6-FRAME-SHA256`).
+- `P` records the quantization grid spacing in angstroms, such as `1.0e-04`.
+- `Z` lists atomic numbers in the order used by the selected representation.
+- `F` stores the sorted element-labelled, quantized canonical-frame rows.
+- `C` stores the quantized distance matrix upper triangle in canonical atom order.
+
+All these fields enter the hash. The readable `q` and `m` tags instead record
+charge and spin multiplicity outside the geometry hash.
 
 ## Install
 
@@ -154,7 +197,7 @@ $ hashmol3d --version
 ```
 
 Options include `-p/--precision`, `-c/--charge`, `-m/--multiplicity`,
-`-l/--length`, `--method`, and `-v/--verbose`. Errors on missing or malformed input go
+`-l/--length`, `--method`, `--node-budget`, and `-v/--verbose`. Errors on missing or malformed input go
 to stderr with exit code 1 (no Python traceback).
 
 ## Usage (Python)
@@ -179,7 +222,7 @@ print(res.charge, res.multiplicity)  # 0 1
 ```
 
 All optional arguments are keyword-only: `precision`, `charge`,
-`multiplicity`, `length`, and `method`.
+`multiplicity`, `length`, `method`, and `node_budget`.
 
 `precision` must be a power of ten no greater than 1 Å (`1.0`, `1e-1`,
 `1e-2`, ...). Restricting the grid to powers of ten keeps its descriptor

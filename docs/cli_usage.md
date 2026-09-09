@@ -27,6 +27,7 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
 | `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |
 |      | `--method`       | frame  | Descriptor method: `frame` or `canonical` |
+|      | `--node-budget`  | 10000 | Maximum canonical search states, also after frame fallback |
 | `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
 
 ## Examples
@@ -66,8 +67,10 @@ grep -E -- "-9a3a21fa2c3b6f0d4cb8acb76a18eccf" identifiers.txt
 ## Exit codes
 
 - `0` — success
-- `1` — input file missing or malformed (a one-line message is written
-  to stderr; no Python traceback is shown)
+- `1` — invalid input, an I/O error, or canonical search budget exhaustion
+  (a message is written to stderr; no Python traceback is shown). On exhaustion
+  no identifier is printed; increase `--node-budget` and retry, for example
+  `hashmol3d --node-budget 100000 molecule.xyz`.
 
 ## Supported formats
 

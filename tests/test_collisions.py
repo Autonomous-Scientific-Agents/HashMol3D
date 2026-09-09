@@ -13,14 +13,14 @@ labeled distance matrix in a canonical atom order and must distinguish:
 
 It must also stay permutation-invariant on highly symmetric molecules
 (where the canonical search branches over symmetry orbits) and on the
-degenerate-rounding fallback path.
+budget-exhaustion outcome.
 """
 
 import numpy as np
 import pytest
 
 import hashmol3d.core as core
-from hashmol3d import hash_molecule
+from hashmol3d import SearchBudgetExceeded, hash_molecule
 
 
 def _line(points):
@@ -140,33 +140,52 @@ class TestSymmetricInvariance:
         self._check(z, np.asarray(WL1_PAIRS[0][0], float))
 
 
-class TestCanonicalFallbackPath:
-    def test_degenerate_rounding_falls_back_and_stays_invariant(self):
-        # 12 atoms inside a 0.01 A box hashed at 1 A precision: every
-        # rounded distance is 0, the search tree exceeds the node budget,
-        # and the stable-WL fallback (tag "W") must kick in deterministically.
+class TestCanonicalSearchBudget:
+    def test_degenerate_rounding_raises_without_hashing(self, monkeypatch):
         rng = np.random.default_rng(5)
         coords = rng.uniform(0, 0.01, size=(12, 3))
         z = np.full(12, 6)
-        res = hash_molecule(z, coords, precision=1.0, method="canonical")
-        assert "|W:" in res.descriptor
-        assert "|C:" not in res.descriptor
-        base = res.geometry_hash
-        for t in range(10):
-            zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
-            assert hash_molecule(zz, cc, precision=1.0, method="canonical").geometry_hash == base
 
-    def test_budget_is_permutation_invariant_when_patched(self, benzene, monkeypatch):
-        # Force even benzene onto the fallback path; the trigger and the
-        # resulting hash must not depend on the input atom order.
-        monkeypatch.setattr(core, "_NODE_BUDGET", 3)
+        def unexpected_hash(*args, **kwargs):
+            pytest.fail("budget exhaustion must not create a hash")
+
+        monkeypatch.setattr(core.hashlib, "sha256", unexpected_hash)
+        with pytest.raises(SearchBudgetExceeded, match="Increase node_budget"):
+            hash_molecule(z, coords, precision=1.0, method="canonical")
+
+    def test_budget_failure_is_invariant(self, benzene):
         z, coords = benzene
-        res = hash_molecule(z, coords, method="canonical")
-        assert "|W:" in res.descriptor
         rng = np.random.default_rng(9)
         for t in range(10):
             zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
-            assert hash_molecule(zz, cc, method="canonical").geometry_hash == res.geometry_hash
+            with pytest.raises(SearchBudgetExceeded, match=r"node budget \(3\)"):
+                hash_molecule(zz, cc, method="canonical", node_budget=3)
+
+    def test_partial_search_is_discarded_and_retry_completes(self, water):
+        z, coords = water
+        # Root + one leaf fits, but the other tied ordering is still required.
+        with pytest.raises(SearchBudgetExceeded):
+            hash_molecule(z, coords, method="canonical", node_budget=2)
+        res = hash_molecule(z, coords, method="canonical", node_budget=3)
+        assert res == hash_molecule(z, coords, method="canonical")
+        assert res == hash_molecule(z, coords, method="canonical", node_budget=100_000)
+        assert "|C:" in res.descriptor
+
+    def test_frame_fallback_obeys_node_budget(self):
+        with pytest.warns(UserWarning, match="falling back"):
+            with pytest.raises(SearchBudgetExceeded):
+                hash_molecule([6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0, node_budget=1)
+        with pytest.warns(UserWarning, match="falling back"):
+            res = hash_molecule([6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0, node_budget=3)
+        assert "|C:" in res.descriptor
+
+    @pytest.mark.parametrize("budget", [0, -1, True, np.bool_(True), 1.5, 3.0, "3", None])
+    def test_invalid_budget(self, water, budget):
+        with pytest.raises(ValueError, match="node_budget must be a positive integer"):
+            hash_molecule(*water, node_budget=budget)
+
+    def test_numpy_integer_budget(self, water):
+        assert hash_molecule(*water, method="canonical", node_budget=np.int64(3))
 
     def test_explicit_canonical_method_uses_canonical_path(self, water, benzene):
         for z, coords in (water, benzene):

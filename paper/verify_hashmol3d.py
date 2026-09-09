@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(_here, "src"))
 import numpy as np
 
 from hashmol3d import __version__
-from hashmol3d.core import DESCRIPTOR_VERSION, hash_molecule
+from hashmol3d.core import DESCRIPTOR_VERSION, SearchBudgetExceeded, hash_molecule
 
 rng = np.random.default_rng(0)
 print(f"HashMol3D package version: {__version__}")
@@ -202,7 +202,7 @@ check(
 )
 
 # 12d. An ill-conditioned frame request deterministically uses the complete
-# canonical fallback; this is distinct from the weak W budget fallback below.
+# canonical fallback; canonical exhaustion is checked separately below.
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
     rff = hash_molecule([6, 6], [[0, 0, 0], [2, 0, 0]], precision=1.0)
@@ -211,23 +211,19 @@ rfc = hash_molecule(
 )
 check("ill-conditioned frame uses deterministic canonical fallback", rff.descriptor == rfc.descriptor)
 
-# 13. Degenerate-rounding fallback: 12 atoms in a 0.01 A box at 1 A precision
-#     (every rounded distance is 0) must take the stable-WL fallback path
-#     deterministically and stay permutation-invariant.
+# 13. Degenerate rounding exhausts the canonical budget without a result.
 xd = rng.uniform(0, 0.01, size=(12, 3))
 zd = np.full(12, 6)
-rd = hash_molecule(zd, xd, precision=1.0, method="canonical")
-ok = "|W:" in rd.descriptor
+ok = True
 for _ in range(10):
     p = rng.permutation(12)
-    if (
-        hash_molecule(
-            zd[p], (xd @ rand_rot().T)[p], precision=1.0, method="canonical"
-        ).geometry_hash
-        != rd.geometry_hash
-    ):
+    try:
+        hash_molecule(zd[p], (xd @ rand_rot().T)[p], precision=1.0, method="canonical")
+    except SearchBudgetExceeded as err:
+        ok = ok and "Increase node_budget" in str(err)
+    else:
         ok = False
-check("degenerate-rounding fallback deterministic + invariant", ok)
+check("degenerate-rounding budget exhaustion deterministic + invariant", ok)
 
 # 14. Sub-precision noise stability
 noisy = xw + rng.uniform(-1e-9, 1e-9, xw.shape)

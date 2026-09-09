@@ -6,7 +6,7 @@ import argparse
 import sys
 from typing import Sequence
 
-from .core import hash_molecule
+from .core import SearchBudgetExceeded, hash_molecule
 from .io import read_xyz
 from .version import __version__
 
@@ -62,6 +62,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Geometry descriptor method (default: frame)",
     )
     parser.add_argument(
+        "--node-budget",
+        type=int,
+        default=10_000,
+        help="Maximum canonical search states, including frame fallback (default: 10000)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -89,11 +95,12 @@ def cli(argv: Sequence[str] | None = None) -> int:
             multiplicity=args.multiplicity,
             length=args.length,
             method=args.method,
+            node_budget=args.node_budget,
         )
     except FileNotFoundError as err:
         print(f"hashmol3d: {err}", file=sys.stderr)
         return 1
-    except (ValueError, OSError) as err:
+    except (ValueError, OSError, SearchBudgetExceeded) as err:
         print(f"hashmol3d: {err}", file=sys.stderr)
         return 1
 

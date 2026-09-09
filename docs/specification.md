@@ -1,6 +1,6 @@
 # HashMol3D Specification v0.9.3
 
-**Status:** Draft standard
+**Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
 **Canonical version tag:** `6-FRAME-SHA256`
 
@@ -69,8 +69,7 @@ concerns each method's specified *quantized* representation: quantization
 can merge distinct unrounded geometries into one grid cell. Subject to
 that quantization, homometric configurations — distinct geometries with
 the same distance *multiset* — receive distinct hashes (except for a
-truncated SHA-256 collision, §7, or the explicitly tagged stable-WL budget
-fallback, §4.4).
+truncated SHA-256 collision, §7). Search exhaustion produces no hash (§4.4).
 
 The **state tag** (and therefore the full identifier) additionally
 changes with charge or multiplicity. Two states of the same geometry
@@ -155,19 +154,20 @@ The number of leaves equals the order of the geometry's rounded-distance
 symmetry group (1 for generic molecules, 24 for a perfect tetrahedral
 cluster, 2n for an ideal n-ring).
 
-### 4.4 Degenerate-rounding fallback
+### 4.4 Canonical search budget
 
-The search visits at most **10,000** partition states (a normative
-constant of this version). The tree size is permutation-invariant, so
-exceeding the budget is a deterministic property of the geometry; it
-requires rounding so coarse that many atoms become mutually
-indistinguishable (e.g. a cluster hashed at a precision larger than its
-diameter). Such inputs fall back to hashing the stable-WL per-atom
-signature multiset: for each atom the triple
-`(Z_i, color_i, sorted multiset of (color_j, q_ij))` with the stable
-colors of §4.2, the triples sorted as a multiset. The fallback uses a
-distinct descriptor section tag (`W` instead of `C`, §6), so the two
-paths can never collide with each other.
+The default search budget is **10,000** visited partition states; callers may
+set a larger positive integer `node_budget`. If the full search cannot finish
+within this budget, raise `SearchBudgetExceeded` and create no descriptor,
+hash, or identifier. The CLI prints the error to stderr, exits with code 1,
+and suggests increasing `--node-budget`. Partial best candidates must never
+be serialized, and no weaker representation is substituted.
+
+The search tree is determined by the labelled quantized matrix, so exhaustion
+at a fixed budget is permutation-invariant. The budget controls availability,
+not the bytes of a successful descriptor; increasing it does not require a new
+version or change an already completed hash. This limit also applies to the
+canonical search invoked after frame fallback.
 
 ### 4.5 Default canonical frame method (`method="frame"`)
 
@@ -244,7 +244,6 @@ The descriptor is a UTF-8 string with the following pipe-separated
 components, in this fixed order:
 
     V:<version>|P:<precision>|Z:<z_ordered>|C:<distances>     (canonical path)
-    V:<version>|P:<precision>|Z:<z_sorted>|W:<atom sigs>      (fallback path, §4.4)
     V:<version>|P:<precision>|Z:<z_rows>|F:<coordinates>      (frame method, §4.5)
 
 Where:
@@ -258,9 +257,6 @@ Where:
   matrix `q` (§4.1) in canonical atom order, row-major
   (`q_12, q_13, ..., q_1N, q_23, ...`), comma-separated. Empty for a
   single atom.
-- `<atom sigs>` (fallback only) is the sorted multiset of per-atom
-  signatures, each formatted as `Z,color:c1-q1,c2-q2,...` with the
-  atom's stable color and its sorted `(color, q)` row, joined by `;`.
 - `<coordinates>` (frame method only) is the winning sorted row list of
   §4.5, each row formatted as `Z:x,y,z` with quantized integer
   coordinates, joined by `;`; `<z_rows>` lists the atomic numbers in
@@ -303,7 +299,8 @@ To guarantee identical identifiers across machines:
 - Format atomic numbers and scaled distances as decimal integers with
   no leading zeros or sign.
 - Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1.
-- Use the search-node budget of 10,000 exactly (§4.4). For the frame method,
+- Complete the canonical search (§4.4); the node budget only controls whether
+  a result is available. For the frame method,
   use the relative eigenvalue-gap threshold 0.05, minimum atom-anchor length
   10 grid units, and candidate budget 10,000 exactly (§4.5).
 - Encode the descriptor in UTF-8 before hashing.
@@ -313,7 +310,17 @@ To guarantee identical identifiers across machines:
 Any change to the descriptor format or semantics requires a new
 version tag.
 
-## 9. Dependencies
+## 9. Future tagged extensions
+
+New descriptor tags can extend the proposed standard to distinguish enantiomers
+and isotopes. An enantiomer-sensitive extension needs a canonical handedness
+representation; an isotope extension needs isotope labels associated with the
+canonical atom order. Such extensions must define their serialization and
+canonicalization rules and use a new descriptor version. The current library
+implements neither extension and retains reflection invariance and atomic-number
+labels only.
+
+## 10. Dependencies
 
 The reference implementation uses only NumPy and the Python standard
 library; in particular it does **not** depend on RDKit or any

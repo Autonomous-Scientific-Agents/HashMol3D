@@ -22,8 +22,8 @@ degenerate eigenspaces without random perturbations. The full canonical
 labelled distance matrix remains available with ``method="canonical"``.
 The normal ``F`` and ``C`` paths are complete representations at their
 quantization grids; unlike a plain multiset of pairwise distances, homometric
-pairs do not collide. The explicitly tagged ``W`` search-budget fallback is
-weaker, as documented in ``docs/specification.md``.
+pairs do not collide. Exhausting the canonical search budget raises
+``SearchBudgetExceeded`` without creating a descriptor or hash.
 
 The descriptor depends on atomic numbers, geometry quantized at a user
 specified precision, and the descriptor version. Total charge and spin
@@ -51,6 +51,7 @@ __all__ = [
     "DEFAULT_LENGTH",
     "DESCRIPTOR_VERSION",
     "HashMol3DResult",
+    "SearchBudgetExceeded",
     "generate_hashmol3d",
     "hash_length_for",
     "hash_molecule",
@@ -77,14 +78,9 @@ _MAX_LENGTH = 64
 # symbol-lookup KeyError.
 _MAX_Z = 118
 
-# Cap on the number of partition-refinement states visited by the canonical
-# atom-ordering search. The search tree's size is a function of the geometry
-# alone (never of the input atom order), so hitting the cap is itself a
-# permutation-invariant event; such inputs deterministically fall back to the
-# stable-WL multiset descriptor (section tag "W" instead of "C"). Real
-# molecules stay far below the cap: the tree has a single node for generic
-# geometries and ~|symmetry group| leaves for perfectly symmetric ones
-# (e.g. 361 nodes for a 120-atom monoelemental ring at default precision).
+# Default cap on partition-refinement states in canonical atom ordering.
+# Exhaustion produces an error, never a partial or weaker descriptor. Callers
+# can increase node_budget without changing any successfully completed hash.
 _NODE_BUDGET = 10_000
 
 # Scaled distances must stay below 2^62 so they fit int64 with headroom.
@@ -341,8 +337,8 @@ def _scaled_distances(coords: np.ndarray, decimals: int) -> np.ndarray:
     return q
 
 
-class _SearchBudgetExceeded(Exception):
-    """Internal: the canonical-ordering search exceeded its node budget."""
+class SearchBudgetExceeded(RuntimeError):
+    """Canonical search exhausted its node budget; no identifier was created."""
 
 
 def _refine_partition(colors: np.ndarray, rank_q: np.ndarray, n_ranks: int) -> np.ndarray:
@@ -373,7 +369,7 @@ def _refine_partition(colors: np.ndarray, rank_q: np.ndarray, n_ranks: int) -> n
 
 
 def _canonical_signature(
-    atomic_nums: np.ndarray, qmat: np.ndarray
+    atomic_nums: np.ndarray, qmat: np.ndarray, node_budget: int = _NODE_BUDGET
 ) -> tuple[str, tuple[int, ...], str]:
     """Canonical geometry signature: ``(section_tag, z_ordered, body)``.
 
@@ -385,12 +381,8 @@ def _canonical_signature(
     order. Equal bodies then mean equal labeled distance matrices, so the
     signature is a complete congruence invariant at the chosen precision.
 
-    Fallback path (tag ``"W"``): if the search tree exceeds
-    ``_NODE_BUDGET`` states (possible only when rounding makes many atoms
-    mutually indistinguishable), returns the stable-WL per-atom signature
-    multiset instead. The tree size is permutation-invariant, so the same
-    geometry always takes the same path; distinct tags keep the two paths
-    from ever colliding with each other.
+    The complete search must finish within ``node_budget`` visited states.
+    Otherwise raise ``SearchBudgetExceeded``; partial candidates are discarded.
     """
     n = atomic_nums.shape[0]
     z = atomic_nums.astype(np.int64)
@@ -415,8 +407,12 @@ def _canonical_signature(
         """Count a search node; emit a leaf candidate or a branch frame."""
         nonlocal best, best_order, nodes
         nodes += 1
-        if nodes > _NODE_BUDGET:
-            raise _SearchBudgetExceeded
+        if nodes > node_budget:
+            raise SearchBudgetExceeded(
+                f"canonical search exceeded the node budget ({node_budget}); "
+                "no identifier or hash was created. Increase node_budget "
+                "(CLI: --node-budget) and retry."
+            )
         k = int(colors.max()) + 1
         if k == n:  # discrete partition: colors are a full ordering
             order = np.argsort(colors)
@@ -433,38 +429,26 @@ def _canonical_signature(
         members = np.flatnonzero(colors == target)
         return [colors, members, 0]
 
-    try:
-        # Iterative DFS; each frame is [colors, cell members, next index].
-        stack: list[list] = []
-        frame = visit(root)
+    # Iterative DFS; each frame is [colors, cell members, next index].
+    stack: list[list] = []
+    frame = visit(root)
+    if frame is not None:
+        stack.append(frame)
+    while stack:
+        colors, members, idx = stack[-1]
+        if idx >= len(members):
+            stack.pop()
+            continue
+        stack[-1][2] = idx + 1
+        # Individualize one cell member: it gets a color sorting just
+        # before its former cellmates, then refine.
+        child = colors * 2 + 1
+        child[members[idx]] -= 1
+        _, inv = np.unique(child, return_inverse=True)
+        child = _refine_partition(inv.reshape(-1).astype(np.int64), rank_q, n_ranks)
+        frame = visit(child)
         if frame is not None:
             stack.append(frame)
-        while stack:
-            colors, members, idx = stack[-1]
-            if idx >= len(members):
-                stack.pop()
-                continue
-            stack[-1][2] = idx + 1
-            # Individualize one cell member: it gets a color sorting just
-            # before its former cellmates, then refine.
-            child = colors * 2 + 1
-            child[members[idx]] -= 1
-            _, inv = np.unique(child, return_inverse=True)
-            child = _refine_partition(inv.reshape(-1).astype(np.int64), rank_q, n_ranks)
-            frame = visit(child)
-            if frame is not None:
-                stack.append(frame)
-    except _SearchBudgetExceeded:
-        colors = root
-        atoms = []
-        for i in range(n):
-            row = sorted((int(colors[j]), int(qmat[i, j])) for j in range(n) if j != i)
-            atoms.append((int(z[i]), int(colors[i]), tuple(row)))
-        atoms.sort()
-        body = ";".join(
-            f"{zi},{ci}:" + ",".join(f"{cj}-{d}" for cj, d in row) for zi, ci, row in atoms
-        )
-        return "W", tuple(sorted(int(v) for v in z)), body
 
     assert best_order is not None
     qc = qmat[np.ix_(best_order, best_order)][iu, ju]
@@ -746,6 +730,7 @@ def hash_molecule(
     multiplicity: int | None = None,
     length: int | None = None,
     method: str = "frame",
+    node_budget: int = _NODE_BUDGET,
 ) -> HashMol3DResult:
     """Compute the HashMol3D identifier for a 3D molecular geometry.
 
@@ -779,10 +764,19 @@ def hash_molecule(
             moments are resolved by intrinsic point/line descriptors or by
             canonical atom anchors. Ill-conditioned anchors and candidate-
             budget overflows emit :class:`UserWarning` and use the canonical
-            method instead (detectable via the ``C:`` or ``W:`` section in
+            method instead (detectable via the ``C:`` section in
             ``result.descriptor`` instead of ``F:``).
             Identifiers from different methods are **not comparable**; pick
             one method per corpus.
+        node_budget: positive integer cap on canonical search states (default
+            10,000), also used after frame fallback. Increasing it changes
+            whether a search can finish, not its completed descriptor.
+
+    Raises:
+        SearchBudgetExceeded: if canonical search cannot finish within the
+            node budget. No descriptor, hash, or result is created; increase
+            ``node_budget`` and retry.
+        ValueError: if input or an option is invalid.
 
     Returns:
         :class:`HashMol3DResult`.
@@ -815,6 +809,14 @@ def hash_molecule(
     if method not in ("canonical", "frame"):
         raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
 
+    if (
+        isinstance(node_budget, (bool, np.bool_))
+        or not isinstance(node_budget, numbers.Integral)
+        or node_budget < 1
+    ):
+        raise ValueError("node_budget must be a positive integer")
+    node_budget = int(node_budget)
+
     charge = _as_exact_int(charge, "charge")
     # ``precision`` is validated (power of ten <= 1 Å, no bool) and
     # canonicalized in one place; ``effective_precision`` is what gets hashed
@@ -829,14 +831,14 @@ def hash_molecule(
             warnings.warn(
                 "no numerically stable canonical frame was found within the "
                 f"{_FRAME_CANDIDATE_BUDGET}-candidate budget; falling back "
-                "to method='canonical'. The returned descriptor uses the "
-                "canonical distance path instead of the frame path.",
+                "to method='canonical'. A C descriptor is returned only if "
+                "the canonical search completes within node_budget.",
                 UserWarning,
                 stacklevel=2,
             )
     if signature is None:
         qmat = _scaled_distances(coords, decimals)
-        signature = _canonical_signature(atomic_nums, qmat)
+        signature = _canonical_signature(atomic_nums, qmat, node_budget)
     tag, z_ordered, body = signature
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
     digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]

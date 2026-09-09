@@ -1,7 +1,7 @@
 [project]
 name = "hashmol3d"
 version = "0.9.3"
-description = "Deterministic 3D molecular geometry hashing standard"
+description = "Library for deterministic 3D molecular geometry identifiers and hashes"
 authors = [{name = "Murat Keçeli"}]
 readme = "README.md"
 requires-python = ">=3.8"

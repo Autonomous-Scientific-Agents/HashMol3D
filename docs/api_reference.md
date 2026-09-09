@@ -22,7 +22,7 @@ For example: `H2Oq0m1-9a3a21fa2c3b6f0d4cb8acb76a18eccf`.
   or multiplicity share the same `geometry_hash` and you can find them
   by suffix match.
 
-## `hash_molecule(atomic_nums, coords, *, precision=1e-4, charge=0, multiplicity=None, length=None, method="frame")`
+## `hash_molecule(atomic_nums, coords, *, precision=1e-4, charge=0, multiplicity=None, length=None, method="frame", node_budget=10000)`
 
 Compute the HashMol3D identifier for a 3D molecular geometry.
 
@@ -47,6 +47,11 @@ All optional arguments are **keyword-only**.
   canonical atom anchors. `"canonical"` selects the O(N²) labelled
   distance-matrix descriptor. A frame that is ill-conditioned or exceeds
   its 10,000-candidate budget warns and uses the canonical path.
+
+- `node_budget`: positive integer maximum number of canonical search states
+  (default 10,000), including after frame fallback. Exhaustion raises the public
+  `hashmol3d.SearchBudgetExceeded` exception without creating a descriptor,
+  hash, or result. Increase this budget and retry; completed hashes are unchanged.
 
 ### `hash_length_for(n_items, target_prob=1e-9) -> int`
 

@@ -101,18 +101,15 @@ branching (benzene ≈1.4 ms, cubane ≈8 ms, a perfect 120-atom
 monoelemental ring ≈300 ms) — acceptable for a per-geometry hash, and
 real conformers rarely have exact rounded symmetry.
 
-### Degenerate-rounding fallback
+### Canonical search exhaustion
 
-If rounding is so coarse that many atoms become mutually
-indistinguishable (e.g. a cluster hashed at a precision exceeding its
-diameter), the branching tree can explode combinatorially. The search
-therefore visits at most 10,000 partition states — a normative constant
-of the descriptor version. The tree size is permutation-invariant, so
-the cutoff is a deterministic property of the geometry, and such inputs
-fall back to hashing the stable-WL per-atom signature multiset under a
-distinct descriptor tag (`W:` instead of `C:`), which prevents any
-cross-path collision. The fallback is still strictly stronger than the
-v4 multiset.
+Coarse rounding or high symmetry can make the branching tree grow
+combinatorially. The search visits at most `node_budget` partition states
+(default 10,000). The tree size is permutation-invariant, so exhaustion at a
+fixed budget is also invariant. Exhaustion raises `SearchBudgetExceeded`
+without serializing a descriptor or computing a hash. Callers can increase
+`node_budget` (CLI: `--node-budget`) and retry. Every successful search visits
+all required leaves, so increasing this limit cannot change a completed result.
 
 ## The default canonical frame method
 
@@ -143,7 +140,7 @@ pairs has the same candidate-linear cost and can reach the budget. Exact
 large symmetric shells are therefore the main performance failure mode.
 Near conditioning thresholds and coordinate rounding boundaries remain the
 main numerical failure modes; the distance fallback is retained for them.
-Frame and distance bodies use distinct `F:` and `C:`/`W:` tags.
+Frame and distance bodies use distinct `F:` and `C:` tags.
 
 ## Why we do not encode chirality
 

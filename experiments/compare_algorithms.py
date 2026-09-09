@@ -28,7 +28,8 @@ pairs that share identical per-atom signatures (wl1 collides; both verified
 non-congruent by brute force over all 120 pairings; kept as fixtures in
 tests/test_collisions.py). `inertia` failed invariance on symmetric tops;
 `spectrum` globalized rounding noise and is O(N^3). The implementations here
-are frozen prototypes for reproducing that comparison; `pairs` replicates v4.
+are comparison prototypes; `pairs` replicates v4. Canonical search exhaustion
+now raises an error, matching the library, without substituting a weaker summary.
 
 Run:  python experiments/compare_algorithms.py
 """
@@ -131,7 +132,7 @@ def _refine(colors: np.ndarray, rank_q: np.ndarray, n_ranks: int) -> np.ndarray:
 
 
 def _canonical_core(z, q, node_budget=10_000):
-    """Return ('C', order) or ('W', stable_colors) if budget exceeded."""
+    """Return a complete canonical order, or raise on budget exhaustion."""
     n = len(z)
     _, inv = np.unique(z, return_inverse=True)
     colors0 = inv.reshape(-1).astype(np.int64)
@@ -152,7 +153,10 @@ def _canonical_core(z, q, node_budget=10_000):
         nonlocal best, best_order, nodes
         nodes += 1
         if nodes > node_budget:
-            raise _BudgetExceeded
+            raise _BudgetExceeded(
+                "canonical search exhausted its budget; no descriptor created. "
+                "Increase node_budget and retry."
+            )
         k = int(colors.max()) + 1
         if k == n:
             order = np.argsort(colors, kind="stable")
@@ -167,26 +171,23 @@ def _canonical_core(z, q, node_budget=10_000):
         members = np.flatnonzero(colors == target)
         return [colors, members, 0]
 
-    try:
-        frame = visit(root)
+    frame = visit(root)
+    if frame is not None:
+        stack.append(frame)
+    while stack:
+        colors, members, idx = stack[-1]
+        if idx >= len(members):
+            stack.pop()
+            continue
+        stack[-1][2] = idx + 1
+        child = colors * 2 + 1
+        child[members[idx]] -= 1
+        _, inv = np.unique(child, return_inverse=True)
+        child = _refine(inv.reshape(-1).astype(np.int64), rank_q, n_ranks)
+        frame = visit(child)
         if frame is not None:
             stack.append(frame)
-        while stack:
-            colors, members, idx = stack[-1]
-            if idx >= len(members):
-                stack.pop()
-                continue
-            stack[-1][2] = idx + 1
-            child = colors * 2 + 1
-            child[members[idx]] -= 1
-            _, inv = np.unique(child, return_inverse=True)
-            child = _refine(inv.reshape(-1).astype(np.int64), rank_q, n_ranks)
-            frame = visit(child)
-            if frame is not None:
-                stack.append(frame)
-        return "C", best_order
-    except _BudgetExceeded:
-        return "W", root
+    return best_order
 
 
 def sig_canonical(z: np.ndarray, coords: np.ndarray) -> str:
@@ -194,23 +195,11 @@ def sig_canonical(z: np.ndarray, coords: np.ndarray) -> str:
     n = len(z)
     if n == 1:
         return f"C|{int(z[0])}|"
-    kind, payload = _canonical_core(z, q)
-    if kind == "C":
-        order = payload
-        zc = ",".join(str(int(v)) for v in z[order])
-        iu, ju = np.triu_indices(n, k=1)
-        qc = q[np.ix_(order, order)][iu, ju]
-        return f"C|{zc}|" + ",".join(map(str, qc.tolist()))
-    # fallback: stable-WL multiset (permutation-invariant by construction)
-    colors = payload
-    atoms = []
-    for i in range(n):
-        row = sorted((int(colors[j]), int(q[i, j])) for j in range(n) if j != i)
-        atoms.append((int(z[i]), int(colors[i]), tuple(row)))
-    atoms.sort()
-    body = ";".join(f"{zi},{ci}:" + ",".join(f"{cj}-{d}" for cj, d in row) for zi, ci, row in atoms)
-    zs = ",".join(map(str, sorted(z.tolist())))
-    return f"CW|{zs}|{body}"
+    order = _canonical_core(z, q)
+    zc = ",".join(str(int(v)) for v in z[order])
+    iu, ju = np.triu_indices(n, k=1)
+    qc = q[np.ix_(order, order)][iu, ju]
+    return f"C|{zc}|" + ",".join(map(str, qc.tolist()))
 
 
 # --------------------------------------------------------------------------
