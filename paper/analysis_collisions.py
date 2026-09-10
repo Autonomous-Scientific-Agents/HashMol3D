@@ -27,11 +27,12 @@ expected excess-item count is the exact occupancy expression
     E[n - U] = n - 2^b[1 - (1 - 2^-b)^n].
 
 This is the statistic the observed n - U should be compared against at every
-length. The sparse-limit birthday approximation n(n-1)/2^{b+1} counts colliding
-*pairs*, a different quantity that agrees with the excess-item count only in the
-sparse tail (few collisions) and diverges badly once slots saturate (short L).
-We plot the exact occupancy expectation as the primary reference and show the
-sparse-limit pair count as a secondary curve to make the distinction explicit.
+length. The expression n(n-1)/2^{b+1} is the exact expected number of colliding
+*pairs* under uniform hashing, a different quantity that approximates the
+excess-item count only in the sparse tail (few collisions) and diverges from it
+once slots saturate (short L). We plot the exact occupancy expectation as the
+primary reference and show the expected colliding-pair count as a secondary
+curve to make the distinction explicit.
 
 Descriptor-path audit. The default ``frame`` run records the principal-axis,
 one-axis/atom-anchor, two-atom-anchor, point, line, and canonical-fallback
@@ -561,7 +562,7 @@ def make_figure(rows, n_distinct, suffix=""):
         exp_pairs,
         "^:",
         color="darkorange",
-        label=r"sparse-limit pairs $n(n{-}1)/2^{\,b+1}$",
+        label=r"expected colliding pairs $n(n{-}1)/2^{\,b+1}$",
     )
     plt.axhline(1.0, ls=":", color="gray", lw=1)
     plt.text(52, 1.35, "one collision", color="gray", fontsize=8)
