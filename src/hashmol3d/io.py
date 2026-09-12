@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from .periodic_table import get_atomic_num
@@ -22,9 +24,14 @@ def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
     Returns:
         ``(atomic_nums, coords)`` as NumPy arrays.
 
+    Reading stops after the declared number of atoms, so the first frame of a
+    multi-frame trajectory file is returned. Any non-blank content after that
+    point triggers a ``UserWarning``, because an under-declared atom count
+    would otherwise silently hash a truncated molecule.
+
     Raises:
-        ValueError: if the file is malformed (bad atom count, missing or
-            extra atom lines, unknown element symbol, non-numeric coords).
+        ValueError: if the file is malformed (bad atom count, too few atom
+            lines, unknown element symbol, non-numeric coords).
     """
     with open(path) as f:
         lines = f.readlines()
@@ -43,7 +50,8 @@ def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
 
     z_list = []
     coords_list = []
-    for raw in lines[2:]:
+    remaining = iter(lines[2:])
+    for raw in remaining:
         line = raw.strip()
         if not line:
             continue
@@ -70,6 +78,17 @@ def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
         coords_list.append(xyz)
         if len(z_list) == n_declared:
             break
+
+    if len(z_list) == n_declared:
+        trailing = sum(1 for raw in remaining if raw.strip())
+        if trailing:
+            warnings.warn(
+                f"XYZ file declares {n_declared} atoms but {trailing} non-blank "
+                "line(s) follow them; only the first frame was read. Check the "
+                "atom count if the file is not a multi-frame trajectory.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     if len(z_list) != n_declared:
         raise ValueError(

@@ -1,5 +1,7 @@
 """Tests for the XYZ reader."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -29,14 +31,35 @@ def test_read_xyz_atomic_numbers(tmp_path):
     assert z.tolist() == [6, 8]
 
 
-def test_read_xyz_ignores_extra_lines(tmp_path):
+def test_read_xyz_warns_on_extra_lines(tmp_path):
+    # Reading stops at the declared count (first frame of a trajectory), but
+    # trailing content is reported: an under-declared count would otherwise
+    # silently hash a truncated molecule.
     path = _write_xyz(
         tmp_path,
         "1\ncomment\nC 0 0 0\nthis line should be ignored\n",
     )
-    z, coords = read_xyz(path)
+    with pytest.warns(UserWarning, match="1 non-blank line"):
+        z, coords = read_xyz(path)
     assert z.tolist() == [6]
     assert coords.shape == (1, 3)
+
+
+def test_read_xyz_multiframe_returns_first_frame_with_warning(tmp_path):
+    frame = "2\ncomment\nC 0 0 0\nC 1.2 0 0\n"
+    path = _write_xyz(tmp_path, frame + frame)
+    with pytest.warns(UserWarning, match="only the first frame"):
+        z, coords = read_xyz(path)
+    assert z.tolist() == [6, 6]
+    assert coords.shape == (2, 3)
+
+
+def test_read_xyz_exact_count_no_warning(tmp_path):
+    path = _write_xyz(tmp_path, "1\ncomment\nC 0 0 0\n\n\n")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        z, _ = read_xyz(path)
+    assert z.tolist() == [6]
 
 
 def test_read_xyz_rejects_bad_count(tmp_path):
