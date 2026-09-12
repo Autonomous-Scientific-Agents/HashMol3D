@@ -109,7 +109,10 @@ print(result.geometry_hash)  # ...
 
 Parse a standard XYZ file and return `(atomic_nums, coords)` as NumPy
 arrays. Validates the atom count declared in the header and raises
-`ValueError` on malformed input.
+`ValueError` on malformed input. Reading stops after the declared number of
+atoms, so a multi-frame trajectory yields its first frame; any non-blank
+content after that point emits a `UserWarning`, since an under-declared count
+would otherwise silently hash a truncated molecule.
 
 ```python
 from hashmol3d import read_xyz

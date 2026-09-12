@@ -75,4 +75,7 @@ grep -E -- "-bac9655753f489d6cbfdb299d59adbda" identifiers.txt
 ## Supported formats
 
 Only standard XYZ input is supported in this release. The XYZ parser
-validates the declared atom count and rejects malformed files.
+validates the declared atom count and rejects malformed files. If non-blank
+lines follow the declared atoms (a multi-frame trajectory, or a header that
+under-counts the atoms), only the first frame is hashed and a warning is
+printed to stderr.
