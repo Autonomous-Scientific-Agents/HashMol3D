@@ -286,14 +286,19 @@ class TestValidateAtomicNums:
         with pytest.raises(ValueError, match="complex"):
             hash_molecule([6 + 1j, 1], coords)
 
-    def test_rejects_numeric_strings(self):
-        # ``astype(float)`` parses "6"; the validator should not.
-        with pytest.raises(ValueError, match="strings"):
-            _validate_atomic_nums(["6", "1"])
-        with pytest.raises(ValueError, match="strings"):
-            _validate_atomic_nums(np.array(["6", "1"]))
-        with pytest.raises(ValueError, match="strings"):
-            _validate_atomic_nums(np.array([6, "1"], dtype=object))
+    def test_accepts_numeric_strings(self):
+        # Numeric strings parse to exactly the intended value or fail, so
+        # there is no silent-error path; accept them like np.asarray does.
+        assert _validate_atomic_nums(["6", "1"]).tolist() == [6, 1]
+        assert _validate_atomic_nums(np.array(["6", "1.0"])).tolist() == [6, 1]
+        assert _validate_atomic_nums(np.array([6, "1"], dtype=object)).tolist() == [6, 1]
+        coords = [[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]]
+        assert hash_molecule(["6", "1"], coords) == hash_molecule([6, 1], coords)
+
+    def test_element_symbols_get_pointed_at_lookup(self):
+        for bad in (["C", "H"], np.array(["C", "H"]), np.array([6, "H"], dtype=object), [b"C"]):
+            with pytest.raises(ValueError, match="element symbols"):
+                _validate_atomic_nums(bad)
 
 
 class TestValidateCoords:
