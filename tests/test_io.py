@@ -39,10 +39,27 @@ def test_read_xyz_warns_on_extra_lines(tmp_path):
         tmp_path,
         "1\ncomment\nC 0 0 0\nthis line should be ignored\n",
     )
-    with pytest.warns(UserWarning, match="1 non-blank line"):
+    with pytest.warns(UserWarning, match="1 non-blank line") as record:
         z, coords = read_xyz(path)
     assert z.tolist() == [6]
     assert coords.shape == (1, 3)
+    assert str(path) in str(record[0].message)
+
+
+def test_read_xyz_warns_once_per_file_under_default_filter(tmp_path):
+    # Python's default filter dedups on (message, category, lineno); with the
+    # path in the message, a loop over files warns for every file.
+    paths = []
+    for i in range(3):
+        p = tmp_path / f"m{i}.xyz"
+        p.write_text("1\ncomment\nC 0 0 0\nextra\n")
+        paths.append(str(p))
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("default")
+        for p in paths:
+            read_xyz(p)
+    assert len(record) == 3
+    assert [str(p) in str(w.message) for w, p in zip(record, paths)] == [True] * 3
 
 
 def test_read_xyz_multiframe_returns_first_frame_with_warning(tmp_path):

@@ -26,8 +26,10 @@ def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
 
     Reading stops after the declared number of atoms, so the first frame of a
     multi-frame trajectory file is returned. Any non-blank content after that
-    point triggers a ``UserWarning``, because an under-declared atom count
-    would otherwise silently hash a truncated molecule.
+    point triggers a ``UserWarning`` naming the file, because an under-declared
+    atom count would otherwise silently hash a truncated molecule. The path is
+    part of the message so that a loop over many files warns once per file
+    rather than once per call site under Python's default warning filter.
 
     Raises:
         ValueError: if the file is malformed (bad atom count, too few atom
@@ -83,9 +85,9 @@ def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
         trailing = sum(1 for raw in remaining if raw.strip())
         if trailing:
             warnings.warn(
-                f"XYZ file declares {n_declared} atoms but {trailing} non-blank "
-                "line(s) follow them; only the first frame was read. Check the "
-                "atom count if the file is not a multi-frame trajectory.",
+                f"{path}: XYZ header declares {n_declared} atoms but {trailing} "
+                "non-blank line(s) follow them; only the first frame was read. "
+                "Check the atom count if the file is not a multi-frame trajectory.",
                 UserWarning,
                 stacklevel=2,
             )
