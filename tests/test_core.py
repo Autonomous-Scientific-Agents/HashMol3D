@@ -14,6 +14,7 @@ from hashmol3d.core import (
     _scaled_distances,
     _state_tag,
     _validate_atomic_nums,
+    _validate_coords,
 )
 
 
@@ -284,6 +285,47 @@ class TestValidateAtomicNums:
             hash_molecule([6, True], coords)
         with pytest.raises(ValueError, match="complex"):
             hash_molecule([6 + 1j, 1], coords)
+
+    def test_accepts_numeric_strings(self):
+        # Numeric strings parse to exactly the intended value or fail, so
+        # there is no silent-error path; accept them like np.asarray does.
+        assert _validate_atomic_nums(["6", "1"]).tolist() == [6, 1]
+        assert _validate_atomic_nums(np.array(["6", "1.0"])).tolist() == [6, 1]
+        assert _validate_atomic_nums(np.array([6, "1"], dtype=object)).tolist() == [6, 1]
+        coords = [[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]]
+        assert hash_molecule(["6", "1"], coords) == hash_molecule([6, 1], coords)
+
+    def test_element_symbols_get_pointed_at_lookup(self):
+        for bad in (["C", "H"], np.array(["C", "H"]), np.array([6, "H"], dtype=object), [b"C"]):
+            with pytest.raises(ValueError, match="element symbols"):
+                _validate_atomic_nums(bad)
+
+
+class TestValidateCoords:
+    def test_rejects_complex_coords(self):
+        # Before this check, ``np.asarray(coords, dtype=float)`` dropped the
+        # imaginary parts with only a ComplexWarning, so a complex geometry
+        # hashed identically to its real projection.
+        real = np.array([[0.0, 0.0, 0.0], [0.7572, 0.5860, 0.0], [-0.7572, 0.5860, 0.0]])
+        imag = np.zeros_like(real)
+        imag[1, 0] = 0.5
+        with pytest.raises(ValueError, match="complex"):
+            hash_molecule([8, 1, 1], real + 1j * imag)
+        with pytest.raises(ValueError, match="complex"):
+            hash_molecule([8, 1, 1], real.astype(complex))  # zero imaginary part
+        with pytest.raises(ValueError, match="complex"):
+            hash_molecule([8, 1, 1], [[0, 0, 0], [0.7572 + 0j, 0.5860, 0], [-0.7572, 0.5860, 0]])
+        with pytest.raises(ValueError, match="complex"):
+            _validate_coords(np.array([[0, 0, 1j]], dtype=object))
+
+    def test_accepts_real_inputs(self):
+        assert _validate_coords([[0, 0, 0]]).dtype == np.float64
+        assert _validate_coords(np.array([[1, 2, 3]], dtype=np.float32)).dtype == np.float64
+        assert _validate_coords(np.array([[1, 2, 3]])).tolist() == [[1.0, 2.0, 3.0]]
+
+    def test_rejects_non_numeric(self):
+        with pytest.raises(ValueError, match="real numbers"):
+            _validate_coords([["a", "b", "c"]])
 
 
 class TestDeterminism:

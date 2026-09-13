@@ -1,11 +1,11 @@
 """Periodic table data and utilities for atomic number lookup.
 
 Element symbols are stored in their canonical mixed-case form
-(``"H"``, ``"He"``, ``"Co"``, ...) so that ``Co`` (cobalt) and ``CO``
-(carbon + oxygen, which is not a single element) can be told apart.
-
-``get_atomic_num`` accepts any case (``"co"``, ``"CO"``, ``"Co"``) and
-normalizes to the canonical capitalization before lookup.
+(``"H"``, ``"He"``, ``"Co"``, ...). ``get_atomic_num`` accepts any case
+(``"co"``, ``"CO"``, ``"Co"``) and normalizes to the canonical capitalization
+before lookup, so an all-caps ``"CL"`` from an old-style XYZ file resolves to
+chlorine; a multi-element string such as ``"CO"`` is therefore read as cobalt,
+not as carbon + oxygen.
 """
 
 from typing import Dict

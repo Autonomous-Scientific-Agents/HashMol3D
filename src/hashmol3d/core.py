@@ -254,6 +254,12 @@ def _validate_atomic_nums(atomic_nums) -> np.ndarray:
     numeric array cannot reveal a boolean the caller may have supplied, so that
     scan is limited to Python sequences and object arrays, which retain the
     information.
+
+    Numeric strings (``"6"``, ``"6.0"``) are accepted: they parse to exactly
+    the intended value or fail, so there is no silent-error path, and
+    rejecting them would be stricter than ``np.asarray(x, dtype=float)``.
+    Strings that do *not* parse are almost always element symbols, so that
+    failure is reported with a pointer to the symbol-lookup helpers.
     """
     arr = np.asarray(atomic_nums)
     if arr.dtype == bool:
@@ -269,6 +275,13 @@ def _validate_atomic_nums(atomic_nums) -> np.ndarray:
     try:
         as_float = arr.astype(float).reshape(-1)
     except (TypeError, ValueError) as err:
+        if arr.dtype.kind in "SU" or (
+            arr.dtype == object and any(isinstance(x, (str, bytes)) for x in arr.reshape(-1))
+        ):
+            raise ValueError(
+                "atomic numbers must be integers, not element symbols; use read_xyz "
+                "or periodic_table.get_atomic_num to convert symbols"
+            ) from err
         raise ValueError(f"atomic numbers must be integers in [1, {_MAX_Z}]") from err
     if as_float.size == 0:
         return as_float.astype(np.int64)
@@ -279,6 +292,29 @@ def _validate_atomic_nums(atomic_nums) -> np.ndarray:
     if not np.all((as_float >= 1) & (as_float <= _MAX_Z)):
         raise ValueError(f"atomic numbers must be in [1, {_MAX_Z}]")
     return as_float.astype(np.int64)
+
+
+def _validate_coords(coords) -> np.ndarray:
+    """Coerce coordinates to a ``float64`` array, rejecting complex input.
+
+    ``np.asarray(coords, dtype=float)`` on complex input only emits a
+    ``ComplexWarning`` and discards the imaginary parts, so a complex geometry
+    would be hashed as its real projection. Complex values are rejected against
+    both the coerced dtype and, for Python sequences and object arrays, the
+    original elements, mirroring :func:`_validate_atomic_nums`. Shape and
+    finiteness are checked by the caller.
+    """
+    arr = np.asarray(coords)
+    if np.issubdtype(arr.dtype, np.complexfloating):
+        raise ValueError("coords must be real numbers, not complex numbers")
+    if not isinstance(coords, np.ndarray) or arr.dtype == object:
+        for x in np.asarray(coords, dtype=object).reshape(-1):
+            if isinstance(x, numbers.Complex) and not isinstance(x, numbers.Real):
+                raise ValueError("coords must be real numbers, not complex numbers")
+    try:
+        return np.asarray(arr, dtype=float)
+    except (TypeError, ValueError) as err:
+        raise ValueError("coords must be an (N, 3) array of real numbers") from err
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
@@ -803,7 +839,7 @@ def hash_molecule(
         :class:`HashMol3DResult`.
     """
     atomic_nums = _validate_atomic_nums(atomic_nums)
-    coords = np.asarray(coords, dtype=float)
+    coords = _validate_coords(coords)
 
     if atomic_nums.size == 0:
         raise ValueError("molecule must contain at least one atom")
