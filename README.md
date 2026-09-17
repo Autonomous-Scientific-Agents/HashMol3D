@@ -190,8 +190,10 @@ also infers connectivity and bond orders; it requires complete atom lists,
 including hydrogens, and the correct charge. Chemistry failures produce errors.
 MOL, SDF, MOL2, PDB, SMILES, and InChI file adapters are available. PDB file
 input supports geometry-only hashing; S tagging requires a format with verified
-bond orders or a chemically prepared RDKit Mol. Hydrogens without coordinates
-are rejected unless explicitly allowed with `allow_implicit_hydrogens=True`
+bond orders or a chemically prepared RDKit Mol. PDB geometry-only input hashes
+exactly the atoms in the file, without trusting guessed implicit-H counts.
+Other RDKit inputs with hydrogens without coordinates are rejected unless
+explicitly allowed with `allow_implicit_hydrogens=True`
 (CLI: `--allow-implicit-hydrogens`); that override hashes only the atoms present.
 Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
 [RDKit guide](docs/rdkit.md) before mixing sources or building an S-tag corpus.

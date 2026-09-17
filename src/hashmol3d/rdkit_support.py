@@ -209,8 +209,9 @@ def hash_file(
     from coordinates and the requested total charge (default zero).
 
     Other formats use ``read_rdkit``; PDB is refused for S tagging because its
-    inferred bond orders cannot be trusted. Hydrogens without coordinates are
-    rejected unless ``allow_implicit_hydrogens=True`` is explicitly set.
+    inferred bond orders cannot be trusted. PDB geometry-only input hashes the
+    atoms present without checking guessed implicit-H counts. Other formats
+    reject hydrogens without coordinates unless ``allow_implicit_hydrogens=True``.
     ``generate_coordinates=True`` explicitly
     replaces coordinates using ETKDGv3 (seed 0, one thread, explicit H atoms),
     without optimization. It is disallowed for XYZ. Generated geometries depend
@@ -268,6 +269,8 @@ def hash_file(
     return hash_rdkit(
         mol,
         include_smiles=include_smiles,
-        allow_implicit_hydrogens=allow_implicit_hydrogens,
+        # PDB's guessed single bonds can imply extra H even for complete inputs.
+        # Its geometry-only path must not infer completeness from that graph.
+        allow_implicit_hydrogens=allow_implicit_hydrogens or fmt == "pdb",
         **kwargs,
     )

@@ -253,7 +253,7 @@ def test_pdb_s_is_refused_even_with_hydrogen_override(tmp_path, capsys, with_con
     path = tmp_path / "benzene.pdb"
     path.write_text(block)
     # Geometry is still usable regardless of guessed bond orders.
-    assert hash_file(path, input_format="pdb", allow_implicit_hydrogens=True).formula == "C6H6"
+    assert hash_file(path, input_format="pdb").formula == "C6H6"
     for generate in (False, True):
         with pytest.raises(ValueError, match="PDB input is not supported for S tagging"):
             hash_file(
@@ -270,6 +270,31 @@ def test_pdb_s_is_refused_even_with_hydrogen_override(tmp_path, capsys, with_con
     output = capsys.readouterr()
     assert not output.out
     assert "use SDF or hash_rdkit" in output.err
+
+
+@pytest.mark.parametrize(
+    "smiles,formula",
+    [("CCO", "C2H6O"), ("C=C", "C2H4"), ("CC(=O)O", "C2H4O2"), ("c1ccccc1", "C6H6")],
+)
+def test_pdb_geometry_ignores_guessed_implicit_hydrogens(tmp_path, capsys, smiles, formula):
+    block = Chem.MolToPDBBlock(molecule(smiles))
+    path = tmp_path / "without_conect.pdb"
+    path.write_text(
+        "\n".join(line for line in block.splitlines() if not line.startswith("CONECT")) + "\n"
+    )
+    mol = read_rdkit(path)
+    expected = hash_molecule(
+        [atom.GetAtomicNum() for atom in mol.GetAtoms()], mol.GetConformer().GetPositions()
+    )
+    assert expected.formula == formula
+    assert hash_file(path, input_format="pdb") == expected
+    assert cli([str(path), "--input-format", "pdb"]) == 0
+    assert capsys.readouterr().out.strip() == expected.hash_str
+    if smiles != "CCO":
+        # Direct Mol input still requires the caller to prepare the chemistry.
+        assert any(atom.GetTotalNumHs() for atom in mol.GetAtoms())
+        with pytest.raises(ValueError, match="implicit hydrogens"):
+            hash_rdkit(mol)
 
 
 @pytest.mark.parametrize(

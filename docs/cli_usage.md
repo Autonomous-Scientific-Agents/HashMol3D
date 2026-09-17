@@ -96,10 +96,12 @@ hashmol3d molecule.xyz --include-smiles -v
 hashmol3d molecule.smi --input-format smi --generate-coordinates --include-smiles
 ```
 
-RDKit input with implicit H atoms or atom-level H counts without coordinates is
+RDKit input other than PDB with implicit H atoms or atom-level H counts without coordinates is
 rejected by default. Provide complete coordinates, explicitly generate them,
 or use `--allow-implicit-hydrogens` to accept an incomplete geometry/formula.
-PDB file input cannot be combined with `--include-smiles`; use SDF or a
+PDB geometry-only input hashes exactly the atoms in the file, without checking
+implicit H counts derived from guessed bond orders. PDB file input cannot be
+combined with `--include-smiles`; use SDF or a
 chemically prepared RDKit Mol for chemistry-sensitive hashing.
 
 S changes the descriptor version and digest, including sensitivity to supported

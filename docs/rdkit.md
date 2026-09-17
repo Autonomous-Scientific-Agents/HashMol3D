@@ -62,7 +62,11 @@ PDB file input is **refused for S tagging**, even with coordinate generation or
 the implicit-H override. Proximity bonding cannot reliably recover bond orders
 (for example, benzene can be misread as cyclohexane). Use an SDF with verified
 bond orders, or `hash_rdkit` with a chemically prepared Mol. PDB geometry-only
-hashing remains available, subject to the same missing-H guard. MOL2 support
+hashing uses exactly the atoms in the file, without the implicit-H guard:
+guessed single bonds can imply extra hydrogens even in complete unsaturated
+geometries. Missing atoms cannot be inferred reliably from PDB chemistry, so
+the caller must choose the intended atom set. Direct `hash_rdkit` calls retain
+the guard because the caller controls the graph. MOL2 support
 also depends on atom typing. These adapters do not repair missing chemical
 information; validate the graph before chemistry-sensitive hashing. All
 coordinates are interpreted as angstroms. The implicit-H override is rejected
