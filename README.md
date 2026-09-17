@@ -61,13 +61,11 @@ hash_molecule(z, coords, length=hash_length_for(10**9))
 
 (recommended hex length; the default of 32 covers up to ~8·10¹⁴ items at `p=1e-9`.)
 
-The current format deliberately does **not** distinguish enantiomers, and
+The default format deliberately does **not** distinguish enantiomers, and
 isotopes share the same atomic number and therefore the same identifier at
-fixed coordinates and electronic state. The proposed standard can be extended
-with new tags for enantiomer-sensitive stereochemistry and isotope labels.
-Those extensions would require defined canonicalization rules and a new
-descriptor version; they are not implemented in this release. The library
-depends only on NumPy.
+fixed coordinates and electronic state. The optional RDKit `S` extension adds
+canonical isomeric SMILES in a separate descriptor namespace. The default
+library depends only on NumPy; installing RDKit does not change any defaults.
 
 ## Canonical frame method
 
@@ -150,6 +148,46 @@ V:<version>|P:<precision>|Z:<atomic numbers>|C:<distance matrix upper triangle>
 
 All these fields enter the hash. The readable `q` and `m` tags instead record
 charge and spin multiplicity outside the geometry hash.
+
+The opt-in `S` extension appends `|S:<canonical isomeric SMILES>` and uses
+`V:8-FRAME-SHA256-S1-RDKIT-<RDKit version>`. It retains the same `P`, `Z`,
+and `F`/`C` fields. Its digest also depends on molecular connectivity,
+stereochemistry, isotopes, and formal charges encoded in SMILES, so it has
+different invariances from the default geometry-only hash. See
+[RDKit support](docs/rdkit.md) for the exact rules and limitations.
+
+## Optional RDKit support
+
+```bash
+pip install 'hashmol3d[rdkit]'
+
+# Read an existing 3D structure; still use the default geometry descriptor.
+hashmol3d molecule.sdf --input-format sdf
+
+# Explicitly add canonical isomeric SMILES to the hashed descriptor.
+hashmol3d molecule.sdf --input-format sdf --include-smiles -v
+hashmol3d molecule.xyz --include-smiles -v
+
+# A SMILES file has no geometry: explicitly generate a new conformer.
+hashmol3d molecule.smi --input-format smi --generate-coordinates --include-smiles
+```
+
+```python
+from hashmol3d import canonical_smiles, hash_rdkit, hash_xyz
+
+# mol can come from any RDKit reader; hashing requires a 3D conformer.
+result = hash_rdkit(mol)  # no S tag
+stereo_result = hash_rdkit(mol, include_smiles=True)
+smiles = canonical_smiles(mol)  # graph stereo; does not require coordinates
+stereo_xyz = hash_xyz("molecule.xyz", include_smiles=True)
+```
+
+S tagging uses stereochemistry from the selected 3D coordinates. XYZ tagging
+also infers connectivity and bond orders; it requires complete atom lists,
+including hydrogens, and the correct charge. Chemistry failures produce errors.
+MOL, SDF, MOL2, PDB, SMILES, and InChI file adapters are available; arbitrary
+RDKit readers can feed `hash_rdkit` directly. See the
+[RDKit guide](docs/rdkit.md) before mixing sources or building an S-tag corpus.
 
 ## Install
 
