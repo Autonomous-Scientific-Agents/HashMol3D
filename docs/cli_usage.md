@@ -23,11 +23,15 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 | Flag | Long form | Default | Meaning |
 | --- | --- | --- | --- |
 | `-p` | `--precision`    | `1e-4` | Geometry-grid precision in angstroms; power of ten ≤ 1 |
-| `-c` | `--charge`       | `0`    | Total formal charge |
+| `-c` | `--charge`       | infer  | Total formal charge: 0 for XYZ; graph charge for RDKit formats |
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
 | `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |
 |      | `--method`       | frame  | Descriptor method: `frame` or `canonical` |
 |      | `--node-budget`  | 10000 | Maximum canonical search states, also after frame fallback |
+|      | `--input-format` | xyz | `xyz`, `mol`, `sdf`, `mol2`, `pdb`, `smi`/`smiles`, or `inchi` |
+|      | `--include-smiles` | off | Add canonical isomeric SMILES as S in a separate hash namespace |
+|      | `--generate-coordinates` | off | Generate a new 3D conformer with explicit H atoms (non-XYZ only) |
+|      | `--allow-implicit-hydrogens` | off | Accept hydrogens without coordinates and hash only atoms present (non-XYZ) |
 | `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
 
 ## Examples
@@ -74,8 +78,34 @@ grep -E -- "-bac9655753f489d6cbfdb299d59adbda" identifiers.txt
 
 ## Supported formats
 
-Only standard XYZ input is supported in this release. The XYZ parser
+Standard XYZ remains the default input. The XYZ parser
 validates the declared atom count and rejects malformed files. If non-blank
 lines follow the declared atoms (a multi-frame trajectory, or a header that
 under-counts the atoms), only the first frame is hashed and a warning is
 printed to stderr.
+
+Install `pip install 'hashmol3d[rdkit]'` for the other formats. Select the format
+explicitly; file extensions never switch the CLI backend automatically. Reading
+an RDKit format does not enable S. Inputs must contain a single molecule;
+SMILES/InChI and 2D structures require explicit coordinate generation:
+
+```bash
+hashmol3d molecule.sdf --input-format sdf
+hashmol3d molecule.sdf --input-format sdf --include-smiles -v
+hashmol3d molecule.xyz --include-smiles -v
+hashmol3d molecule.smi --input-format smi --generate-coordinates --include-smiles
+```
+
+RDKit input other than PDB with implicit H atoms or atom-level H counts without coordinates is
+rejected by default. Provide complete coordinates, explicitly generate them,
+or use `--allow-implicit-hydrogens` to accept an incomplete geometry/formula.
+PDB geometry-only input hashes exactly the atoms in the file, without checking
+implicit H counts derived from guessed bond orders. PDB file input cannot be
+combined with `--include-smiles`; use SDF or a
+chemically prepared RDKit Mol for chemistry-sensitive hashing.
+
+S changes the descriptor version and digest, including sensitivity to supported
+stereochemistry, isotopes, and graph formal charges. It is not interchangeable
+with the default descriptor. Missing RDKit, invalid chemistry, and embedding
+failure exit with code 1; S is never silently dropped. See the
+[RDKit guide](rdkit.md) for input policies and limitations.

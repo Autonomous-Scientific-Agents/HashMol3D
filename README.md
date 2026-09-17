@@ -61,13 +61,11 @@ hash_molecule(z, coords, length=hash_length_for(10**9))
 
 (recommended hex length; the default of 32 covers up to ~8·10¹⁴ items at `p=1e-9`.)
 
-The current format deliberately does **not** distinguish enantiomers, and
+The default format deliberately does **not** distinguish enantiomers, and
 isotopes share the same atomic number and therefore the same identifier at
-fixed coordinates and electronic state. The proposed standard can be extended
-with new tags for enantiomer-sensitive stereochemistry and isotope labels.
-Those extensions would require defined canonicalization rules and a new
-descriptor version; they are not implemented in this release. The library
-depends only on NumPy.
+fixed coordinates and electronic state. The optional RDKit `S` extension adds
+canonical isomeric SMILES in a separate descriptor namespace. The default
+library depends only on NumPy; installing RDKit does not change any defaults.
 
 ## Canonical frame method
 
@@ -126,7 +124,7 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.11.0 uses descriptor `8-FRAME-SHA256` for this principal-axis
+Version 0.11.0 introduced descriptor `8-FRAME-SHA256` for this principal-axis
 refinement. For example, water now uses `F` at 0.1 and 1 angstrom grids.
 Because the version field is hashed, all digests change from versions 6 and 7; recompute
 identifiers consistently when migrating a corpus. The paper's archived corpus
@@ -150,6 +148,55 @@ V:<version>|P:<precision>|Z:<atomic numbers>|C:<distance matrix upper triangle>
 
 All these fields enter the hash. The readable `q` and `m` tags instead record
 charge and spin multiplicity outside the geometry hash.
+
+The opt-in `S` extension appends `|S:<canonical isomeric SMILES>` and uses
+`V:8-FRAME-SHA256-S1-RDKIT-<RDKit version>`. It retains the same `P`, `Z`,
+and `F`/`C` fields. Its digest also depends on molecular connectivity,
+stereochemistry, isotopes, and formal charges encoded in SMILES, so it has
+different invariances from the default geometry-only hash. See
+[RDKit support](docs/rdkit.md) for the exact rules and limitations.
+
+## Optional RDKit support
+
+Version 0.12.0 adds the optional RDKit API and S extension while retaining
+the default `8-FRAME-SHA256` descriptor.
+
+```bash
+pip install 'hashmol3d[rdkit]'
+
+# Read an existing 3D structure; still use the default geometry descriptor.
+hashmol3d molecule.sdf --input-format sdf
+
+# Explicitly add canonical isomeric SMILES to the hashed descriptor.
+hashmol3d molecule.sdf --input-format sdf --include-smiles -v
+hashmol3d molecule.xyz --include-smiles -v
+
+# A SMILES file has no geometry: explicitly generate a new conformer.
+hashmol3d molecule.smi --input-format smi --generate-coordinates --include-smiles
+```
+
+```python
+from hashmol3d import canonical_smiles, hash_rdkit, hash_xyz
+
+# mol can come from any RDKit reader; hashing requires a 3D conformer.
+result = hash_rdkit(mol)  # no S tag
+stereo_result = hash_rdkit(mol, include_smiles=True)
+smiles = canonical_smiles(mol)  # graph stereo; does not require coordinates
+stereo_xyz = hash_xyz("molecule.xyz", include_smiles=True)
+```
+
+S tagging uses stereochemistry from the selected 3D coordinates. XYZ tagging
+also infers connectivity and bond orders; it requires complete atom lists,
+including hydrogens, and the correct charge. Chemistry failures produce errors.
+MOL, SDF, MOL2, PDB, SMILES, and InChI file adapters are available. PDB file
+input supports geometry-only hashing; S tagging requires a format with verified
+bond orders or a chemically prepared RDKit Mol. PDB geometry-only input hashes
+exactly the atoms in the file, without trusting guessed implicit-H counts.
+Other RDKit inputs with hydrogens without coordinates are rejected unless
+explicitly allowed with `allow_implicit_hydrogens=True`
+(CLI: `--allow-implicit-hydrogens`); that override hashes only the atoms present.
+Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
+[RDKit guide](docs/rdkit.md) before mixing sources or building an S-tag corpus.
 
 ## Install
 

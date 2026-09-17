@@ -6,8 +6,8 @@ import argparse
 import sys
 from typing import Sequence
 
-from .core import SearchBudgetExceeded, hash_molecule
-from .io import read_xyz
+from .core import SearchBudgetExceeded
+from .rdkit_support import hash_file
 from .version import __version__
 
 
@@ -16,7 +16,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="hashmol3d",
         description=(
             "Deterministic 3D molecular geometry hash. "
-            "Reads an XYZ file and prints the HashMol3D identifier."
+            "Reads an XYZ file by default; other formats require optional RDKit support."
         ),
     )
     parser.add_argument(
@@ -24,7 +24,28 @@ def _build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"hashmol3d {__version__}",
     )
-    parser.add_argument("file", help="Path to a molecular geometry file (.xyz)")
+    parser.add_argument("file", help="Path to a molecular input file (default: XYZ)")
+    parser.add_argument(
+        "--input-format",
+        choices=("xyz", "mol", "sdf", "mol2", "pdb", "smi", "smiles", "inchi"),
+        default="xyz",
+        help="Input format (default: xyz); other formats require hashmol3d[rdkit]",
+    )
+    parser.add_argument(
+        "--include-smiles",
+        action="store_true",
+        help="Opt into the RDKit canonical isomeric SMILES S tag (changes hash namespace)",
+    )
+    parser.add_argument(
+        "--allow-implicit-hydrogens",
+        action="store_true",
+        help="Explicitly allow H counts without coordinates; hash only atoms present (non-XYZ)",
+    )
+    parser.add_argument(
+        "--generate-coordinates",
+        action="store_true",
+        help="Explicitly generate a new 3D conformer with RDKit (non-XYZ inputs only)",
+    )
     parser.add_argument(
         "-p",
         "--precision",
@@ -37,8 +58,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "-c",
         "--charge",
         type=int,
-        default=0,
-        help="Total formal charge (default: 0)",
+        default=None,
+        help="Total formal charge (default: 0 for XYZ, graph charge for RDKit formats)",
     )
     parser.add_argument(
         "-m",
@@ -86,12 +107,15 @@ def cli(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        atomic_nums, coords = read_xyz(args.file)
-        result = hash_molecule(
-            atomic_nums,
-            coords,
+        charge_kwargs = {} if args.charge is None else {"charge": args.charge}
+        result = hash_file(
+            args.file,
+            input_format=args.input_format,
+            include_smiles=args.include_smiles,
+            generate_coordinates=args.generate_coordinates,
+            allow_implicit_hydrogens=args.allow_implicit_hydrogens,
             precision=args.precision,
-            charge=args.charge,
+            **charge_kwargs,
             multiplicity=args.multiplicity,
             length=args.length,
             method=args.method,
@@ -100,7 +124,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
     except FileNotFoundError as err:
         print(f"hashmol3d: {err}", file=sys.stderr)
         return 1
-    except (ValueError, OSError, SearchBudgetExceeded) as err:
+    except (ValueError, OSError, ImportError, RuntimeError, SearchBudgetExceeded) as err:
         print(f"hashmol3d: {err}", file=sys.stderr)
         return 1
 

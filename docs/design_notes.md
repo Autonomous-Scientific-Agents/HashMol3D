@@ -151,14 +151,15 @@ Near conditioning thresholds and coordinate rounding boundaries remain the
 main numerical failure modes; the distance fallback is retained for them.
 Frame and distance bodies use distinct `F:` and `C:` tags.
 
-## Why we do not encode chirality
+## Why the default descriptor does not encode chirality
 
 The non-relativistic Born-Oppenheimer molecular Hamiltonian commutes
 with the spatial-inversion operator, so enantiomers share its
 eigenvalue spectrum. Following the stated goal, the hash should not
-change under reflection, and so HashMol3D does not attempt to
-distinguish enantiomers. Users who need stereochemistry should record
-it as a separate tag alongside the HashMol3D identifier.
+change under reflection, and so the default HashMol3D descriptor does not
+distinguish enantiomers. Users who need stereochemistry can record a separate
+tag alongside the identifier or opt into the [RDKit S extension](rdkit.md),
+which uses a distinct version namespace and leaves the default core unchanged.
 
 This sidesteps a class of bugs that geometric chirality detectors are
 prone to: degenerate principal axes (symmetric and spherical tops), the
@@ -184,6 +185,6 @@ rounding robustness can still request `method="canonical"`.
 
 ## Dependencies
 
-The implementation uses only NumPy and the Python standard library.
-Dropping the RDKit dependency simplifies installation in HPC
-environments and removes a non-trivial transitive-dependency surface.
+The default implementation uses only NumPy and the Python standard library,
+keeping installation simple in HPC environments. The RDKit extra is loaded
+only for explicitly requested input adapters, SMILES generation, or S tagging.
