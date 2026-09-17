@@ -31,6 +31,7 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 |      | `--input-format` | xyz | `xyz`, `mol`, `sdf`, `mol2`, `pdb`, `smi`/`smiles`, or `inchi` |
 |      | `--include-smiles` | off | Add canonical isomeric SMILES as S in a separate hash namespace |
 |      | `--generate-coordinates` | off | Generate a new 3D conformer with explicit H atoms (non-XYZ only) |
+|      | `--allow-implicit-hydrogens` | off | Accept hydrogens without coordinates and hash only atoms present (non-XYZ) |
 | `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
 
 ## Examples
@@ -94,6 +95,12 @@ hashmol3d molecule.sdf --input-format sdf --include-smiles -v
 hashmol3d molecule.xyz --include-smiles -v
 hashmol3d molecule.smi --input-format smi --generate-coordinates --include-smiles
 ```
+
+RDKit input with implicit H atoms or atom-level H counts without coordinates is
+rejected by default. Provide complete coordinates, explicitly generate them,
+or use `--allow-implicit-hydrogens` to accept an incomplete geometry/formula.
+PDB file input cannot be combined with `--include-smiles`; use SDF or a
+chemically prepared RDKit Mol for chemistry-sensitive hashing.
 
 S changes the descriptor version and digest, including sensitivity to supported
 stereochemistry, isotopes, and graph formal charges. It is not interchangeable

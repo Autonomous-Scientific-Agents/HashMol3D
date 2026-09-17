@@ -124,7 +124,7 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.11.0 uses descriptor `8-FRAME-SHA256` for this principal-axis
+Version 0.11.0 introduced descriptor `8-FRAME-SHA256` for this principal-axis
 refinement. For example, water now uses `F` at 0.1 and 1 angstrom grids.
 Because the version field is hashed, all digests change from versions 6 and 7; recompute
 identifiers consistently when migrating a corpus. The paper's archived corpus
@@ -158,6 +158,9 @@ different invariances from the default geometry-only hash. See
 
 ## Optional RDKit support
 
+Version 0.12.0 adds the optional RDKit API and S extension while retaining
+the default `8-FRAME-SHA256` descriptor.
+
 ```bash
 pip install 'hashmol3d[rdkit]'
 
@@ -185,8 +188,12 @@ stereo_xyz = hash_xyz("molecule.xyz", include_smiles=True)
 S tagging uses stereochemistry from the selected 3D coordinates. XYZ tagging
 also infers connectivity and bond orders; it requires complete atom lists,
 including hydrogens, and the correct charge. Chemistry failures produce errors.
-MOL, SDF, MOL2, PDB, SMILES, and InChI file adapters are available; arbitrary
-RDKit readers can feed `hash_rdkit` directly. See the
+MOL, SDF, MOL2, PDB, SMILES, and InChI file adapters are available. PDB file
+input supports geometry-only hashing; S tagging requires a format with verified
+bond orders or a chemically prepared RDKit Mol. Hydrogens without coordinates
+are rejected unless explicitly allowed with `allow_implicit_hydrogens=True`
+(CLI: `--allow-implicit-hydrogens`); that override hashes only the atoms present.
+Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
 [RDKit guide](docs/rdkit.md) before mixing sources or building an S-tag corpus.
 
 ## Install

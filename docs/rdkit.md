@@ -22,7 +22,8 @@ is inferred from the extension. Supported formats are `mol`, `sdf`, `mol2`,
 `pdb`, `smi`/`smiles`, and `inchi`. Parsers sanitize molecules and preserve
 explicit hydrogen atoms. SMILES/InChI files must contain exactly one nonblank
 line; a SMILES name after whitespace is allowed. CXSMILES text is rejected.
-SDF must contain exactly one record, including when later records are invalid.
+SDF must contain exactly one record, including when later records are invalid;
+trailing whitespace after its `$$$$` terminator is accepted.
 Multiple conformers in a file are rejected. To process a collection, iterate
 an RDKit supplier explicitly:
 
@@ -36,25 +37,36 @@ for mol in Chem.SDMolSupplier("collection.sdf", removeHs=False):
     print(hash_rdkit(mol, include_smiles=True))
 ```
 
-`hash_rdkit(mol, *, conf_id=-1, include_smiles=False, charge=None, **kwargs)`
+`hash_rdkit(mol, *, conf_id=-1, include_smiles=False, charge=None,
+allow_implicit_hydrogens=False, **kwargs)`
 accepts a Mol from any RDKit reader. It hashes the selected existing 3D conformer
 (`-1` selects RDKit's first conformer). It rejects missing/2D conformers and
 never changes the caller's molecule. Coordinates, atoms, and explicit H atoms
-are preserved exactly; implicit H atoms do not acquire coordinates or enter
-the geometry/formula. Supply a complete explicit-H geometry when that is the
-intended atom set. Charge defaults to the graph's total formal charge;
+are preserved exactly. By default, implicit hydrogens and atom-level H counts
+without coordinates are rejected, including bracket counts such as `[NH4+]`.
+Provide a complete explicit-H geometry, or explicitly pass
+`allow_implicit_hydrogens=True` (CLI: `--allow-implicit-hydrogens`) to accept
+incomplete geometry. With that override, missing H atoms do not enter the
+geometry/formula even though they remain in S: an ethanol heavy-atom geometry
+has formula `C2O` and `S:CCO`. No H coordinates are invented by the override.
+Charge defaults to the graph's total formal charge;
 multiplicity retains the core electron-parity default based on the atoms
 actually present, and can be overridden. Other keywords are passed to
 `hash_molecule`, including `method`, `precision`, `length`, and `node_budget`.
 
 `hash_file(path, *, input_format="xyz", include_smiles=False,
-generate_coordinates=False, **kwargs)` deliberately defaults to the native
+generate_coordinates=False, allow_implicit_hydrogens=False, **kwargs)`
+deliberately defaults to the native
 XYZ parser, without extension-based dispatch. Choose other formats explicitly.
-RDKit parsing can itself perceive chemistry: for example, PDB uses RDKit's
-default proximity bonding, and MOL2 support depends on atom typing. These
-adapters do not repair missing bond orders or chemical information. For
-chemistry-sensitive identifiers, validate the parsed graph or prepare an RDKit
-Mol yourself. All coordinates are interpreted as angstroms.
+PDB file input is **refused for S tagging**, even with coordinate generation or
+the implicit-H override. Proximity bonding cannot reliably recover bond orders
+(for example, benzene can be misread as cyclohexane). Use an SDF with verified
+bond orders, or `hash_rdkit` with a chemically prepared Mol. PDB geometry-only
+hashing remains available, subject to the same missing-H guard. MOL2 support
+also depends on atom typing. These adapters do not repair missing chemical
+information; validate the graph before chemistry-sensitive hashing. All
+coordinates are interpreted as angstroms. The implicit-H override is rejected
+for XYZ, whose atom list carries no implicit-H information.
 
 For inputs without 3D geometry, `generate_coordinates=True` explicitly adds
 hydrogens and replaces all conformers with one ETKDGv3 embedding (random seed
@@ -100,7 +112,10 @@ requires complete atom lists, including hydrogens, and chemically plausible
 geometry. It can fail or infer the wrong graph for unusual valence, metals,
 radicals, or distorted structures. Validate perceived chemistry before using
 such identifiers. A chemistry error or exhausted geometry search returns no
-identifier; S is never silently omitted.
+identifier; S is never silently omitted. Bond-perception failures include
+HashMol3D context and preserve the original RDKit exception as their cause.
+Multiplicity affects only the readable state prefix and does not control bond
+perception; supplying a radical's spin state does not repair its bond ordering.
 
 For RDKit graphs, a charge override must match the graph when S is requested.
 Formal charges are in SMILES and therefore affect the S digest; the default
@@ -122,6 +137,9 @@ numerical boundaries independent of the geometry quantization grid.
 RDKit canonicalization and perception may change across releases. S revision
 and RDKit version are included in the hashed namespace, so use the same RDKit
 version, graph preparation, hydrogen policy, and geometry method for a corpus.
+Every RDKit upgrade intentionally changes every S identifier, even when the
+SMILES is unchanged: hashing the version prevents silent mixing of identifiers
+produced under different canonicalization/perception rules.
 The `geometry_hash` field now holds a geometry-plus-chemistry digest for S
 results. S results are not interchangeable with default geometry-only results.
 
@@ -139,6 +157,12 @@ canonical_smiles(Chem.MolFromSmiles("F[C@](Cl)(Br)I"))
 when `conf_id` is omitted, so it works without coordinates. Passing a conformer
 ID derives stereo from that 3D conformer as for S tagging. It returns a string
 and never mutates its input.
+
+The adapter is implemented in `hashmol3d.rdkit_support`; the public functions
+remain available from `hashmol3d`. It trusts the conformer's 3D flag, because
+planar 3D geometries are legitimate and cannot be distinguished from mislabeled
+2D drawings using a zero z coordinate alone. RDKit diagnostics remain visible;
+the adapter does not change process-wide logging settings.
 
 The chemistry operations follow RDKit's
 [SMILES and input documentation](https://www.rdkit.org/docs/GettingStartedInPython.html),

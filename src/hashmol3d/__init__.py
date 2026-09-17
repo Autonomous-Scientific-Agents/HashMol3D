@@ -10,7 +10,7 @@ from .core import (
     hash_molecule,
 )
 from .io import read_xyz
-from .rdkit import canonical_smiles, hash_file, hash_rdkit, read_rdkit
+from .rdkit_support import canonical_smiles, hash_file, hash_rdkit, read_rdkit
 from .version import __version__
 
 

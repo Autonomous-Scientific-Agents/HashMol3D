@@ -1,5 +1,6 @@
 """Dependency isolation is tested even when RDKit is installed."""
 
+import os
 import subprocess
 import sys
 
@@ -33,7 +34,10 @@ else:
 assert cli([sys.argv[1], '--include-smiles']) == 1
 """
     completed = subprocess.run(
-        [sys.executable, "-c", script, str(xyz)], capture_output=True, text=True
+        [sys.executable, "-c", script, str(xyz)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
     )
     assert completed.returncode == 0, completed.stderr
     assert "hashmol3d[rdkit]" in completed.stderr

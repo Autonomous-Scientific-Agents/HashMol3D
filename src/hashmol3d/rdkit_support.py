@@ -7,6 +7,7 @@ RDKit molecules are always copied before chemistry or coordinate operations.
 from __future__ import annotations
 
 import hashlib
+import io
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
@@ -68,12 +69,15 @@ def hash_rdkit(
     conf_id: int = -1,
     include_smiles: bool = False,
     charge: int | None = None,
+    allow_implicit_hydrogens: bool = False,
     **kwargs,
 ) -> HashMol3DResult:
     """Hash one existing 3D conformer of an RDKit Mol without mutating it.
 
     Geometry includes exactly the atoms present, including explicit hydrogens;
     no hydrogens or coordinates are added. Missing/2D conformers are errors.
+    Hydrogens represented only as atom counts are rejected unless
+    ``allow_implicit_hydrogens=True`` explicitly permits incomplete geometry.
     Charge defaults to the graph's total formal charge. Other keywords go to
     ``hash_molecule``. Without S, this returns the ordinary geometry descriptor.
 
@@ -94,6 +98,12 @@ def hash_rdkit(
     if not conf.Is3D():
         raise ValueError(
             "RDKit input has a 2D conformer; provide or explicitly generate 3D geometry"
+        )
+    if not allow_implicit_hydrogens and any(atom.GetTotalNumHs() for atom in mol.GetAtoms()):
+        raise ValueError(
+            "RDKit input has implicit hydrogens or H counts without coordinates; "
+            "provide a complete explicit-H geometry, or set allow_implicit_hydrogens=True "
+            "(--allow-implicit-hydrogens) to hash only the atoms present"
         )
     graph_charge = Chem.GetFormalCharge(mol)
     result = hash_molecule(
@@ -120,7 +130,7 @@ def _with_smiles(result, mol, conf_id):
         version=version,
         descriptor=descriptor,
         geometry_hash=digest,
-        hash_str=f"{result.formula}q{result.charge}m{result.multiplicity}-{digest}",
+        hash_str=result.hash_str.rsplit("-", 1)[0] + "-" + digest,
     )
 
 
@@ -138,13 +148,19 @@ def read_rdkit(path, *, input_format: str | None = None):
     fmt = (input_format or path.suffix.lstrip(".")).lower()
     with path.open("rb") as stream:
         if fmt == "sdf":
-            supplier = Chem.ForwardSDMolSupplier(stream, removeHs=False)
-            mol = next(supplier, None)
-            sentinel = object()
-            if next(supplier, sentinel) is not sentinel:
+            # Check record boundaries before RDKit buffers the stream: some
+            # releases expose trailing blank lines as an extra invalid record.
+            record = []
+            for line in stream:
+                record.append(line)
+                if line.strip() == b"$$$$":
+                    break
+            if any(line.strip() for line in stream):
                 raise ValueError(
                     "SDF input must contain exactly one molecule; use an RDKit supplier"
                 )
+            supplier = Chem.ForwardSDMolSupplier(io.BytesIO(b"".join(record)), removeHs=False)
+            mol = next(supplier, None)
         else:
             data = stream.read().decode("utf-8")
             if fmt == "mol":
@@ -183,6 +199,7 @@ def hash_file(
     input_format: str = "xyz",
     include_smiles: bool = False,
     generate_coordinates: bool = False,
+    allow_implicit_hydrogens: bool = False,
     **kwargs,
 ) -> HashMol3DResult:
     """Hash a file; only explicitly selected features use RDKit.
@@ -191,13 +208,23 @@ def hash_file(
     With S enabled, XYZ requires all atoms (including H); RDKit determines bonds
     from coordinates and the requested total charge (default zero).
 
-    Other formats use ``read_rdkit``. ``generate_coordinates=True`` explicitly
+    Other formats use ``read_rdkit``; PDB is refused for S tagging because its
+    inferred bond orders cannot be trusted. Hydrogens without coordinates are
+    rejected unless ``allow_implicit_hydrogens=True`` is explicitly set.
+    ``generate_coordinates=True`` explicitly
     replaces coordinates using ETKDGv3 (seed 0, one thread, explicit H atoms),
     without optimization. It is disallowed for XYZ. Generated geometries depend
     on RDKit version and input atom order; they are not canonical conformers.
     """
     fmt = input_format.lower()
+    if fmt == "pdb" and include_smiles:
+        raise ValueError(
+            "PDB input is not supported for S tagging: bond orders are unreliable; "
+            "use SDF or hash_rdkit with a chemically prepared Mol"
+        )
     if fmt == "xyz":
+        if allow_implicit_hydrogens:
+            raise ValueError("allow_implicit_hydrogens is not supported for XYZ input")
         if generate_coordinates:
             raise ValueError("generate_coordinates is not supported for XYZ input")
         atomic_nums, coords = read_xyz(path)
@@ -215,7 +242,15 @@ def hash_file(
             mol.AddAtom(Chem.Atom(int(z)))
             conf.SetAtomPosition(i, tuple(point))
         mol.AddConformer(conf)
-        rdDetermineBonds.DetermineBonds(mol, charge=validated.charge, embedChiral=True)
+        try:
+            rdDetermineBonds.DetermineBonds(mol, charge=validated.charge, embedChiral=True)
+        except (ValueError, RuntimeError) as err:
+            raise ValueError(
+                f"bond perception failed for XYZ input at charge {validated.charge}; "
+                "check the atom list and charge. Radicals, metals, or unusual valence "
+                "may require a chemically prepared RDKit Mol for S tagging; "
+                "multiplicity does not control bond perception"
+            ) from err
         return _with_smiles(validated, mol, mol.GetConformer().GetId())
 
     mol = read_rdkit(path, input_format=fmt)
@@ -230,4 +265,9 @@ def hash_file(
         params.numThreads = 1
         if AllChem.EmbedMolecule(mol, params) != 0:
             raise ValueError("RDKit could not generate 3D coordinates")
-    return hash_rdkit(mol, include_smiles=include_smiles, **kwargs)
+    return hash_rdkit(
+        mol,
+        include_smiles=include_smiles,
+        allow_implicit_hydrogens=allow_implicit_hydrogens,
+        **kwargs,
+    )

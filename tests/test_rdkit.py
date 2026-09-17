@@ -174,6 +174,9 @@ def test_file_readers_preserve_explicit_atoms_and_geometry(tmp_path, fmt):
     read = read_rdkit(path)
     assert read.GetNumAtoms() == mol.GetNumAtoms()
     assert hash_file(path, input_format=fmt) == hash_rdkit(read)
+    if fmt == "pdb":
+        assert cli([str(path), "--input-format", fmt]) == 0
+        return
     assert "|S:CO" in hash_file(path, input_format=fmt, include_smiles=True).descriptor
     assert cli([str(path), "--input-format", fmt, "--include-smiles"]) == 0
 
@@ -181,10 +184,92 @@ def test_file_readers_preserve_explicit_atoms_and_geometry(tmp_path, fmt):
 def test_sdf_rejects_multiple_or_invalid_records(tmp_path):
     path = tmp_path / "multi.sdf"
     block = Chem.MolToMolBlock(molecule("O")) + "\n$$$$\n"
-    for content in (block * 2, block + "bad\n$$$$\n", "bad\n$$$$\n", ""):
+    for content in (
+        block * 2,
+        block + "bad\n$$$$\n",
+        block + "bad\n",
+        block + "$$$$\n",
+        "bad\n$$$$\n",
+        "",
+    ):
         path.write_text(content)
         with pytest.raises(ValueError):
             read_rdkit(path)
+
+
+@pytest.mark.parametrize("trailing", ["", "\n", "   \n", "\r\n\t \r\n"])
+def test_sdf_accepts_trailing_whitespace(tmp_path, trailing):
+    path = tmp_path / "single.sdf"
+    block = Chem.MolToMolBlock(molecule("O")) + "\n$$$$\n"
+    path.write_text(block)
+    expected = hash_file(path, input_format="sdf", include_smiles=True)
+    path.write_text(block + trailing)
+    assert hash_file(path, input_format="sdf", include_smiles=True) == expected
+
+
+@pytest.mark.parametrize("include_smiles", [False, True])
+@pytest.mark.parametrize("smiles", ["CCO", "[NH4+]"])
+def test_hydrogens_without_coordinates_require_explicit_opt_in(
+    tmp_path, capsys, include_smiles, smiles
+):
+    mol = Chem.RemoveHs(molecule(smiles))
+    before = mol.ToBinary()
+    with pytest.raises(ValueError, match="allow_implicit_hydrogens=True"):
+        hash_rdkit(mol, include_smiles=include_smiles)
+    allowed = hash_rdkit(mol, include_smiles=include_smiles, allow_implicit_hydrogens=True)
+    assert allowed.formula == ("C2O" if smiles == "CCO" else "N")
+    if include_smiles:
+        assert allowed.descriptor.endswith("|S:" + smiles)
+    assert mol.ToBinary() == before
+    path = tmp_path / "implicit.sdf"
+    path.write_text(Chem.MolToMolBlock(mol) + "\n$$$$\n")
+    with pytest.raises(ValueError, match="implicit hydrogens"):
+        hash_file(path, input_format="sdf", include_smiles=include_smiles)
+    assert (
+        hash_file(
+            path, input_format="sdf", include_smiles=include_smiles, allow_implicit_hydrogens=True
+        ).formula
+        == allowed.formula
+    )
+    args = [str(path), "--input-format", "sdf"] + (["--include-smiles"] if include_smiles else [])
+    assert cli(args) == 1
+    output = capsys.readouterr()
+    assert not output.out
+    assert "--allow-implicit-hydrogens" in output.err
+    assert cli([*args, "--allow-implicit-hydrogens"]) == 0
+    # Explicitly generating full coordinates is another supported route.
+    assert hash_file(
+        path, input_format="sdf", generate_coordinates=True, include_smiles=include_smiles
+    ).formula == ("C2H6O" if smiles == "CCO" else "H4N")
+
+
+@pytest.mark.parametrize("with_conect", [False, True])
+def test_pdb_s_is_refused_even_with_hydrogen_override(tmp_path, capsys, with_conect):
+    block = Chem.MolToPDBBlock(molecule("c1ccccc1"))
+    if not with_conect:
+        block = (
+            "\n".join(line for line in block.splitlines() if not line.startswith("CONECT")) + "\n"
+        )
+    path = tmp_path / "benzene.pdb"
+    path.write_text(block)
+    # Geometry is still usable regardless of guessed bond orders.
+    assert hash_file(path, input_format="pdb", allow_implicit_hydrogens=True).formula == "C6H6"
+    for generate in (False, True):
+        with pytest.raises(ValueError, match="PDB input is not supported for S tagging"):
+            hash_file(
+                path,
+                input_format="pdb",
+                include_smiles=True,
+                generate_coordinates=generate,
+                allow_implicit_hydrogens=True,
+            )
+    assert (
+        cli([str(path), "--input-format", "pdb", "--include-smiles", "--allow-implicit-hydrogens"])
+        == 1
+    )
+    output = capsys.readouterr()
+    assert not output.out
+    assert "use SDF or hash_rdkit" in output.err
 
 
 @pytest.mark.parametrize(
@@ -257,6 +342,11 @@ def test_bond_perception_failure_is_fatal_only_for_s(tmp_path, capsys):
     output = capsys.readouterr()
     assert not output.out
     assert "hashmol3d:" in output.err
+    assert "bond perception failed for XYZ input at charge 0" in output.err
+    assert "multiplicity does not control bond perception" in output.err
+    with pytest.raises(ValueError, match="bond perception failed") as error:
+        hash_xyz(path, include_smiles=True, multiplicity=2)
+    assert error.value.__cause__ is not None
 
 
 def test_embedding_failure_is_fatal(tmp_path, monkeypatch):

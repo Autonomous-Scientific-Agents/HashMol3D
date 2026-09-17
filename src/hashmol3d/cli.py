@@ -7,7 +7,7 @@ import sys
 from typing import Sequence
 
 from .core import SearchBudgetExceeded
-from .rdkit import hash_file
+from .rdkit_support import hash_file
 from .version import __version__
 
 
@@ -35,6 +35,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--include-smiles",
         action="store_true",
         help="Opt into the RDKit canonical isomeric SMILES S tag (changes hash namespace)",
+    )
+    parser.add_argument(
+        "--allow-implicit-hydrogens",
+        action="store_true",
+        help="Explicitly allow H counts without coordinates; hash only atoms present (non-XYZ)",
     )
     parser.add_argument(
         "--generate-coordinates",
@@ -108,6 +113,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
             input_format=args.input_format,
             include_smiles=args.include_smiles,
             generate_coordinates=args.generate_coordinates,
+            allow_implicit_hydrogens=args.allow_implicit_hydrogens,
             precision=args.precision,
             **charge_kwargs,
             multiplicity=args.multiplicity,
