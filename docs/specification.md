@@ -1,8 +1,8 @@
-# HashMol3D Specification v0.11.0
+# HashMol3D Specification v0.13.0
 
 **Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
-**Canonical version tag:** `8-FRAME-SHA256`
+**Canonical version tag:** `9-FRAME-SHA256`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
@@ -14,7 +14,7 @@ A HashMol3D identifier is a single ASCII string with three parts:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-bac9655753f489d6cbfdb299d59adbda`.
+For example: `H2Oq0m1-2525b97db42fc1c282844ba9478d561f`.
 
 - **Hill formula** — carbon first if present, then hydrogen, then the
   remaining elements alphabetically by symbol. A count of 1 is omitted.
@@ -192,23 +192,27 @@ The default method normally takes O(N log N) time and O(N) memory:
    If both are at least **0.05**, use the eigenvectors in ascending
    eigenvalue order, regardless of `R s`: no atom anchor is needed.
    Otherwise, clouds with `R s < 10` use §4.1–4.4 with a warning. This
-   preserves the short-anchor safeguard and prevents a short finite bend
-   from entering the half-grid intrinsic-line rule below. The factor 10 is
-   a fixed anchor-conditioning policy, not an input-noise estimate or a
-   mathematical requirement for a principal-axis frame.
+   whole-cloud size guard prevents a short finite bend from entering the
+   half-grid intrinsic-line rule below. The factor 10 is a fixed policy,
+   not an input-noise estimate or a mathematical requirement for a
+   principal-axis frame.
 5. If exactly one gap is below 0.05, preserve the isolated eigenvector
    `u`. For every atom form its projection into the degenerate plane,
    `p_i = v_i − (v_i·u)u`. If the isolated axis is the largest-moment
    axis and `max_i ||p_i||s < 0.5`, serialize a one-dimensional line:
    `(Z, 0, 0, rint((v_i·u)s))`, considering both axial signs. Otherwise
-   require `max_i ||p_i||s ≥ 10` and select the lexicographically largest
+   require `max_i ||p_i||s ≥ 1` and select the lexicographically largest
    invariant anchor key
 
        (rint(||p_i||s), Z_i, rint(|v_i·u|s)).
 
    Evaluate every tied anchor. Its normalized `p_i` resolves the ambiguous
    plane; a cross product supplies the remaining axis. The isolated axis
-   stays in its ascending-eigenvalue slot.
+   stays in its ascending-eigenvalue slot. One grid unit is the smallest
+   transverse extent that survives quantization; a shorter anchor does not
+   amplify noise, because a perturbation `δ` rotates the frame about `u` by
+   about `δ/rho` while every transverse coordinate is itself bounded by
+   `rho`, so coordinates move by at most about `δ`.
 6. If both gaps are below 0.05, choose first anchors by the largest key
 
        (rint(||v_i||s), Z_i).
@@ -219,12 +223,12 @@ The default method normally takes O(N log N) time and O(N) memory:
 
        (rint(||p_ij||s), Z_j, rint(|v_j·e1|s)).
 
-   Evaluate every tied non-collinear ordered pair. Normalize `p_ij` as
-   `e2` and set `e3=e1×e2`.
+   Evaluate every tied non-collinear ordered pair with
+   `max_j ||p_ij||s ≥ 1`. Normalize `p_ij` as `e2` and set `e3=e1×e2`.
 7. At most **10,000** tied candidate frames may be evaluated. Exceeding
-   this normative budget, or finding an atom-derived axis shorter than 10
-   grid units, deterministically selects the canonical method of §4.1–4.4
-   with a `UserWarning`.
+   this normative budget, or finding every atom-derived transverse axis
+   shorter than 1 grid unit, deterministically selects the canonical method
+   of §4.1–4.4 with a `UserWarning`.
 8. For every candidate basis, project the **original centered coordinates**
    (anchors never perturb the geometry), quantize with `rint`, evaluate all
    eight axis-sign combinations, sort `(Z,x,y,z)` rows lexicographically,
@@ -259,7 +263,7 @@ components, in this fixed order:
 
 Where:
 
-- `<version>` is a string, e.g. `8-FRAME-SHA256`.
+- `<version>` is a string, e.g. `9-FRAME-SHA256`.
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
 - `<z_ordered>` is the list of atomic numbers in canonical atom order,
   comma-separated (this always coincides with the ascending-sorted
@@ -278,9 +282,9 @@ written into the readable prefix of the identifier instead.
 
 Example using the default frame method (water, `precision = 1e-4`); this
 descriptor's SHA-256 digest, truncated to the default 32 hex characters,
-is the geometry hash `bac9655753f489d6cbfdb299d59adbda`:
+is the geometry hash `2525b97db42fc1c282844ba9478d561f`:
 
-    V:8-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
+    V:9-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
 
 (The molecular-plane normal occupies the first axis. The two hydrogen rows
 precede oxygen after lexicographic sorting.)
@@ -313,8 +317,9 @@ To guarantee identical identifiers across machines:
 - Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1.
 - Complete the canonical search (§4.4); the node budget only controls whether
   a result is available. For the frame method,
-  use the relative eigenvalue-gap threshold 0.05, minimum atom-anchor length
-  10 grid units, and candidate budget 10,000 exactly (§4.5).
+  use the relative eigenvalue-gap threshold 0.05, whole-cloud size guard
+  10 grid units, minimum transverse-anchor extent 1 grid unit, and
+  candidate budget 10,000 exactly (§4.5).
 - Encode the descriptor in UTF-8 before hashing.
 - Use SHA-256 as defined in FIPS 180-4.
 - Render the formula in Hill order and the state tag exactly as in §1.
@@ -326,10 +331,18 @@ Version 7 introduced the early collinearity check for small nonpoint clouds.
 Version 8 additionally accepts separated principal moments before applying the
 minimum extent for atom anchors. This changes some coarse-grid requests from
 `C` to `F` (including water at 0.1 and 1 angstrom); the anchor and gap thresholds
-are unchanged. Because the version field is hashed, **all version-8 digests
-differ from versions 6 and 7**, even when the geometry body is unchanged.
-Recompute a corpus consistently when migrating; identifiers from different
-versions must not be mixed.
+are unchanged.
+Version 9 lowers the minimum transverse-anchor extent from 10 grid units to 1
+(§4.5 steps 5–7). Nearly linear molecules whose bend lies between half a cell
+and ten cells previously selected the canonical method; they now anchor their
+degenerate plane and produce `F` descriptors, which round 3N values instead of
+N(N−1)/2 and are correspondingly less sensitive to coordinate noise. The
+whole-cloud size guard (step 4), the gap threshold, the candidate budget, and
+every serialized body of an unaffected geometry are unchanged. Because the
+version field is hashed, **every version-9 digest differs from earlier
+versions**, even when the geometry body is unchanged. Recompute a corpus
+consistently when migrating; identifiers from different versions must not be
+mixed.
 
 ## 9. Future tagged extensions
 
@@ -361,8 +374,8 @@ result = hash_molecule(
     length=None,  # 32 hex (128-bit) if None
     method="frame",  # default; use "canonical" for the distance method
 )
-print(result.hash_str)  # H2Oq0m1-bac9655753f489d6cbfdb299d59adbda
-print(result.geometry_hash)  # bac9655753f489d6cbfdb299d59adbda
+print(result.hash_str)  # H2Oq0m1-2525b97db42fc1c282844ba9478d561f
+print(result.geometry_hash)  # 2525b97db42fc1c282844ba9478d561f
 ```
 
 A file-based convenience wrapper is also provided:

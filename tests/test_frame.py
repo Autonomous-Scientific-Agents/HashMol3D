@@ -226,42 +226,109 @@ class TestDegenerateFrames:
         assert res.descriptor.endswith("|F:6:0,0,0")
 
 
+def _near_linear_chain(n, rho_cells, precision, seed):
+    """Chain along z with generic spacings and a transverse bend whose largest
+    displacement from the axis is exactly ``rho_cells`` grid units."""
+    rng = np.random.default_rng(seed)
+    z = rng.choice([1, 6, 7, 8, 9], size=n)
+    axial = np.cumsum(rng.uniform(1.1, 1.45, n))
+    axial -= axial.mean()
+    t = rng.standard_normal((n, 2))
+    t -= t.mean(axis=0)
+    t *= rho_cells * precision / np.linalg.norm(t, axis=1).max()
+    return z, np.column_stack([t, axial])
+
+
+class TestNearLinearAnchors:
+    """Version 9: a transverse anchor of at least one grid unit resolves the
+    degenerate plane of a nearly linear molecule; versions 6-8 required ten."""
+
+    @pytest.mark.parametrize("precision", [1e-2, 1e-4])
+    @pytest.mark.parametrize("rho_cells", [1.5, 3.0, 8.0])
+    @pytest.mark.parametrize("n", [6, 12])
+    def test_short_transverse_anchor_gives_invariant_frame(self, n, rho_cells, precision):
+        z, coords = _near_linear_chain(n, rho_cells, precision, seed=n * 7 + int(rho_cells))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            res = hash_molecule(z, coords, precision=precision)
+        assert "|F:" in res.descriptor
+        rng = np.random.default_rng(23)
+        for t in range(20):
+            zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
+            assert hash_molecule(zz, cc, precision=precision).descriptor == res.descriptor
+
+    def test_anchor_below_one_cell_still_falls_back(self):
+        z, coords = _near_linear_chain(8, 0.75, 1e-4, seed=5)
+        with pytest.warns(UserWarning, match="stable canonical frame"):
+            res = hash_molecule(z, coords, precision=1e-4)
+        assert "|C:" in res.descriptor
+
+    def test_bend_below_half_cell_is_an_intrinsic_line(self):
+        z, coords = _near_linear_chain(8, 0.3, 1e-4, seed=5)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            res = hash_molecule(z, coords, precision=1e-4)
+        rows = res.descriptor.split("|F:", 1)[1].split(";")
+        assert all(row.split(":", 1)[1].split(",")[:2] == ["0", "0"] for row in rows)
+
+    def test_whole_cloud_size_guard_is_unchanged(self):
+        # A non-collinear cloud below ten grid units of radius with degenerate
+        # moments still uses the distance fallback (the guard is separate from
+        # the transverse-anchor minimum).
+        z = np.array([6, 6, 6])
+        coords = np.array([[-1.0, 0.0, 0.0], [0.0, 0.3, 0.0], [1.0, 0.0, 0.0]])
+        with pytest.warns(UserWarning, match="stable canonical frame"):
+            res = hash_molecule(z, coords, precision=1.0)
+        assert "|C:" in res.descriptor
+
+
 class TestQM9NearLines:
+    """The nine QM9 molecules whose frame decision depended on the grid under
+    versions 6-8 (``paper/qm9_frame_cases.json``). Under version 9 every
+    nearly linear case anchors its transverse plane at every grid from 1e-2
+    to 1e-6 angstrom; only the tiny-molecule size guard (ammonia at 0.1
+    angstrom) still selects the distance method."""
+
+    @staticmethod
+    def _case(case_id):
+        path = Path(__file__).resolve().parents[1] / "paper" / "qm9_frame_cases.json"
+        return next(c for c in json.loads(path.read_text())["cases"] if c["qm9_id"] == case_id)
+
     @pytest.mark.parametrize(
-        "case_id, precision, expected",
+        "case_id, precision",
         [
-            ("gdb_2", 0.1, "C"),
-            ("gdb_3", 0.1, "F"),
-            ("gdb_3", 1.0, "F"),
-            ("gdb_484", 0.01, "C"),
-            ("gdb_14562", 0.01, "C"),
-            ("gdb_485", 0.001, "C"),
-            ("gdb_14563", 0.001, "C"),
+            ("gdb_25", 1e-4),
+            ("gdb_14564", 1e-4),
+            ("gdb_5", 1e-5),
+            ("gdb_485", 1e-3),
+            ("gdb_14563", 1e-3),
+            ("gdb_484", 1e-2),
+            ("gdb_14562", 1e-2),
         ],
     )
-    def test_coarse_grid_principal_and_anchor_decisions(self, case_id, precision, expected):
-        path = Path(__file__).resolve().parents[1] / "paper" / "qm9_frame_cases.json"
-        case = next(c for c in json.loads(path.read_text())["cases"] if c["qm9_id"] == case_id)
+    def test_former_fallbacks_now_anchor(self, case_id, precision):
+        case = self._case(case_id)
+        z = np.asarray(case["atomic_numbers"])
+        coords = np.asarray(case["coordinates"], dtype=float)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            res = hash_molecule(z, coords, precision=precision)
+        assert "|F:" in res.descriptor
+        rng = np.random.default_rng(41)
+        for t in range(20):
+            zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
+            assert hash_molecule(zz, cc, precision=precision).descriptor == res.descriptor
+
+    @pytest.mark.parametrize(
+        "case_id, precision, expected",
+        [("gdb_2", 0.1, "C"), ("gdb_3", 0.1, "F"), ("gdb_3", 1.0, "F")],
+    )
+    def test_tiny_molecule_decisions(self, case_id, precision, expected):
+        case = self._case(case_id)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             result = hash_molecule(case["atomic_numbers"], case["coordinates"], precision=precision)
         assert f"|{expected}:" in result.descriptor
-
-    @pytest.mark.parametrize(
-        "case_id, expected",
-        [("gdb_25", "CFF"), ("gdb_14564", "CFF"), ("gdb_5", "FCF")],
-    )
-    def test_precision_changes_which_molecule_needs_c(self, case_id, expected):
-        path = Path(__file__).resolve().parents[1] / "paper" / "qm9_frame_cases.json"
-        cases = json.loads(path.read_text())["cases"]
-        case = next(case for case in cases if case["qm9_id"] == case_id)
-        for precision, tag in zip((1e-4, 1e-5, 1e-6), expected):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                result = hash_molecule(
-                    case["atomic_numbers"], case["coordinates"], precision=precision
-                )
-            assert result.descriptor.rsplit("|", 1)[1].startswith(tag + ":")
 
 
 class TestFrameFallback:
