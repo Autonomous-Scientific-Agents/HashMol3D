@@ -11,7 +11,7 @@ It produces a **readable** identifier of the form
 
     <Hill formula><state tag>-<geometry hash>
 
-e.g. `H2Oq0m1-bac9655753f489d6cbfdb299d59adbda` for neutral singlet water. The trailing
+e.g. `H2Oq0m1-2525b97db42fc1c282844ba9478d561f` for neutral singlet water. The trailing
 geometry hash is **rotation-, translation-, permutation-, and
 parity-invariant** (matching the invariances of the eigenvalues of the
 non-relativistic molecular Hamiltonian), and depends on:
@@ -33,8 +33,8 @@ the hash, so two states of the same geometry share the same hex tail
 and can be grouped by suffix matching:
 
 ```text
-H2Oq0m1-bac9655753f489d6cbfdb299d59adbda     # neutral singlet water
-H2Oq1m2-bac9655753f489d6cbfdb299d59adbda     # water cation, same geometry → same hex tail
+H2Oq0m1-2525b97db42fc1c282844ba9478d561f     # neutral singlet water
+H2Oq1m2-2525b97db42fc1c282844ba9478d561f     # water cation, same geometry → same hex tail
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -83,14 +83,15 @@ When principal moments are degenerate, the method preserves any isolated
 axis and canonically anchors only the ambiguous subspace. Linear and point-
 like systems are represented in their intrinsic dimension. Exact lines, up to
 float64 roundoff, do not need transverse anchors even on coarse grids.
-Well-separated principal moments also need no atom anchors: version 8 accepts
-their frame even when the centered radius is below ten grid units. The minimum
-extent applies only after intrinsic and principal-axis handling, when unresolved
-eigenspaces need atom anchors. Nearly linear inputs still undergo those
-conditioning checks; a short finite bend is not flattened merely because it
-is below the output grid. Canonically tied
-anchors are all evaluated up to a 10,000-candidate budget. Ill-conditioned
-or over-budget cases emit `UserWarning` and use the complete distance method.
+Well-separated principal moments also need no atom anchors: the frame is
+accepted even when the centered radius is below ten grid units. Only
+unresolved eigenspaces need an atom anchor, and any transverse displacement
+of at least one grid unit qualifies (version 9; versions 6-8 required ten),
+so nearly linear molecules with a resolved bend anchor their degenerate plane
+rather than falling back. A bend below half a grid unit is an intrinsic line.
+Canonically tied anchors are all evaluated up to a 10,000-candidate budget.
+Clouds below ten grid units of radius with degenerate moments, and over-budget
+cases, emit `UserWarning` and use the complete distance method.
 The path is visible in `result.descriptor` (`F:` versus `C:`). Canonical
 search must finish within `node_budget` (default 10,000 visited states),
 including after frame fallback. If it exhausts that budget, Python raises
@@ -126,11 +127,12 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.11.0 uses descriptor `8-FRAME-SHA256` for this principal-axis
-refinement. For example, water now uses `F` at 0.1 and 1 angstrom grids.
-Because the version field is hashed, all digests change from versions 6 and 7; recompute
-identifiers consistently when migrating a corpus. The paper's archived corpus
-statistics describe version 6 and are labelled accordingly.
+Version 0.13.0 uses descriptor `9-FRAME-SHA256`, which lowers the minimum
+transverse-anchor extent to one grid unit so that nearly linear molecules
+anchor their frame instead of using the distance fallback. Because the version
+field is hashed, all digests change from earlier versions; recompute
+identifiers consistently when migrating a corpus. The paper's corpus
+statistics describe version 8 and are labelled accordingly.
 
 ## Descriptor tags
 
@@ -142,7 +144,7 @@ V:<version>|P:<precision>|Z:<atomic numbers>|C:<distance matrix upper triangle>
 ```
 
 - `V` identifies the descriptor format and canonicalization rules (currently
-  `8-FRAME-SHA256`).
+  `9-FRAME-SHA256`).
 - `P` records the quantization grid spacing in angstroms, such as `1.0e-04`.
 - `Z` lists atomic numbers in the order used by the selected representation.
 - `F` stores the sorted element-labelled, quantized canonical-frame rows.
@@ -190,11 +192,11 @@ uv pip install -e .  # Or: pip install -e .
 
 ```bash
 $ hashmol3d water.xyz
-H2Oq0m1-bac9655753f489d6cbfdb299d59adbda
+H2Oq0m1-2525b97db42fc1c282844ba9478d561f
 
 # Cation with explicit multiplicity — only the prefix changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-H2Oq1m2-bac9655753f489d6cbfdb299d59adbda
+H2Oq1m2-2525b97db42fc1c282844ba9478d561f
 
 # Pin a fixed hash length and a coarser precision.
 $ hashmol3d -p 1e-3 -l 32 benzene.xyz
@@ -228,9 +230,9 @@ coords = np.array(
     ]
 )
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)  # H2Oq0m1-bac9655753f489d6cbfdb299d59adbda
+print(res.hash_str)  # H2Oq0m1-2525b97db42fc1c282844ba9478d561f
 print(res.formula)  # H2O
-print(res.geometry_hash)  # bac9655753f489d6cbfdb299d59adbda
+print(res.geometry_hash)  # 2525b97db42fc1c282844ba9478d561f
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
@@ -246,9 +248,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-bac9655753f489d6cbfdb299d59adbda
+print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-2525b97db42fc1c282844ba9478d561f
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# H2Oq1m2-bac9655753f489d6cbfdb299d59adbda
+# H2Oq1m2-2525b97db42fc1c282844ba9478d561f
 ```
 
 See [`docs/`](docs/) for the full
