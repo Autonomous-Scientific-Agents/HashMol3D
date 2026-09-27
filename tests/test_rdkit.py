@@ -184,11 +184,15 @@ def test_file_readers_preserve_explicit_atoms_and_geometry(tmp_path, fmt):
 def test_sdf_rejects_multiple_or_invalid_records(tmp_path):
     path = tmp_path / "multi.sdf"
     block = Chem.MolToMolBlock(molecule("O")) + "\n$$$$\n"
+    unterminated = Chem.MolToMolBlock(molecule("O")) + "\n"
+    concatenated = unterminated + Chem.MolToMolBlock(molecule("C")) + "\n"
     for content in (
         block * 2,
         block + "bad\n$$$$\n",
         block + "bad\n",
         block + "$$$$\n",
+        unterminated,
+        concatenated,
         "bad\n$$$$\n",
         "",
     ):
@@ -254,15 +258,15 @@ def test_pdb_s_is_refused_even_with_hydrogen_override(tmp_path, capsys, with_con
     path.write_text(block)
     # Geometry is still usable regardless of guessed bond orders.
     assert hash_file(path, input_format="pdb").formula == "C6H6"
-    for generate in (False, True):
-        with pytest.raises(ValueError, match="PDB input is not supported for S tagging"):
-            hash_file(
-                path,
-                input_format="pdb",
-                include_smiles=True,
-                generate_coordinates=generate,
-                allow_implicit_hydrogens=True,
-            )
+    with pytest.raises(ValueError, match="PDB input is not supported for S tagging"):
+        hash_file(
+            path,
+            input_format="pdb",
+            include_smiles=True,
+            allow_implicit_hydrogens=True,
+        )
+    with pytest.raises(ValueError, match="generate_coordinates is not supported for PDB"):
+        hash_file(path, input_format="pdb", generate_coordinates=True)
     assert (
         cli([str(path), "--input-format", "pdb", "--include-smiles", "--allow-implicit-hydrogens"])
         == 1

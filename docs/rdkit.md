@@ -22,8 +22,8 @@ is inferred from the extension. Supported formats are `mol`, `sdf`, `mol2`,
 `pdb`, `smi`/`smiles`, and `inchi`. Parsers sanitize molecules and preserve
 explicit hydrogen atoms. SMILES/InChI files must contain exactly one nonblank
 line; a SMILES name after whitespace is allowed. CXSMILES text is rejected.
-SDF must contain exactly one record, including when later records are invalid;
-trailing whitespace after its `$$$$` terminator is accepted.
+SDF must contain exactly one `$$$$`-terminated record, including when later
+records are invalid; trailing whitespace after its terminator is accepted.
 Multiple conformers in a file are rejected. To process a collection, iterate
 an RDKit supplier explicitly:
 
@@ -74,8 +74,9 @@ for XYZ, whose atom list carries no implicit-H information.
 
 For inputs without 3D geometry, `generate_coordinates=True` explicitly adds
 hydrogens and replaces all conformers with one ETKDGv3 embedding (random seed
-0, one thread, no energy optimization). This is available only for non-XYZ
-file inputs. A fixed seed does **not** make conformer generation canonical:
+0, one thread, no energy optimization). This is unavailable for XYZ and PDB
+file inputs; inferred PDB bond orders can produce incorrect hydrogen counts.
+A fixed seed does **not** make conformer generation canonical:
 equivalent SMILES with different atom orders or different RDKit releases can
 produce different geometries. Save the generated geometry for reuse when
 reproducibility matters. Embedding failure raises an error.

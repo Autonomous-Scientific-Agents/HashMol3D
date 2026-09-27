@@ -44,7 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--generate-coordinates",
         action="store_true",
-        help="Explicitly generate a new 3D conformer with RDKit (non-XYZ inputs only)",
+        help="Explicitly generate a new 3D conformer with RDKit (not XYZ or PDB)",
     )
     parser.add_argument(
         "-p",

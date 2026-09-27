@@ -30,7 +30,7 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 |      | `--node-budget`  | 10000 | Maximum canonical search states, also after frame fallback |
 |      | `--input-format` | xyz | `xyz`, `mol`, `sdf`, `mol2`, `pdb`, `smi`/`smiles`, or `inchi` |
 |      | `--include-smiles` | off | Add canonical isomeric SMILES as S in a separate hash namespace |
-|      | `--generate-coordinates` | off | Generate a new 3D conformer with explicit H atoms (non-XYZ only) |
+|      | `--generate-coordinates` | off | Generate a new 3D conformer with explicit H atoms (not XYZ or PDB) |
 |      | `--allow-implicit-hydrogens` | off | Accept hydrogens without coordinates and hash only atoms present (non-XYZ) |
 | `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
 

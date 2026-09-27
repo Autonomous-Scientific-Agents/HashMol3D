@@ -151,13 +151,15 @@ def read_rdkit(path, *, input_format: str | None = None):
             # Check record boundaries before RDKit buffers the stream: some
             # releases expose trailing blank lines as an extra invalid record.
             record = []
+            terminated = False
             for line in stream:
                 record.append(line)
                 if line.strip() == b"$$$$":
+                    terminated = True
                     break
-            if any(line.strip() for line in stream):
+            if not terminated or any(line.strip() for line in stream):
                 raise ValueError(
-                    "SDF input must contain exactly one molecule; use an RDKit supplier"
+                    "SDF input must contain exactly one terminated molecule; use an RDKit supplier"
                 )
             supplier = Chem.ForwardSDMolSupplier(io.BytesIO(b"".join(record)), removeHs=False)
             mol = next(supplier, None)
@@ -208,9 +210,10 @@ def hash_file(
     With S enabled, XYZ requires all atoms (including H); RDKit determines bonds
     from coordinates and the requested total charge (default zero).
 
-    Other formats use ``read_rdkit``; PDB is refused for S tagging because its
-    inferred bond orders cannot be trusted. PDB geometry-only input hashes the
-    atoms present without checking guessed implicit-H counts. Other formats
+    Other formats use ``read_rdkit``; PDB is refused for S tagging and coordinate
+    generation because its inferred bond orders cannot be trusted. PDB
+    geometry-only input hashes the atoms present without checking guessed
+    implicit-H counts. Other formats
     reject hydrogens without coordinates unless ``allow_implicit_hydrogens=True``.
     ``generate_coordinates=True`` explicitly
     replaces coordinates using ETKDGv3 (seed 0, one thread, explicit H atoms),
@@ -222,6 +225,11 @@ def hash_file(
         raise ValueError(
             "PDB input is not supported for S tagging: bond orders are unreliable; "
             "use SDF or hash_rdkit with a chemically prepared Mol"
+        )
+    if fmt == "pdb" and generate_coordinates:
+        raise ValueError(
+            "generate_coordinates is not supported for PDB input: inferred bond orders "
+            "can add incorrect hydrogens; use SDF or a chemically prepared RDKit Mol"
         )
     if fmt == "xyz":
         if allow_implicit_hydrogens:
