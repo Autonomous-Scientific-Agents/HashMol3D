@@ -1,6 +1,6 @@
 [project]
 name = "hashmol3d"
-version = "0.11.0"
+version = "0.12.0"
 description = "Library for deterministic 3D molecular geometry identifiers and hashes"
 authors = [{name = "Murat Keçeli"}]
 readme = "README.md"
@@ -9,6 +9,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+rdkit = ["rdkit>=2023.9.6"]
 
 [project.scripts]
 hashmol3d = "hashmol3d.cli:main"
