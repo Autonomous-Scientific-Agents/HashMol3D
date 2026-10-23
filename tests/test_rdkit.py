@@ -113,6 +113,24 @@ def test_double_bond_stereo_from_coordinates():
     assert trans.descriptor.split("|S:")[1] != cis.descriptor.split("|S:")[1]
 
 
+@pytest.mark.parametrize("smiles", ["F/C=C/F", "F/C=C\\F"])
+@pytest.mark.parametrize("flag", ["unknown", "wavy"])
+def test_unknown_graph_stereo_does_not_override_3d_geometry(smiles, flag):
+    mol = molecule(smiles)
+    expected = hash_rdkit(mol, include_smiles=True)
+    double = next(bond for bond in mol.GetBonds() if bond.GetBondType() == Chem.BondType.DOUBLE)
+    if flag == "unknown":
+        double.SetStereo(Chem.BondStereo.STEREOANY)
+    else:
+        double.SetBondDir(Chem.BondDir.EITHERDOUBLE)
+    before = mol.ToBinary()
+    # Graph-only calls still honor the unknown assignment; only the 3D path clears it.
+    assert canonical_smiles(mol) == "FC=CF"
+    assert canonical_smiles(mol, conf_id=0) == smiles
+    assert hash_rdkit(mol, include_smiles=True) == expected
+    assert mol.ToBinary() == before
+
+
 def test_smiles_canonicalization_ignores_maps_order_and_ordinary_explicit_h():
     expected = canonical_smiles(Chem.MolFromSmiles("CCO"))
     assert canonical_smiles(Chem.MolFromSmiles("[OH:3][CH2:2][CH3:1]")) == expected
@@ -211,6 +229,66 @@ def test_sdf_accepts_trailing_whitespace(tmp_path, trailing):
     assert hash_file(path, input_format="sdf", include_smiles=True) == expected
 
 
+@pytest.mark.parametrize("force_v3000", [False, True])
+def test_mol_accepts_single_block_with_trailing_whitespace(tmp_path, force_v3000):
+    mol = molecule("O")
+    path = tmp_path / "single.mol"
+    path.write_text(Chem.MolToMolBlock(mol, forceV3000=force_v3000) + "\n \t\n")
+    assert read_rdkit(path).GetNumAtoms() == 3
+    assert hash_file(path, input_format="mol").formula == "H2O"
+
+
+@pytest.mark.parametrize("fmt", ["mol", "sdf", "mol2"])
+def test_file_readers_reject_concatenated_molecules(tmp_path, capsys, fmt):
+    if fmt == "mol2":
+        block = (
+            "@<TRIPOS>MOLECULE\nwater\n3 2 0 0 0\nSMALL\nNO_CHARGES\n\n"
+            "@<TRIPOS>ATOM\n1 O 0 0 0 O.3 1 HOH 0\n"
+            "2 H1 .7572 .586 0 H 1 HOH 0\n3 H2 -.7572 .586 0 H 1 HOH 0\n"
+            "@<TRIPOS>BOND\n1 1 2 1\n2 1 3 1\n"
+        )
+        content = block + block
+    else:
+        content = Chem.MolToMolBlock(molecule("O")) + "\n" + Chem.MolToMolBlock(molecule("C"))
+        if fmt == "sdf":
+            # The first molecule has no $$$$; a delimiter count alone misses it.
+            content += "\n$$$$\n"
+    path = tmp_path / ("concatenated." + fmt)
+    path.write_text(content)
+    with pytest.raises(ValueError, match="exactly one molecule"):
+        read_rdkit(path)
+    assert cli([str(path), "--input-format", fmt]) == 1
+    output = capsys.readouterr()
+    assert not output.out
+    assert "exactly one molecule" in output.err
+    assert "Traceback" not in output.err
+
+
+def test_sdf_properties_can_contain_mol_end_text(tmp_path):
+    path = tmp_path / "properties.sdf"
+    path.write_text(
+        Chem.MolToMolBlock(molecule("O"))
+        + "\n>  <notes>\nM  END\nnot a second molecule\n\n>  <name>\nwater\n\n$$$$\n"
+    )
+    mol = read_rdkit(path)
+    assert mol.GetNumAtoms() == 3
+    assert mol.GetProp("notes") == "M  END\nnot a second molecule"
+    assert mol.GetProp("name") == "water"
+    assert hash_file(path, input_format="sdf", include_smiles=True).descriptor.endswith("|S:O")
+
+
+def test_sdf_rejects_molecule_after_a_complete_data_item(tmp_path):
+    path = tmp_path / "hidden.sdf"
+    path.write_text(
+        Chem.MolToMolBlock(molecule("O"))
+        + "\n>  <name>\nwater\n\n"
+        + Chem.MolToMolBlock(molecule("C"))
+        + "\n$$$$\n"
+    )
+    with pytest.raises(ValueError, match="exactly one molecule"):
+        read_rdkit(path)
+
+
 @pytest.mark.parametrize("include_smiles", [False, True])
 @pytest.mark.parametrize("smiles", ["CCO", "[NH4+]"])
 def test_hydrogens_without_coordinates_require_explicit_opt_in(
@@ -245,6 +323,39 @@ def test_hydrogens_without_coordinates_require_explicit_opt_in(
     assert hash_file(
         path, input_format="sdf", generate_coordinates=True, include_smiles=include_smiles
     ).formula == ("C2H6O" if smiles == "CCO" else "H4N")
+
+
+@pytest.mark.parametrize("include_smiles", [False, True])
+def test_unsanitized_explicit_h_molecule_initializes_only_its_copy(include_smiles):
+    params = Chem.SmilesParserParams()
+    params.sanitize = False
+    params.removeHs = False
+    unsanitized = Chem.MolFromSmiles("[H]O[H]", params)
+    water = Chem.RenumberAtoms(molecule("O"), [1, 0, 2])
+    unsanitized.AddConformer(water.GetConformer())
+    assert unsanitized.NeedsUpdatePropertyCache()
+    before = unsanitized.ToBinary()
+    sanitized = Chem.Mol(unsanitized)
+    Chem.SanitizeMol(sanitized)
+    assert hash_rdkit(unsanitized, include_smiles=include_smiles) == hash_rdkit(
+        sanitized, include_smiles=include_smiles
+    )
+    assert unsanitized.NeedsUpdatePropertyCache()
+    assert unsanitized.ToBinary() == before
+
+
+@pytest.mark.parametrize("include_smiles", [False, True])
+def test_unsanitized_implicit_h_molecule_uses_the_normal_hydrogen_policy(include_smiles):
+    mol = Chem.MolFromSmiles("CCO", sanitize=False)
+    mol.AddConformer(Chem.RemoveHs(molecule("CCO")).GetConformer())
+    before = mol.ToBinary()
+    with pytest.raises(ValueError, match="allow_implicit_hydrogens=True"):
+        hash_rdkit(mol, include_smiles=include_smiles)
+    result = hash_rdkit(mol, include_smiles=include_smiles, allow_implicit_hydrogens=True)
+    assert result.formula == "C2O"
+    if include_smiles:
+        assert result.descriptor.endswith("|S:CCO")
+    assert mol.ToBinary() == before
 
 
 @pytest.mark.parametrize("with_conect", [False, True])

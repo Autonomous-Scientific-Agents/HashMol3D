@@ -54,6 +54,9 @@ def canonical_smiles(mol, *, conf_id: int | None = None) -> str:
         conf = mol.GetConformer(conf_id)
         if not conf.Is3D():
             raise ValueError("S tagging requires a 3D conformer")
+        # Unknown/wavy bond flags survive replaceExistingTags=True and can
+        # suppress otherwise resolved E/Z geometry. The conformer is authoritative.
+        Chem.RemoveStereochemistry(mol)
         Chem.AssignStereochemistryFrom3D(mol, confId=conf.GetId(), replaceExistingTags=True)
     Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
     mol = Chem.RemoveHs(mol)
@@ -99,6 +102,9 @@ def hash_rdkit(
         raise ValueError(
             "RDKit input has a 2D conformer; provide or explicitly generate 3D geometry"
         )
+    # Unsanitized caller-built molecules may not yet have implicit valences.
+    # Initialize only the copy; S tagging separately performs full sanitization.
+    mol.UpdatePropertyCache(strict=False)
     if not allow_implicit_hydrogens and any(atom.GetTotalNumHs() for atom in mol.GetAtoms()):
         raise ValueError(
             "RDKit input has implicit hydrogens or H counts without coordinates; "
@@ -134,6 +140,25 @@ def _with_smiles(result, mol, conf_id):
     )
 
 
+def _validate_mol_record(data: bytes, *, sdf: bool = False) -> None:
+    """Reject extra MOL blocks while allowing ordinary SDF property data."""
+    lines = data.splitlines()
+    end = next((i for i in range(4, len(lines)) if lines[i].strip() == b"M  END"), None)
+    if end is None:
+        raise ValueError("MOL/SDF input must contain a complete M  END-terminated molecule")
+    in_data = False
+    for line in lines[end + 1 :]:
+        if not line.strip():
+            in_data = False
+        elif sdf and (in_data or line.startswith(b">")):
+            in_data = True
+        else:
+            raise ValueError(
+                "MOL/SDF input must contain exactly one molecule; unexpected content "
+                "after M  END (SDF values must follow a > data header)"
+            )
+
+
 def read_rdkit(path, *, input_format: str | None = None):
     """Read one molecule from MOL, SDF, MOL2, PDB, SMILES, or InChI.
 
@@ -161,13 +186,17 @@ def read_rdkit(path, *, input_format: str | None = None):
                 raise ValueError(
                     "SDF input must contain exactly one terminated molecule; use an RDKit supplier"
                 )
+            _validate_mol_record(b"".join(record[:-1]), sdf=True)
             supplier = Chem.ForwardSDMolSupplier(io.BytesIO(b"".join(record)), removeHs=False)
             mol = next(supplier, None)
         else:
             data = stream.read().decode("utf-8")
             if fmt == "mol":
+                _validate_mol_record(data.encode("utf-8"))
                 mol = Chem.MolFromMolBlock(data, removeHs=False)
             elif fmt == "mol2":
+                if sum(line.strip() == "@<TRIPOS>MOLECULE" for line in data.splitlines()) != 1:
+                    raise ValueError("MOL2 input must contain exactly one molecule")
                 mol = Chem.MolFromMol2Block(data, removeHs=False)
             elif fmt == "pdb":
                 mol = Chem.MolFromPDBBlock(data, removeHs=False)

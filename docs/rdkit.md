@@ -24,6 +24,10 @@ explicit hydrogen atoms. SMILES/InChI files must contain exactly one nonblank
 line; a SMILES name after whitespace is allowed. CXSMILES text is rejected.
 SDF must contain exactly one `$$$$`-terminated record, including when later
 records are invalid; trailing whitespace after its terminator is accepted.
+MOL and MOL2 likewise reject additional molecule blocks. An SDF record cannot
+hide a second MOL block before its terminator: text after `M  END` must be
+ordinary SD property data introduced by a `>` header. Property values may
+contain literal `M  END` text. A plain MOL block permits only trailing whitespace.
 Multiple conformers in a file are rejected. To process a collection, iterate
 an RDKit supplier explicitly:
 
@@ -49,6 +53,9 @@ Provide a complete explicit-H geometry, or explicitly pass
 incomplete geometry. With that override, missing H atoms do not enter the
 geometry/formula even though they remain in S: an ethanol heavy-atom geometry
 has formula `C2O` and `S:CCO`. No H coordinates are invented by the override.
+Unsanitized caller-built molecules have their property cache initialized on
+the copy before hydrogen counts are checked. This does not repair chemistry;
+S tagging still performs full sanitization and reports chemistry errors.
 Charge defaults to the graph's total formal charge;
 multiplicity retains the core electron-parity default based on the atoms
 actually present, and can be overridden. Other keywords are passed to
@@ -95,7 +102,8 @@ V:8-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|C:<distances>|S
 2. Copy the RDKit graph, reject query graphs and enhanced stereo groups, remove
    atom-map numbers, and sanitize with RDKit's default aromaticity model.
 3. Assign stereochemistry from the selected **unrounded 3D conformer** using
-   `AssignStereochemistryFrom3D(..., replaceExistingTags=True)`. Geometry is
+   `AssignStereochemistryFrom3D(..., replaceExistingTags=True)`, after clearing
+   prior stereo assignments, including unknown/wavy bond flags, on the copy. Geometry is
    authoritative, including when it disagrees with pre-existing stereo labels.
 4. Run `AssignStereochemistry(cleanIt=True, force=True)`, remove ordinary
    explicit H atoms with RDKit's default `RemoveHs`, and serialize with
