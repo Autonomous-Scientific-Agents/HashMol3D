@@ -30,7 +30,9 @@ jobs:
 
   test:
     name: pytest (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # setup-python has no Python 3.8/3.9 builds for Ubuntu 26.04.
+    # Keep the supported-version matrix on a runner providing those builds.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
