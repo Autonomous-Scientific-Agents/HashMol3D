@@ -92,10 +92,12 @@ normative here. A perturbation changes the identifier when it moves the
 quantized representation to a different grid cell, and its magnitude alone
 does not determine whether it does.
 
-## `hash_xyz(path, **kwargs)`
+## `hash_xyz(path, *, include_smiles=False, **kwargs)`
 
 Convenience wrapper that reads an XYZ file and forwards the keyword
 arguments to `hash_molecule`.
+With `include_smiles=True`, opt into RDKit bond perception and the separately
+versioned S descriptor. The default remains unchanged.
 
 ```python
 from hashmol3d import hash_xyz
@@ -119,6 +121,14 @@ from hashmol3d import read_xyz
 
 atomic_nums, coords = read_xyz("molecule.xyz")
 ```
+
+## Optional RDKit APIs
+
+For optional `hash_rdkit`, `hash_file`, `read_rdkit`, and `canonical_smiles`
+APIs, see [RDKit support](rdkit.md). The geometry-only invariance and
+charge-independent suffix rules above apply when `include_smiles=False`.
+S results use a version that includes the extension revision and RDKit version;
+their `geometry_hash` field hashes geometry plus SMILES.
 
 ## Constants
 
