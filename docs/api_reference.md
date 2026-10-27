@@ -119,7 +119,10 @@ within int64, and for version 10 the rounding margin and the exact
 resolution floor ([specification §6.1](specification.md#61-idempotent-re-hashing)).
 Corrupted or hand-edited descriptors therefore fail instead of hashing. The
 checks are necessary conditions: they do not test whether `C` distances are
-realizable in three dimensions.
+realizable in three dimensions. A descriptor from the RDKit S extension
+(`V:<base>-S1-RDKIT-<rdkit>|...|S:<SMILES>`, base version 8 or later) is
+validated as its base descriptor plus a non-empty `S` field and re-hashes to
+its S digest; the SMILES is not interpreted.
 
 ## `descriptor_geometry(descriptor)`
 
@@ -150,10 +153,12 @@ z2, coords2 = descriptor_geometry(res.descriptor)
 assert hash_molecule(z2, coords2).hash_str == res.hash_str
 ```
 
-## `hash_xyz(path, **kwargs)`
+## `hash_xyz(path, *, include_smiles=False, **kwargs)`
 
 Convenience wrapper that reads an XYZ file and forwards the keyword
 arguments to `hash_molecule`.
+With `include_smiles=True`, opt into RDKit bond perception and the separately
+versioned S descriptor. The default remains unchanged.
 
 ```python
 from hashmol3d import hash_xyz
@@ -177,6 +182,14 @@ from hashmol3d import read_xyz
 
 atomic_nums, coords = read_xyz("molecule.xyz")
 ```
+
+## Optional RDKit APIs
+
+For optional `hash_rdkit`, `hash_file`, `read_rdkit`, and `canonical_smiles`
+APIs, see [RDKit support](rdkit.md). The geometry-only invariance and
+charge-independent suffix rules above apply when `include_smiles=False`.
+S results use a version that includes the extension revision and RDKit version;
+their `geometry_hash` field hashes geometry plus SMILES.
 
 ## Constants
 

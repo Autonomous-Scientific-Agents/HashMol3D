@@ -79,7 +79,9 @@ be grouped by suffix matching on the part after `-`.
 > **Note on chirality.** Two enantiomers share the eigenvalues of the
 > non-relativistic Hamiltonian and therefore share the same HashMol3D
 > identifier. If you need to distinguish enantiomers, combine HashMol3D
-> with an external stereochemistry tag.
+> with an external stereochemistry tag or explicitly select the optional
+> RDKit S extension (§9). The invariance contract above describes the default
+> geometry-only namespace.
 
 ## 3. Inputs
 
@@ -369,6 +371,8 @@ enforced; anything else is rejected rather than hashed. The checks are:
   zeros) and within the int64 range of the format;
 - `F` rows: one per atom, elements equal to `Z`, in canonical row order;
 - `C` sections: exactly `N(N−1)/2` non-negative distances;
+- an optional RDKit `S` extension (§9; base version 8 or later): validated
+  as its base descriptor plus a non-empty `S:` field;
 - `W` sections (versions 5–6): one sorted `Z,color:color-distance,...` row
   per atom, with elements equal to `Z` and, in each row, the colors of the
   other `N − 1` atoms.
@@ -472,21 +476,28 @@ rounding at the precision directly, changes the hashed rows of about 0.3 % of
 QM9 molecules (371 of 133,885 at 10⁻⁴ Å) relative to version 9; all other
 hashed rows are identical. As with every version, all digests change.
 
-## 9. Future tagged extensions
+## 9. Optional RDKit S extension
 
-New descriptor tags can extend the proposed standard to distinguish enantiomers
-and isotopes. An enantiomer-sensitive extension needs a canonical handedness
-representation; an isotope extension needs isotope labels associated with the
-canonical atom order. Such extensions must define their serialization and
-canonicalization rules and use a new descriptor version. The current library
-implements neither extension and retains reflection invariance and atomic-number
-labels only.
+The reference implementation offers an opt-in `S` tag containing RDKit canonical
+isomeric SMILES. Its version is `10-FRAME-SHA256-S1-RDKIT-<rdkitVersion>` and
+its field order is `V|P|Z|F|S` or `V|P|Z|C|S`. The exact canonicalization,
+serialization, input, and error rules are defined in [RDKit support](rdkit.md).
+Installing RDKit or selecting an RDKit reader does not enable S automatically.
+The base `10-FRAME-SHA256` descriptor and algorithm remain unchanged; the S
+digest covers the hashed payload (§6) followed by `|S:<SMILES>`, so its `F`
+rows are rounded exactly as in the base hash.
+
+This extension can distinguish supported stereoisomers and isotopic labels.
+It also hashes connectivity and graph formal charges; the default parity and
+charge-independent suffix contracts do not apply to S results. Multiplicity
+remains outside the hash. Use consistent RDKit versions and input preparation
+within an S corpus. This is an optional library extension of the draft standard.
 
 ## 10. Dependencies
 
-The reference implementation uses only NumPy and the Python standard
-library; in particular it does **not** depend on RDKit or any
-cheminformatics toolkit.
+The default implementation uses only NumPy and the Python standard library.
+RDKit is an optional extra (`pip install 'hashmol3d[rdkit]'`) used only when
+the caller explicitly requests an RDKit adapter, SMILES generation, or S tagging.
 
 ## 11. Reference API
 

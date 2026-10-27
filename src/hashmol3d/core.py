@@ -48,7 +48,7 @@ import numbers
 import re
 import warnings
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -1019,6 +1019,8 @@ class _ParsedDescriptor:
     tag: str
     rows: tuple[tuple[int, int, int, int], ...] | None  # F rows as stored
     coarse: tuple[tuple[int, int, int], ...] | None  # hashed F values (v10+)
+    base_version: str = ""  # the version without an S extension suffix
+    extension: str | None = None  # the "S:<SMILES>" field, if any
 
 
 def _invalid(message: str) -> ValueError:
@@ -1079,7 +1081,40 @@ def _check_wl_rows(body: str, z: tuple[int, ...]) -> None:
             raise _invalid("W row colors do not match the other atoms")
 
 
+# The optional RDKit S extension (rdkit_support, since version 8) appends
+# "|S:<canonical isomeric SMILES>" and suffixes the base version.
+_S_VERSION = re.compile(r"(.+)-S1-RDKIT-[A-Za-z0-9._~%-]+")
+_S_SINCE = 8
+
+
 def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
+    """Parse a stored descriptor, with or without an S extension.
+
+    An S descriptor ``V:<base>-S1-RDKIT-<rdkit>|P|Z|<section>|S:<SMILES>`` is
+    validated as its base descriptor plus a non-empty S field; the SMILES
+    itself is not interpreted.
+    """
+    if not isinstance(descriptor, str) or descriptor.count("|") != 4:
+        return _parse_base_descriptor(descriptor)
+    fields = tuple(descriptor.split("|"))
+    match = _S_VERSION.fullmatch(fields[0][2:]) if fields[0].startswith("V:") else None
+    if match is None or not fields[4].startswith("S:"):
+        raise ValueError(
+            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' (or a C or W "
+            "section), optionally followed by an RDKit '|S:...' section"
+        )
+    if fields[4] == "S:":
+        raise _invalid("the S section is empty")
+    base = _parse_base_descriptor("|".join(("V:" + match.group(1), *fields[1:4])))
+    if base.number < _S_SINCE:
+        raise ValueError(
+            f"unsupported descriptor version {fields[0][2:]!r}: the S extension "
+            f"starts with version {_S_SINCE}"
+        )
+    return replace(base, fields=fields, extension=fields[4])
+
+
+def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
     """Parse a stored descriptor against the rules of its own version.
 
     Checks the version (5-10, with the sections each version produced), the
@@ -1174,10 +1209,10 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
             qmat += qmat.T
             if not _distances_within_floor(np.array(z, dtype=np.int64), qmat):
                 raise _invalid("distances exceed the resolution floor of the precision grid")
-        return _ParsedDescriptor(fields, number, decimals, precision, z, tag, None, None)
+        return _ParsedDescriptor(fields, number, decimals, precision, z, tag, None, None, version)
     if tag == "W":
         _check_wl_rows(body, z)
-        return _ParsedDescriptor(fields, number, decimals, precision, z, tag, None, None)
+        return _ParsedDescriptor(fields, number, decimals, precision, z, tag, None, None, version)
 
     parts = body.split(";")
     if len(parts) != len(z):
@@ -1215,7 +1250,9 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
         keys = [(r[0], *c, *r[1:]) for r, c in zip(rows, coarse)]
     if any(a > b for a, b in zip(keys, keys[1:])):
         raise _invalid("F rows are not in canonical order")
-    return _ParsedDescriptor(fields, number, decimals, precision, z, tag, tuple(rows), coarse)
+    return _ParsedDescriptor(
+        fields, number, decimals, precision, z, tag, tuple(rows), coarse, version
+    )
 
 
 def _parse_frame_rows(body: str) -> list[tuple[int, int, int, int]]:
@@ -1258,7 +1295,7 @@ def _hashed_payload(descriptor: str) -> str:
     if parsed.coarse is None:
         return descriptor
     rows = ";".join(f"{r[0]}:{c[0]},{c[1]},{c[2]}" for r, c in zip(parsed.rows, parsed.coarse))
-    return "|".join((*parsed.fields[:3], "F:" + rows))
+    return "|".join((*parsed.fields[:3], "F:" + rows, *parsed.fields[4:]))
 
 
 def _check_length(length) -> int:
@@ -1374,6 +1411,10 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
             returned unchanged.
     """
     parsed = _parse_descriptor(descriptor)
+    if parsed.extension is not None:
+        # The geometry is the base descriptor's; SMILES adds no coordinates.
+        descriptor = "|".join(("V:" + parsed.base_version, *parsed.fields[1:4]))
+        parsed = _parse_descriptor(descriptor)
     if parsed.tag == "C":
         raise ValueError(
             "C descriptors store a canonical distance matrix, not coordinates; "

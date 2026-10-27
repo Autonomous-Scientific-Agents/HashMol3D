@@ -9,6 +9,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+rdkit = ["rdkit>=2023.9.6"]
 
 [project.scripts]
 hashmol3d = "hashmol3d.cli:main"

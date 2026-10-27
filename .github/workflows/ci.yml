@@ -30,7 +30,9 @@ jobs:
 
   test:
     name: pytest (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # setup-python has no Python 3.8/3.9 builds for Ubuntu 26.04.
+    # Keep the supported-version matrix on a runner providing those builds.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -45,4 +47,27 @@ jobs:
       - name: Install package
         run: pip install -e ".[test]"
       - name: Run tests
+        run: pytest -v
+
+  rdkit:
+    name: RDKit (py${{ matrix.python-version }}, ${{ matrix.rdkit }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.10"
+            rdkit: "rdkit==2023.9.6"
+            numpy: "numpy<2"
+          - python-version: "3.12"
+            rdkit: "rdkit"
+            numpy: "numpy"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package with optional chemistry support
+        run: pip install -e ".[test,rdkit]" "${{ matrix.rdkit }}" "${{ matrix.numpy }}"
+      - name: Run full suite with RDKit
         run: pytest -v
