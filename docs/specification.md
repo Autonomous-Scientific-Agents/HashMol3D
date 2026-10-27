@@ -101,11 +101,24 @@ and distance computations amplify. Below a relative grid of about 10⁻¹¹
 frame identifiers stop being invariant under rigid motions (0.5–3 % of
 motions change the identifier at `precision/R ≈ 10⁻¹¹`, most of them near
 10⁻¹³·⁵ on random 30-atom clouds of 1–500 Å); distance identifiers hold
-to about 10⁻¹²·⁵. Inputs with `precision < 2^-35·R` are therefore rejected
-for both methods, with the finest admissible power of ten in the error.
+to about 10⁻¹²·⁵. Inputs finer than `2^-35·R` are therefore rejected for
+both methods, with the finest admissible power of ten in the error:
+
+- For an `F` descriptor the decision is exact and uses the hashed rows: the
+  input is rejected if any row `(x, y, z)`, in grid cells, has
+  `x² + y² + z² > 2^70`. Every geometry with the same hashed rows, including
+  a `descriptor_geometry` reconstruction (§6.1), therefore receives the same
+  decision; a test on the raw coordinates would put a sharp boundary inside
+  the cell that a reconstruction can cross.
+- For a `C` descriptor it is `precision · 2^35 < R` on the raw extent.
+- Before either, inputs with `precision · 2^35 · (1 + 2^-10) < R` are
+  rejected outright. No input that the exact `F` rule accepts can reach this
+  screen, since a hashed row differs from the raw extent by less than one
+  cell.
+
 `R` is a rigid-motion and relabeling invariant; a single atom has no floor.
-This rejects only grids that float64 cannot support; it does not change
-any identifier. It also bounds every fine-grid frame integer (§4.5) below
+This rejects only grids that float64 cannot support; it does not change any
+identifier. It also bounds every fine-grid frame integer (§4.5) below
 `2^53`.
 
 ## 4. Geometry signatures
@@ -333,6 +346,22 @@ for `F` and `C` descriptors and for stored descriptors of earlier versions
 implementation provides this as `hash_descriptor(descriptor, length=...)`.
 The readable `<formula><state>-` prefix is not part of the descriptor and
 is stored alongside it.
+
+A re-hashed descriptor must be one the generator could have emitted;
+anything else is rejected rather than hashed. The checks are:
+
+- a known version (`5-CANON-SHA256` with a `C` section, `6`–`10-FRAME-SHA256`
+  with `F` or `C`);
+- the precision written exactly as §6 renders a power of ten ≤ 1 Å;
+- atomic numbers in `[1, 118]` and in ascending order;
+- integers in canonical decimal form (no sign on zero, no `+`, no leading
+  zeros) and within the int64 range of the format;
+- `F` rows: one per atom, elements equal to `Z`, in canonical row order;
+- `C` sections: exactly `N(N−1)/2` non-negative distances.
+
+Version 10 additionally requires every `F` value to lie within its rounding
+margin (§4.5 step 9) and every descriptor to satisfy the resolution floor
+(§3; `C` distances at most `2^36` cells).
 
 The `F` rows are also a canonical-frame geometry, centered on the
 Z-weighted centroid, on the fine grid. Hashing them as coordinates at the

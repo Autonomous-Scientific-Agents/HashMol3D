@@ -106,8 +106,15 @@ geometry. `hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
 r.geometry_hash` holds exactly for every result `r`, for `F` and `C`
 descriptors, and for stored descriptors of earlier versions. `length`
 defaults to 32 hex characters. The readable `<formula><state>-` prefix is not
-part of the descriptor; keep it alongside. Raises `ValueError` for a
-malformed descriptor or one from a newer version.
+part of the descriptor; keep it alongside.
+
+The descriptor is validated first and rejected with `ValueError` unless
+`hash_molecule` could have produced it: known version (5–10), canonical
+precision field, atomic numbers in range and ascending, `F` row elements
+matching `Z` in canonical order, the right number of `C` distances,
+canonical integers within int64, and for version 10 the rounding margin and
+resolution floor ([specification §6.1](specification.md#61-idempotent-re-hashing)).
+Corrupted or hand-edited descriptors therefore fail instead of hashing.
 
 ## `descriptor_geometry(descriptor)`
 
@@ -124,8 +131,10 @@ exactly symmetric inputs with tied anchor frames, a `UserWarning` is emitted
 and the stored rows are returned unchanged.
 
 Raises `ValueError` for a `C` descriptor (a distance matrix has no
-coordinates), for a descriptor of another version, or for a malformed
-descriptor.
+coordinates), for a descriptor of another version, or for a descriptor that
+fails the validation of `hash_descriptor`. A geometry accepted at the
+resolution floor reconstructs to one that `hash_molecule` also accepts: the
+floor is decided on the hashed rows, which the reconstruction shares.
 
 ```python
 from hashmol3d import descriptor_geometry, hash_descriptor, hash_molecule

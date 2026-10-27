@@ -45,6 +45,7 @@ from __future__ import annotations
 import hashlib
 import math
 import numbers
+import re
 import warnings
 from collections import Counter
 from dataclasses import dataclass
@@ -96,6 +97,15 @@ _REPAIR_STEPS = 8
 # versions stored (and hashed) rows on the precision grid itself.
 _FINE_ROWS_SINCE = 10
 
+# Stored descriptors that hash_descriptor() accepts, with the sections each
+# version could produce. Version 5 introduced the V|P|Z|<section> layout;
+# earlier versions hashed different bodies.
+_DESCRIPTOR_SECTIONS = {
+    "5-CANON-SHA256": "C",
+    **{f"{v}-FRAME-SHA256": "FC" for v in range(6, 11)},
+}
+assert DESCRIPTOR_VERSION in _DESCRIPTOR_SECTIONS
+
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
 # distinct geometries share a single namespace -- not by molecule size. For a
@@ -131,6 +141,14 @@ _MAX_SCALED = float(2**62)
 # fine-grid frame integer below 2**53, where float64 represents integers
 # exactly.
 _MIN_RELATIVE_PRECISION = 2.0**-35
+_RESOLUTION_CELLS = 2**35  # = 1 / _MIN_RELATIVE_PRECISION, in grid cells
+
+# The floor of a frame descriptor is decided exactly on its hashed values, so
+# every geometry with the same hashed rows (such as a descriptor_geometry()
+# reconstruction) gets the same decision. The raw-coordinate screen that runs
+# first only rejects grids clearly past the floor, by this relative slack,
+# which no geometry the exact rule accepts can reach.
+_RESOLUTION_SCREEN_SLACK = 2.0**-10
 
 # Finer precisions overflow ``10.0 ** decimals`` (a double caps out near
 # 10^308) before the geometry-dependent ``_MAX_SCALED`` guard can fire, so
@@ -377,24 +395,42 @@ def _validate_coords(coords) -> np.ndarray:
         raise ValueError("coords must be an (N, 3) array of real numbers") from err
 
 
-def _check_resolvable(atomic_nums: np.ndarray, coords: np.ndarray, precision: float) -> None:
-    """Reject a grid finer than float64 can resolve for this geometry.
+def _extent(atomic_nums: np.ndarray, coords: np.ndarray) -> float:
+    """Largest distance from the Z-weighted centroid (Å).
 
-    The extent is the largest distance from the Z-weighted centroid, a
-    rigid-motion and relabeling invariant. A single atom (zero extent) has no
-    resolution limit.
+    A rigid-motion and relabeling invariant; zero for a single atom, which
+    therefore has no resolution floor.
     """
     w = atomic_nums.astype(float)
-    extent = float(np.linalg.norm(coords - (w @ coords) / w.sum(), axis=1).max())
-    floor = extent * _MIN_RELATIVE_PRECISION
-    if precision < floor:
-        coarsest_ok = 10.0 ** math.ceil(math.log10(floor))
-        raise ValueError(
-            f"precision {precision:.0e} Å is finer than float64 can resolve for a "
-            f"geometry of extent {extent:.3g} Å: identifiers would not be "
-            "reproducible under rotation or relabeling. Use precision >= "
-            f"{coarsest_ok:.0e} Å for this geometry."
-        )
+    return float(np.linalg.norm(coords - (w @ coords) / w.sum(), axis=1).max())
+
+
+def _resolution_error(precision: float, extent: float) -> ValueError:
+    """The error for a grid finer than float64 resolves at this extent."""
+    coarsest_ok = 10.0 ** math.ceil(math.log10(extent * _MIN_RELATIVE_PRECISION))
+    return ValueError(
+        f"precision {precision:.0e} Å is finer than float64 can resolve for a "
+        f"geometry of extent {extent:.3g} Å: identifiers would not be "
+        "reproducible under rotation or relabeling. Use precision >= "
+        f"{coarsest_ok:.0e} Å for this geometry."
+    )
+
+
+def _cells_within_floor(coarse: np.ndarray) -> bool:
+    """Whether every hashed frame row lies within the resolution floor.
+
+    ``coarse`` holds frame coordinates in grid cells. The test is exact:
+    ``x**2 + y**2 + z**2 <= _RESOLUTION_CELLS**2`` in integer arithmetic. The
+    floating-point estimate (relative error below ``2**-50``) settles all
+    rows except those within ``2**-30`` of the limit, which are recomputed
+    with Python integers.
+    """
+    limit = float(_RESOLUTION_CELLS) ** 2
+    estimate = (coarse.astype(float) ** 2).sum(axis=1)
+    near = coarse[np.abs(estimate - limit) <= limit * 2.0**-30]
+    if np.any(estimate > limit * (1 + 2.0**-30)):
+        return False
+    return all(sum(int(v) * int(v) for v in row) <= _RESOLUTION_CELLS**2 for row in near.tolist())
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
@@ -661,10 +697,12 @@ def _rows_in_basis(
     return _sorted_signed_rows(z, q, _ALL_AXIS_SIGNS)
 
 
-def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str]:
+def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str, bool]:
     """Serialize a winning frame row array as an ``F`` signature.
 
-    Returns ``(tag, z_ordered, stored_body, hashed_body)``. The stored body
+    Returns ``(tag, z_ordered, stored_body, hashed_body, within_floor)``,
+    where ``within_floor`` is the exact resolution-floor decision on the
+    hashed rows (:func:`_cells_within_floor`). The stored body
     carries the fine-grid coordinates. Each stored value is first moved at
     least ``_FINE_MARGIN`` fine units inside its coarse cell, so the stored
     geometry never sits on, or within re-hash roundoff of, a rounding
@@ -678,12 +716,13 @@ def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str]:
     rows = _sort_rows(np.column_stack([best[:, :4], stored]))
     body = ";".join(f"{r[0]}:{r[4]},{r[5]},{r[6]}" for r in rows.tolist())
     hashed = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in rows.tolist())
-    return "F", tuple(int(v) for v in rows[:, 0].tolist()), body, hashed
+    z_ordered = tuple(int(v) for v in rows[:, 0].tolist())
+    return "F", z_ordered, body, hashed, _cells_within_floor(coarse)
 
 
 def _frame_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
-) -> tuple[str, tuple[int, ...], str, str] | None:
+) -> tuple[str, tuple[int, ...], str, str, bool] | None:
     """Canonical frame signature, or ``None`` for the distance fallback.
 
     Coordinates are expressed in the eigenbasis of the Z-weighted gyration
@@ -918,11 +957,53 @@ def _format_descriptor(
     )
 
 
-def _split_descriptor(descriptor: str) -> tuple[int, list[str]]:
-    """Split a descriptor into its four fields and return its version number."""
+_CANONICAL_INT = re.compile(r"0|-?[1-9][0-9]*")
+
+
+@dataclass(frozen=True)
+class _ParsedDescriptor:
+    """A validated stored descriptor."""
+
+    fields: tuple[str, ...]
+    number: int
+    decimals: int
+    precision: float
+    z: tuple[int, ...]
+    tag: str
+    rows: tuple[tuple[int, int, int, int], ...] | None  # F rows as stored
+    coarse: tuple[tuple[int, int, int], ...] | None  # hashed F values (v10+)
+
+
+def _invalid(message: str) -> ValueError:
+    return ValueError(f"invalid HashMol3D descriptor: {message}")
+
+
+def _parse_int(text: str, what: str, *, signed: bool) -> int:
+    """Parse an integer exactly as the generator serializes it."""
+    if not _CANONICAL_INT.fullmatch(text) or (not signed and text.startswith("-")):
+        raise _invalid(f"{what} {text!r} is not a canonical decimal integer")
+    value = int(text)
+    if abs(value) >= _MAX_SCALED:
+        raise _invalid(f"{what} {text!r} is outside the int64 range of the format")
+    return value
+
+
+def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
+    """Parse a stored descriptor, accepting only what the generator can emit.
+
+    Checks the version (5-10, with the sections each version produced), the
+    canonical precision field, atomic numbers (range and ascending order),
+    row elements against ``Z``, the canonical row order, the distance count,
+    integer formatting and int64 bounds. For version 10 it also checks the
+    fine-row rounding margin and the resolution floor, which every
+    descriptor produced by :func:`hash_molecule` satisfies.
+
+    Raises:
+        ValueError: for anything else.
+    """
     if not isinstance(descriptor, str):
         raise ValueError(f"descriptor must be a string, got {type(descriptor).__name__}")
-    fields = descriptor.split("|")
+    fields = tuple(descriptor.split("|"))
     if (
         len(fields) != 4
         or not fields[0].startswith("V:")
@@ -933,16 +1014,90 @@ def _split_descriptor(descriptor: str) -> tuple[int, list[str]]:
         raise ValueError(
             "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' or '...|C:...'"
         )
-    try:
-        version = int(fields[0][2:].split("-", 1)[0])
-    except ValueError:
-        raise ValueError(f"unrecognized descriptor version {fields[0][2:]!r}") from None
-    if version > int(DESCRIPTOR_VERSION.split("-", 1)[0]):
+    version = fields[0][2:]
+    match = re.fullmatch(r"([1-9][0-9]*)-[A-Z0-9]+(?:-[A-Z0-9]+)*", version)
+    if match is None:
+        raise ValueError(f"unrecognized descriptor version {version!r}")
+    number = int(match.group(1))
+    if number > int(DESCRIPTOR_VERSION.split("-", 1)[0]):
         raise ValueError(
-            f"descriptor version {fields[0][2:]!r} is newer than this HashMol3D "
-            f"({DESCRIPTOR_VERSION})"
+            f"descriptor version {version!r} is newer than this HashMol3D ({DESCRIPTOR_VERSION})"
         )
-    return version, fields
+    sections = _DESCRIPTOR_SECTIONS.get(version)
+    if sections is None:
+        raise ValueError(
+            f"unsupported descriptor version {version!r}; this HashMol3D reads "
+            f"{', '.join(_DESCRIPTOR_SECTIONS)}"
+        )
+    tag = fields[3][0]
+    if tag not in sections:
+        raise _invalid(f"version {version} has no {tag!r} section")
+
+    text = fields[1][2:]
+    try:
+        decimals, precision = _precision_to_decimals(float(text))
+    except ValueError:
+        raise _invalid(f"precision {text!r} is not a power of ten <= 1 Å") from None
+    if text != f"{precision:.1e}":
+        raise _invalid(f"precision {text!r} is not written as {precision:.1e}")
+
+    z_text = fields[2][2:]
+    z = tuple(_parse_int(t, "atomic number", signed=False) for t in z_text.split(","))
+    if any(not 1 <= v <= _MAX_Z for v in z):
+        raise _invalid(f"atomic numbers must be in [1, {_MAX_Z}]")
+    if any(a > b for a, b in zip(z, z[1:])):
+        raise _invalid("atomic numbers are not in ascending canonical order")
+
+    body = fields[3][2:]
+    fine = number >= _FINE_ROWS_SINCE
+    if tag == "C":
+        n = len(z)
+        values = body.split(",") if body else []
+        if len(values) != n * (n - 1) // 2:
+            raise _invalid(f"{len(values)} distances for {n} atoms; expected {n * (n - 1) // 2}")
+        distances = [_parse_int(t, "distance", signed=False) for t in values]
+        # Distances are at most twice the extent from the centroid.
+        if fine and distances and max(distances) > 2 * _RESOLUTION_CELLS:
+            raise _invalid("distances exceed the resolution floor of the precision grid")
+        return _ParsedDescriptor(fields, number, decimals, precision, z, tag, None, None)
+
+    parts = body.split(";")
+    if len(parts) != len(z):
+        raise _invalid(f"{len(parts)} F rows for {len(z)} atoms")
+    rows = []
+    for part in parts:
+        try:
+            z_part, xyz = part.split(":")
+            x, y, w = xyz.split(",")
+        except ValueError:
+            raise ValueError(f"malformed F row in descriptor: {part!r}") from None
+        rows.append(
+            (
+                _parse_int(z_part, "atomic number", signed=False),
+                _parse_int(x, "coordinate", signed=True),
+                _parse_int(y, "coordinate", signed=True),
+                _parse_int(w, "coordinate", signed=True),
+            )
+        )
+    if tuple(r[0] for r in rows) != z:
+        raise _invalid("F row elements do not match the Z field")
+    coarse = None
+    keys: list[tuple[int, ...]] = rows
+    if fine:
+        coarse = tuple(tuple(_coarsen_int(v) for v in r[1:]) for r in rows)
+        limit = _FINE_FACTOR // 2 - _FINE_MARGIN
+        for r, c in zip(rows, coarse):
+            if any(abs(v - h * _FINE_FACTOR) > limit for v, h in zip(r[1:], c)):
+                raise _invalid(
+                    f"F row {r!r} lies within {_FINE_MARGIN} fine units of a "
+                    "rounding boundary of the precision grid"
+                )
+        if not _cells_within_floor(np.array(coarse, dtype=np.int64)):
+            raise _invalid("F rows exceed the resolution floor of the precision grid")
+        keys = [(r[0], *c, *r[1:]) for r, c in zip(rows, coarse)]
+    if any(a > b for a, b in zip(keys, keys[1:])):
+        raise _invalid("F rows are not in canonical order")
+    return _ParsedDescriptor(fields, number, decimals, precision, z, tag, tuple(rows), coarse)
 
 
 def _parse_frame_rows(body: str) -> list[tuple[int, int, int, int]]:
@@ -978,16 +1133,14 @@ def _hashed_payload(descriptor: str) -> str:
     would round the coarse values a second time.
 
     Raises:
-        ValueError: if ``descriptor`` is malformed or from a newer version.
+        ValueError: if ``descriptor`` is not a valid stored descriptor
+            (:func:`_parse_descriptor`).
     """
-    version, fields = _split_descriptor(descriptor)
-    if version < _FINE_ROWS_SINCE or fields[3].startswith("C:"):
+    parsed = _parse_descriptor(descriptor)
+    if parsed.coarse is None:
         return descriptor
-    rows = _parse_frame_rows(fields[3][2:])
-    fields[3] = "F:" + ";".join(
-        f"{z}:{_coarsen_int(x)},{_coarsen_int(y)},{_coarsen_int(w)}" for z, x, y, w in rows
-    )
-    return "|".join(fields)
+    rows = ";".join(f"{r[0]}:{c[0]},{c[1]},{c[2]}" for r, c in zip(parsed.rows, parsed.coarse))
+    return "|".join((*parsed.fields[:3], "F:" + rows))
 
 
 def _check_length(length) -> int:
@@ -1018,6 +1171,11 @@ def hash_descriptor(descriptor: str, *, length: int | None = None) -> str:
             :attr:`HashMol3DResult.descriptor`.
         length: number of hex characters to keep (default
             :data:`DEFAULT_LENGTH`).
+
+    Raises:
+        ValueError: unless ``descriptor`` is one :func:`hash_molecule` could
+            have produced (any supported version); corrupted or hand-edited
+            descriptors are rejected rather than hashed.
     """
     length = _check_length(length)
     payload = _hashed_payload(descriptor)
@@ -1097,22 +1255,19 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
             hash within ``_REPAIR_STEPS`` attempts; the stored coordinates are
             returned unchanged.
     """
-    version, fields = _split_descriptor(descriptor)
-    if fields[3].startswith("C:"):
+    parsed = _parse_descriptor(descriptor)
+    if parsed.tag == "C":
         raise ValueError(
             "C descriptors store a canonical distance matrix, not coordinates; "
             "keep the source coordinates or use hash_descriptor() to re-hash"
         )
-    if fields[0] != "V:" + DESCRIPTOR_VERSION:
+    if parsed.fields[0] != "V:" + DESCRIPTOR_VERSION:
         raise ValueError(
-            f"descriptor version {fields[0][2:]!r} cannot be re-hashed by this "
+            f"descriptor version {parsed.fields[0][2:]!r} cannot be re-hashed by this "
             f"HashMol3D ({DESCRIPTOR_VERSION}); use hash_descriptor() instead"
         )
-    try:
-        decimals, precision = _precision_to_decimals(float(fields[1][2:]))
-    except ValueError:
-        raise ValueError(f"unrecognized descriptor precision {fields[1][2:]!r}") from None
-    rows = np.array(_parse_frame_rows(fields[3][2:]), dtype=np.int64)
+    decimals, precision = parsed.decimals, parsed.precision
+    rows = np.array(parsed.rows, dtype=np.int64)
     z, stored = rows[:, 0], rows[:, 1:]
     target = _hashed_payload(descriptor)
 
@@ -1126,11 +1281,13 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
         coords = to_coords(fine)
         signature = _frame_signature(z, coords, decimals)
         if signature is not None:
-            tag, z_ordered, body, hashed_body = signature
+            tag, z_ordered, body, hashed_body, within_floor = signature
             rehashed = _format_descriptor(
                 DESCRIPTOR_VERSION, precision, z_ordered, tag, hashed_body
             )
-            if rehashed == target:
+            # The same hashed rows imply the same resolution-floor decision
+            # in hash_molecule(); check it anyway, as hash_molecule() does.
+            if rehashed == target and within_floor:
                 return z, coords
             # Settle in the frame the re-hash chose. Among tied anchors of a
             # symmetric molecule it can differ from the stored frame by a
@@ -1245,8 +1402,14 @@ def hash_molecule(
     # canonicalized in one place; ``effective_precision`` is what gets hashed
     # and reported, so the descriptor grid can never drift from the value.
     decimals, effective_precision = _precision_to_decimals(precision)
-    _check_resolvable(atomic_nums, coords, effective_precision)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
+    # Resolution floor (see _MIN_RELATIVE_PRECISION). A loose screen on the
+    # raw coordinates first, then an exact decision: on the hashed rows for
+    # F descriptors, so that every geometry with the same hashed rows is
+    # treated alike, and on the raw extent for C descriptors.
+    extent = _extent(atomic_nums, coords)
+    if effective_precision * _RESOLUTION_CELLS * (1 + _RESOLUTION_SCREEN_SLACK) < extent:
+        raise _resolution_error(effective_precision, extent)
 
     signature = None
     if method == "frame":
@@ -1261,11 +1424,15 @@ def hash_molecule(
                 stacklevel=2,
             )
     if signature is None:
+        if effective_precision * _RESOLUTION_CELLS < extent:
+            raise _resolution_error(effective_precision, extent)
         qmat = _scaled_distances(coords, decimals)
         tag, z_ordered, body = _canonical_signature(atomic_nums, qmat, node_budget)
         hashed_body = body
     else:
-        tag, z_ordered, body, hashed_body = signature
+        tag, z_ordered, body, hashed_body, within_floor = signature
+        if not within_floor:
+            raise _resolution_error(effective_precision, extent)
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
     # Equal to _hashed_payload(descriptor), built without re-parsing it.
     payload = _format_descriptor(

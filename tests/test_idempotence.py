@@ -155,6 +155,32 @@ class TestHashDescriptor:
             ("V:x-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "unrecognized descriptor version"),
             ("V:11-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0", "malformed F row"),
+            ("V:10-FRAME-SHA256|P:invalid|Z:6|C:invalid", "precision 'invalid'"),
+            ("V:10-FRAME-SHA256|P:1e-4|Z:6|F:6:0,0,0", "not written as 1.0e-04"),
+            ("V:10-FRAME-SHA256|P:1.0e+01|Z:6|F:6:0,0,0", "power of ten <= 1"),
+            ("V:4-GEOM-SHA256|P:1.0e-04|Z:6|C:", "unsupported descriptor version"),
+            ("V:10-CANON-SHA256|P:1.0e-04|Z:6|C:", "unsupported descriptor version"),
+            ("V:5-CANON-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "has no 'F' section"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:8|F:6:0,0,0", "do not match the Z field"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:|F:6:0,0,0", "atomic number ''"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:119|F:119:0,0,0", r"\[1, 118\]"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:8,1|C:9572", "ascending"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:06|F:06:0,0,0", "canonical decimal"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:+1,0,0", "canonical decimal"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:-0,0,0", "canonical decimal"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|F:6:0,0,0", "1 F rows for 2 atoms"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:5000,0,0", "rounding boundary"),
+            (
+                "V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|F:6:0,0,10000;6:0,0,-10000",
+                "not in canonical order",
+            ),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:4611686018427387904,0,0", "int64 range"),
+            # 2**35 + 1 grid cells from the centroid: past the resolution floor.
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:343597383690000,0,0", "resolution floor"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:", "0 distances for 2 atoms"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:1,2", "2 distances for 2 atoms"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:-1", "canonical decimal"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:68719476737", "resolution floor"),
         ],
     )
     def test_rejects_malformed_descriptors(self, descriptor, message):
@@ -195,7 +221,7 @@ class TestNormalization:
         assert core._coarsen(fine).tolist() == expected
 
     def test_payload_rounds_only_frame_rows(self):
-        stored = "V:10-FRAME-SHA256|P:1.0e-02|Z:1,6|F:1:-15000,5000,4999;6:0,0,25001"
+        stored = "V:10-FRAME-SHA256|P:1.0e-02|Z:1,6|F:1:-15003,4997,-4996;6:0,0,25003"
         assert core._hashed_payload(stored) == (
             "V:10-FRAME-SHA256|P:1.0e-02|Z:1,6|F:1:-2,0,0;6:0,0,3"
         )
@@ -277,6 +303,50 @@ class TestGeometryRoundTrip:
         v9 = "V:9-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
         with pytest.raises(ValueError, match="cannot be re-hashed"):
             descriptor_geometry(v9)
+
+
+class TestResolutionFloorBoundary:
+    """A geometry accepted at the resolution floor reconstructs to one that is
+    accepted too: the floor of an F descriptor is decided on its hashed rows,
+    which a verified reconstruction shares exactly."""
+
+    def test_reconstruction_at_the_floor_rehashes(self):
+        rng = np.random.default_rng(0)
+        accepted = 0
+        for _ in range(300):
+            n = int(rng.integers(2, 12))
+            precision = 10.0 ** -int(rng.integers(6, 12))
+            z = rng.choice([1, 6, 7, 8], n)
+            coords = rng.normal(size=(n, 3))
+            w = z.astype(float)
+            coords -= (w @ coords) / w.sum()
+            # Extent within a few float64 ulps of the floor, either side.
+            target = precision * core._RESOLUTION_CELLS * (1 + rng.uniform(-3e-12, 3e-12))
+            coords *= target / np.linalg.norm(coords, axis=1).max()
+            try:
+                res = hash_molecule(z, coords, precision=precision)
+            except ValueError:
+                continue
+            accepted += 1
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                zz, cc = descriptor_geometry(res.descriptor)
+                assert hash_molecule(zz, cc, precision=precision).hash_str == res.hash_str
+        assert 50 < accepted < 250  # both sides of the floor were exercised
+
+    def test_screen_never_rejects_what_the_exact_rule_accepts(self):
+        # A raw extent 0.4 cells beyond the floor rounds to a hashed row at
+        # the limit and is accepted; 0.6 cells beyond rounds past it.
+        cells = core._RESOLUTION_CELLS
+        for excess, accepted in ((0.4, True), (0.6, False)):
+            half = (cells + excess) * 1e-4
+            coords = np.array([[0.0, 0.0, -half], [0.0, 0.0, half]])
+            if accepted:
+                res = hash_molecule([6, 6], coords, precision=1e-4)
+                assert core._hashed_payload(res.descriptor).endswith(f"6:0,0,{cells}")
+            else:
+                with pytest.raises(ValueError, match="float64 can resolve"):
+                    hash_molecule([6, 6], coords, precision=1e-4)
 
 
 class TestSettling:

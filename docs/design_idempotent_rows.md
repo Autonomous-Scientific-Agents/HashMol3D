@@ -240,6 +240,21 @@ repository (open question 5 still applies).
   power of ten, 0 of 3,600 motions changed a frame or distance identifier,
   and 1,000 of 1,000 `descriptor_geometry` round trips reproduced it. The
   floor also keeps every fine frame integer below `2^53`.
+  For `F` descriptors the decision is made exactly on the hashed rows
+  (`x² + y² + z² ≤ 2^70` cells²), not on the raw extent. A raw-extent test is
+  a sharp boundary that reconstruction can cross: in review, geometries
+  placed within a few ulps of it hashed, reconstructed, and the
+  reconstruction was then rejected (376 of 2,000). Decided on hashed rows,
+  every verified reconstruction gets the same decision (0 of 10,533
+  accepted boundary inputs failed). A raw screen with 2⁻¹⁰ slack still runs
+  first, to bound work and integer sizes.
+* **Descriptor validation.** `hash_descriptor` and `descriptor_geometry`
+  accept only descriptors the generator can emit (version table, canonical
+  precision and integers, Z range and order, row/Z consistency, canonical
+  row order, distance count, int64 bounds; for version 10 also the rounding
+  margin and the floor). Before this, `P:invalid` or a `C:` body that was not
+  a distance list hashed, and an `F` row could contradict `Z`. Validation
+  makes `hash_descriptor` about 3× slower (≈ 85 µs per QM9 descriptor).
 * **Cost.** Hashing is about 1.6× slower than version 9 on QM9-sized
   molecules (236 vs 146 µs) and 1.5× for a 5,000-atom cloud; verification in
   `descriptor_geometry` costs one more frame computation.
