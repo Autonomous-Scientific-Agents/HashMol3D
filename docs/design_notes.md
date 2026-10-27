@@ -134,14 +134,21 @@ for larger clouds.
 
 Anchors affect only frame construction: the original coordinates are always
 projected and hashed. All eight axis signs are evaluated, retaining parity
-invariance without handedness conventions. A 10-grid-unit minimum anchor
-length is a conservative policy for avoiding short vectors when defining an
-orientation; it is not a stability guarantee or an estimate of input noise.
-Version 8 applies the whole-cloud extent rejection only after accepting a
-well-conditioned principal-axis frame, which needs no atom anchors. Water
-therefore uses F at 0.1 and 1 angstrom grids. The actual transverse-anchor
-checks and the 10,000-candidate budget are unchanged; failure selects the
-canonical distance method with a warning.
+invariance without handedness conventions. Versions 6-8 required a
+transverse anchor of at least 10 grid units as a conservative policy against
+short orientation vectors. Version 9 lowers this to 1 grid unit, the smallest
+extent that survives quantization: a short anchor does not amplify noise,
+because a perturbation delta rotates the frame about the resolved axis by
+about delta/rho while every transverse coordinate is itself bounded by rho,
+so the induced coordinate shift is at most about delta. In QM9 every
+fallback at 1e-4, 1e-3 and 1e-2 angstrom was a nearly linear molecule with a
+bend between half a cell and ten cells; all of them now produce F descriptors,
+which round 3N values rather than N(N-1)/2 distances and are less sensitive
+to coordinate noise than the C descriptors they replace. The whole-cloud
+size guard (radius below 10 grid units with degenerate moments) is a
+separate rule and is unchanged, as are the gap threshold and the
+10,000-candidate budget; failure still selects the canonical distance method
+with a warning.
 
 Generic cost is O(N log N) time and O(N) memory. An axial degeneracy with M
 tied anchors costs O(M N log N); a fully degenerate tensor with M tied atom

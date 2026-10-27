@@ -94,8 +94,8 @@ reproducibility matters. Embedding failure raises an error.
 does not enable it. Both `F` and `C` geometry representations are supported:
 
 ```text
-V:8-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|F:<rows>|S:<SMILES>
-V:8-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|C:<distances>|S:<SMILES>
+V:9-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|F:<rows>|S:<SMILES>
+V:9-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|C:<distances>|S:<SMILES>
 ```
 
 1. Compute the ordinary geometry descriptor with the unchanged core algorithm.

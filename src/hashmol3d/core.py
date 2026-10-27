@@ -60,7 +60,7 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "8-FRAME-SHA256"
+DESCRIPTOR_VERSION = "9-FRAME-SHA256"
 
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
@@ -98,11 +98,25 @@ _MAX_DECIMALS = 300
 # the same order as the distance-based paths.
 _FRAME_GAP_MIN = 0.05
 
-# An atom-derived axis shorter than ten coordinate-grid units is too easily
-# reoriented by sub-precision noise. Such marginal geometries use the exact
-# distance fallback instead. Exact point-like and linear geometries are
-# handled separately and therefore do not need artificial transverse axes.
-_FRAME_ANCHOR_MIN_GRID = 10.0
+# Whole-cloud size guard: a cloud whose centered radius is below ten grid
+# units and whose principal moments are not separated has too little resolved
+# structure to anchor, and uses the exact distance fallback. Exact point-like
+# and linear geometries are handled separately before this guard applies.
+_FRAME_MIN_RADIUS_GRID = 10.0
+
+# Minimum extent, in grid units, of the transverse displacement that resolves
+# a degenerate eigenspace through an atom anchor. One grid unit is the
+# smallest extent that survives quantization at all: below it every
+# transverse coordinate rounds to zero and the intrinsic-line rule applies.
+# A short anchor does not amplify noise. A perturbation delta rotates the
+# anchored frame about the resolved axis by about delta / rho, where rho is
+# the anchor extent, but every atom's transverse coordinates are themselves
+# bounded by rho, so the induced coordinate shift is at most about delta.
+# Versions 6-8 required ten grid units, which routed nearly linear molecules
+# with a bend between half a cell and ten cells to the distance fallback;
+# their C descriptors round N(N-1)/2 distances and are less stable than the
+# 3N-value F descriptors this rule now produces.
+_FRAME_ANCHOR_MIN_GRID = 1.0
 
 # Relative residual accepted as collinear up to float64 roundoff. This is
 # independent of the requested grid: it must not flatten a resolved bend.
@@ -619,10 +633,10 @@ def _frame_signature(
         return None
 
     # A true line needs only its isolated longitudinal axis, even when its
-    # extent is too small for the general atom-anchor rule. Recognize it up
+    # extent is too small for the whole-cloud size guard. Recognize it up
     # to relative float64 roundoff, not by a grid-dependent bend tolerance.
     # Larger systems retain the existing intrinsic-line/anchor decisions.
-    if max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
+    if max_radius_grid < _FRAME_MIN_RADIUS_GRID:
         axis = vec[:, 2]
         projected = c - np.outer(c @ axis, axis)
         max_projected = float(np.linalg.norm(projected, axis=1).max())
@@ -636,9 +650,9 @@ def _frame_signature(
 
     # Principal axes need no atom anchor: their conditioning is controlled by
     # the relative moment gaps above, independently of the output grid. Only
-    # unresolved eigenspaces require the minimum anchor extent. Keep short
-    # finite bends out of the half-grid intrinsic-line rule below.
-    if max_radius_grid < _FRAME_ANCHOR_MIN_GRID:
+    # unresolved eigenspaces require an atom anchor, and only clouds with at
+    # least ten grid units of radius are anchored at all.
+    if max_radius_grid < _FRAME_MIN_RADIUS_GRID:
         return None
 
     def quantized(values: np.ndarray) -> np.ndarray:

@@ -469,7 +469,7 @@ def test_mol2_reader(tmp_path):
     )
     assert read_rdkit(path).GetNumAtoms() == 3
     assert hash_file(path, input_format="mol2").hash_str == (
-        "H2Oq0m1-bac9655753f489d6cbfdb299d59adbda"
+        "H2Oq0m1-2525b97db42fc1c282844ba9478d561f"
     )
     assert hash_file(path, input_format="mol2", include_smiles=True).descriptor.endswith("|S:O")
 

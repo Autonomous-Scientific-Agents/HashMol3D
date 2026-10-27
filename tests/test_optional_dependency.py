@@ -21,7 +21,7 @@ sys.meta_path.insert(0, BlockRDKit())
 import hashmol3d
 from hashmol3d.cli import cli
 result = hashmol3d.hash_xyz(sys.argv[1])
-assert result.hash_str == 'H2Oq0m1-bac9655753f489d6cbfdb299d59adbda'
+assert result.hash_str == 'H2Oq0m1-2525b97db42fc1c282844ba9478d561f'
 assert result == hashmol3d.hash_file(sys.argv[1])
 assert cli([sys.argv[1]]) == 0
 assert 'rdkit' not in sys.modules

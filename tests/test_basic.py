@@ -27,11 +27,11 @@ def test_documented_water_identifier(water):
     """
     z, coords = water
     res = hash_molecule(z, coords)
-    assert res.version == "8-FRAME-SHA256"
+    assert res.version == "9-FRAME-SHA256"
     assert res.descriptor == (
-        "V:8-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
+        "V:9-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
     )
-    assert res.hash_str == "H2Oq0m1-bac9655753f489d6cbfdb299d59adbda"
+    assert res.hash_str == "H2Oq0m1-2525b97db42fc1c282844ba9478d561f"
 
 
 def test_descriptor_contains_geometry_fields(water):
