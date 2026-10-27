@@ -275,7 +275,11 @@ All optional arguments are keyword-only: `precision`, `charge`,
 
 `precision` must be a power of ten no greater than 1 Å (`1.0`, `1e-1`,
 `1e-2`, ...). Restricting the grid to powers of ten keeps its descriptor
-representation unambiguous and portable.
+representation unambiguous and portable. It must also be resolvable in
+float64: grids finer than about 3×10⁻¹¹ times the molecule's extent are
+rejected with a `ValueError` naming the finest usable precision (e.g. 1e-10 Å
+for water, 1e-8 Å for a 100 Å protein), because identifiers on such grids
+change under rotation.
 
 Or read straight from a file:
 

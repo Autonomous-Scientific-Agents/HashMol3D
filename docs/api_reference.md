@@ -33,7 +33,10 @@ All optional arguments are **keyword-only**.
 - `atomic_nums`: integer array-like of atomic numbers, shape `(N,)`
 - `coords`: float array-like of Cartesian coordinates in Å, shape `(N, 3)`
 - `precision`: geometry-grid precision in Å (default `1e-4`); must be a power
-  of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
+  of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...), and no finer than
+  `2**-35` (≈ 2.9e-11) times the largest distance of an atom from the
+  Z-weighted centroid. Finer grids are below float64 resolution (identifiers
+  would change under rotation) and raise `ValueError`.
 - `charge`: total formal charge (default `0`)
 - `multiplicity`: spin multiplicity. If `None`, inferred as singlet/doublet
   from electron parity.

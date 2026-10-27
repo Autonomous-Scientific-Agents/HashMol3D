@@ -88,10 +88,25 @@ The reference implementation takes:
 1. `atomic_nums`: integer array of atomic numbers, shape `(N,)`
 2. `coords`: float array of Cartesian coordinates in Å, shape `(N, 3)`
 3. `precision`: geometry-grid precision in Å (default `1e-4`); it must be a
-   power of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
+   power of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...), and no
+   finer than `2^-35·R` (≈ 2.9×10⁻¹¹·R), where `R` is the largest distance
+   of an atom from the Z-weighted centroid (see below)
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
 6. `method`: `"frame"` (default) or `"canonical"`
+
+**Resolution floor.** Float64 coordinates of extent `R` carry about
+`R·2^-52` of representation error, which the centroid, tensor, eigenvector
+and distance computations amplify. Below a relative grid of about 10⁻¹¹
+frame identifiers stop being invariant under rigid motions (0.5–3 % of
+motions change the identifier at `precision/R ≈ 10⁻¹¹`, most of them near
+10⁻¹³·⁵ on random 30-atom clouds of 1–500 Å); distance identifiers hold
+to about 10⁻¹²·⁵. Inputs with `precision < 2^-35·R` are therefore rejected
+for both methods, with the finest admissible power of ten in the error.
+`R` is a rigid-motion and relabeling invariant; a single atom has no floor.
+This rejects only grids that float64 cannot support; it does not change
+any identifier. It also bounds every fine-grid frame integer (§4.5) below
+`2^53`.
 
 ## 4. Geometry signatures
 

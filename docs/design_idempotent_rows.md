@@ -226,6 +226,20 @@ repository (open question 5 still applies).
   digits can differ by a unit when a frame is anchored on a short transverse
   extent (e.g. 1.5 cells), as expected from their 10⁴-times denser grid.
   Hashed values are unaffected; invariance tests compare hashed payloads.
+* **Precision floor.** Fine rows must fit in int64 four decades sooner
+  than coarse ones, so the finest accepted precision dropped by four
+  decades. Nothing usable was lost: in version 9, at every precision now
+  past the int64 limit, 0–5 % of rigid motions kept the identifier, because
+  float64 roundoff (about `R·2^-52`, amplified by the frame computation)
+  dominates there. The real limit is float64, so `hash_molecule` now rejects
+  `precision < 2^-35·R` (`R` = largest distance from the Z-weighted
+  centroid) for both methods. Measured on random 30-atom clouds of 1–500 Å,
+  with and without a translation of 3R: frame identifiers change for
+  0.5–3 % of motions at `precision/R ≈ 10⁻¹¹` and for most near 10⁻¹³·⁵;
+  distance identifiers hold to about 10⁻¹²·⁵. At the finest accepted
+  power of ten, 0 of 3,600 motions changed a frame or distance identifier,
+  and 1,000 of 1,000 `descriptor_geometry` round trips reproduced it. The
+  floor also keeps every fine frame integer below `2^53`.
 * **Cost.** Hashing is about 1.6× slower than version 9 on QM9-sized
   molecules (236 vs 146 µs) and 1.5× for a 5,000-atom cloud; verification in
   `descriptor_geometry` costs one more frame computation.

@@ -7,6 +7,7 @@ import pytest
 
 from hashmol3d import generate_hashmol3d, hash_length_for, hash_molecule
 from hashmol3d.core import (
+    _MIN_RELATIVE_PRECISION,
     _canonical_signature,
     _hill_formula,
     _infer_multiplicity,
@@ -62,6 +63,39 @@ class TestPrecisionToDecimals:
             _precision_to_decimals(1e-301)
         with pytest.raises(ValueError):
             hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.1]], precision=1e-309)
+
+    @pytest.mark.parametrize("method", ["frame", "canonical"])
+    def test_rejects_precision_below_float64_resolution(self, water, method):
+        # Water extends ~0.66 Å from its centroid: 1e-10 Å is resolvable,
+        # 1e-11 Å is below 2**-35 of the extent.
+        z, coords = water
+        hash_molecule(z, coords, precision=1e-10, method=method)
+        with pytest.raises(ValueError, match=r"float64 can resolve.*precision >= 1e-10"):
+            hash_molecule(z, coords, precision=1e-11, method=method)
+
+    def test_single_atom_has_no_resolution_floor(self):
+        res = hash_molecule([6], [[1e3, -2e3, 5e2]], precision=1e-30)
+        assert res.descriptor.endswith("|F:6:0,0,0")
+
+    @pytest.mark.parametrize("method", ["frame", "canonical"])
+    @pytest.mark.parametrize("extent", [1.0, 50.0, 500.0])
+    def test_finest_accepted_precision_is_invariant(self, method, extent):
+        rng = np.random.default_rng(int(extent))
+        n = 30 if method == "frame" else 12
+        z = rng.choice([1, 6, 7, 8], n)
+        coords = rng.normal(size=(n, 3)) * extent
+        w = z.astype(float)
+        radius = np.linalg.norm(coords - (w @ coords) / w.sum(), axis=1).max()
+        precision = 10.0 ** np.ceil(np.log10(radius * _MIN_RELATIVE_PRECISION))
+        base = hash_molecule(z, coords, precision=precision, method=method)
+        with pytest.raises(ValueError, match="float64 can resolve"):
+            hash_molecule(z, coords, precision=precision / 10, method=method)
+        for _ in range(20):
+            rot, _ = np.linalg.qr(rng.standard_normal((3, 3)))
+            perm = rng.permutation(n)
+            moved = (coords @ rot.T + rng.uniform(-5, 5, 3) * extent)[perm]
+            res = hash_molecule(z[perm], moved, precision=precision, method=method)
+            assert res.hash_str == base.hash_str
 
     def test_dtype_independent(self):
         # numpy floats validate the same as plain floats (no value-based

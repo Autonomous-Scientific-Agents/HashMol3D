@@ -120,6 +120,18 @@ _NODE_BUDGET = 10_000
 # Scaled distances must stay below 2^62 so they fit int64 with headroom.
 _MAX_SCALED = float(2**62)
 
+# Finest grid, relative to the geometry's extent, at which identifiers are
+# reproducible in float64. Coordinates of extent R carry about R * 2**-52 of
+# representation error, which the centroid, gyration-tensor, eigenvector and
+# distance computations amplify. Measured on random 30-atom clouds (R = 1 to
+# 500 Å), frame identifiers change under rigid motions for 0.5-3 % of motions
+# at precision / R ~ 1e-11 and for most of them near 1e-13.5; distance (C)
+# identifiers hold down to ~1e-12.5. 2**-35 (~2.9e-11) keeps about half a
+# decade above the last observed frame failure. It also keeps every
+# fine-grid frame integer below 2**53, where float64 represents integers
+# exactly.
+_MIN_RELATIVE_PRECISION = 2.0**-35
+
 # Finer precisions overflow ``10.0 ** decimals`` (a double caps out near
 # 10^308) before the geometry-dependent ``_MAX_SCALED`` guard can fire, so
 # reject them up front with a clear message instead of a raw OverflowError.
@@ -363,6 +375,26 @@ def _validate_coords(coords) -> np.ndarray:
         return np.asarray(arr, dtype=float)
     except (TypeError, ValueError) as err:
         raise ValueError("coords must be an (N, 3) array of real numbers") from err
+
+
+def _check_resolvable(atomic_nums: np.ndarray, coords: np.ndarray, precision: float) -> None:
+    """Reject a grid finer than float64 can resolve for this geometry.
+
+    The extent is the largest distance from the Z-weighted centroid, a
+    rigid-motion and relabeling invariant. A single atom (zero extent) has no
+    resolution limit.
+    """
+    w = atomic_nums.astype(float)
+    extent = float(np.linalg.norm(coords - (w @ coords) / w.sum(), axis=1).max())
+    floor = extent * _MIN_RELATIVE_PRECISION
+    if precision < floor:
+        coarsest_ok = 10.0 ** math.ceil(math.log10(floor))
+        raise ValueError(
+            f"precision {precision:.0e} Å is finer than float64 can resolve for a "
+            f"geometry of extent {extent:.3g} Å: identifiers would not be "
+            "reproducible under rotation or relabeling. Use precision >= "
+            f"{coarsest_ok:.0e} Å for this geometry."
+        )
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
@@ -1174,7 +1206,9 @@ def hash_molecule(
         SearchBudgetExceeded: if canonical search cannot finish within the
             node budget. No descriptor, hash, or result is created; increase
             ``node_budget`` and retry.
-        ValueError: if input or an option is invalid.
+        ValueError: if input or an option is invalid, or if ``precision``
+            is finer than float64 resolves for this geometry (below
+            ``2**-35`` times its largest distance from the centroid).
 
     Returns:
         :class:`HashMol3DResult`.
@@ -1211,6 +1245,7 @@ def hash_molecule(
     # canonicalized in one place; ``effective_precision`` is what gets hashed
     # and reported, so the descriptor grid can never drift from the value.
     decimals, effective_precision = _precision_to_decimals(precision)
+    _check_resolvable(atomic_nums, coords, effective_precision)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
 
     signature = None
