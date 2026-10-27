@@ -127,6 +127,9 @@ def _qm9(name):
     return np.array(z), np.array(coords, dtype=float)
 
 
+_W_METHANE = "1,0:0-178,0-178,0-178,1-109;1,0:0-178,0-178,0-178,1-109;1,0:0-178,0-178,0-178,1-109;1,0:0-178,0-178,0-178,1-109;6,1:0-109,0-109,0-109,0-109"
+
+
 class TestHashDescriptor:
     @pytest.mark.parametrize("method", ["frame", "canonical"])
     @pytest.mark.parametrize("length", [None, 8, 64])
@@ -148,6 +151,31 @@ class TestHashDescriptor:
         )
 
     @pytest.mark.parametrize(
+        "descriptor, digest",
+        [
+            # Emitted by release 0.7.0, which wrote any precision as given.
+            ("V:5-CANON-SHA256|P:5.0e-02|Z:1,1,8|C:15,10,10", "435a52219bdb3b356dcfcd79d5599d2c"),
+            ("V:5-CANON-SHA256|P:2.0e+00|Z:1,1,8|C:2,1,1", "82afba4a13e26fe68509f42cae80b268"),
+            # Release 0.8.0 added F sections under version 5.
+            (
+                "V:5-CANON-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4692,-7572;1:0,-4692,7572;8:0,1173,0",
+                "24168e6cd755057a16ff9219bf595524",
+            ),
+            # The W fallback of versions 5 and 6 (methane, search budget 1).
+            (
+                "V:5-CANON-SHA256|P:1.0e-02|Z:1,1,1,1,6|W:" + _W_METHANE,
+                "b1be682102cbdbf3b36dbec8d777f439",
+            ),
+            (
+                "V:6-FRAME-SHA256|P:1.0e-02|Z:1,1,1,1,6|W:" + _W_METHANE,
+                "82e9e70ceaa3f6e675e21713aa9d32db",
+            ),
+        ],
+    )
+    def test_historical_descriptors_rehash_to_their_own_digest(self, descriptor, digest):
+        assert hash_descriptor(descriptor) == digest
+
+    @pytest.mark.parametrize(
         "descriptor, message",
         [
             ("not a descriptor", "not a HashMol3D descriptor"),
@@ -160,7 +188,17 @@ class TestHashDescriptor:
             ("V:10-FRAME-SHA256|P:1.0e+01|Z:6|F:6:0,0,0", "power of ten <= 1"),
             ("V:4-GEOM-SHA256|P:1.0e-04|Z:6|C:", "unsupported descriptor version"),
             ("V:10-CANON-SHA256|P:1.0e-04|Z:6|C:", "unsupported descriptor version"),
-            ("V:5-CANON-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "has no 'F' section"),
+            ("V:7-FRAME-SHA256|P:1.0e-02|Z:1,1,1,1,6|W:" + _W_METHANE, "has no 'W' section"),
+            ("V:6-FRAME-SHA256|P:5.0e-02|Z:6|C:", "power of ten <= 1"),
+            ("V:5-CANON-SHA256|P:0.0e+00|Z:6|C:", "positive finite"),
+            ("V:5-CANON-SHA256|P:inf|Z:6|C:", "positive finite"),
+            ("V:5-CANON-SHA256|P:5.00e-02|Z:6|C:", "not written as 5.0e-02"),
+            ("V:5-CANON-SHA256|P:1.0e-02|Z:6|W:6,0:", "1 W rows for 1 atoms"),
+            ("V:5-CANON-SHA256|P:1.0e-02|Z:1,6|W:1,0:1-109;6,1:0", "malformed W row"),
+            ("V:5-CANON-SHA256|P:1.0e-02|Z:1,6|W:1,0:1-109;6,1:0-+109", "canonical decimal"),
+            ("V:5-CANON-SHA256|P:1.0e-02|Z:1,8|W:1,0:1-109;6,1:0-109", "do not match the Z"),
+            ("V:5-CANON-SHA256|P:1.0e-02|Z:1,6|W:6,1:0-109;1,0:1-109", "do not match the Z"),
+            ("V:5-CANON-SHA256|P:1.0e-02|Z:1,6|W:1,0:0-109;6,1:0-109", "colors do not match"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:8|F:6:0,0,0", "do not match the Z field"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:|F:6:0,0,0", "atomic number ''"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:119|F:119:0,0,0", r"\[1, 118\]"),
@@ -181,6 +219,9 @@ class TestHashDescriptor:
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:1,2", "2 distances for 2 atoms"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:-1", "canonical decimal"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:68719476737", "resolution floor"),
+            # 1.5 * 2**35 cells: within twice the floor, but the hydrogen is
+            # 118/119 of it from the weighted centroid, past the floor.
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:1,118|C:51539607552", "resolution floor"),
         ],
     )
     def test_rejects_malformed_descriptors(self, descriptor, message):
@@ -347,6 +388,48 @@ class TestResolutionFloorBoundary:
             else:
                 with pytest.raises(ValueError, match="float64 can resolve"):
                     hash_molecule([6, 6], coords, precision=1e-4)
+
+    def test_distance_floor_is_decided_on_the_stored_distances(self):
+        # hash_molecule and the parser apply the same exact rule to the C
+        # distances, so every C descriptor near the floor that hash_molecule
+        # emits is accepted, and every one it refuses would be rejected.
+        rng = np.random.default_rng(1)
+        cells = core._RESOLUTION_CELLS
+        outcomes = set()
+        for _ in range(300):
+            n = int(rng.integers(2, 8))
+            z = rng.choice([1, 8, 53, 118], n)
+            coords = rng.normal(size=(n, 3))
+            coords *= 1e-4 * cells * (1 + rng.uniform(-3, 3) / cells) / core._extent(z, coords)
+            qmat = core._scaled_distances(coords, 4)
+            _, z_ordered, body = core._canonical_signature(z, qmat)
+            descriptor = core._format_descriptor(
+                core.DESCRIPTOR_VERSION, 1e-4, z_ordered, "C", body
+            )
+            try:
+                res = hash_molecule(z, coords, precision=1e-4, method="canonical")
+            except ValueError:
+                with pytest.raises(ValueError, match="resolution floor"):
+                    hash_descriptor(descriptor)
+                outcomes.add(False)
+            else:
+                assert res.descriptor == descriptor
+                assert hash_descriptor(descriptor) == res.geometry_hash
+                outcomes.add(True)
+        assert outcomes == {True, False}
+
+    @pytest.mark.parametrize(
+        "z, distance, accepted",
+        [
+            ((1, 1), 2 * 2**35, True),  # each atom exactly 2**35 cells out
+            ((1, 1), 2 * 2**35 + 1, False),
+            ((1, 118), 2**35 * 119 // 118, True),
+            ((1, 118), 2**35 * 119 // 118 + 1, False),
+        ],
+    )
+    def test_distance_floor_is_exact(self, z, distance, accepted):
+        qmat = np.array([[0, distance], [distance, 0]], dtype=np.int64)
+        assert core._distances_within_floor(np.array(z), qmat) is accepted
 
 
 class TestSettling:

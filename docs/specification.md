@@ -110,11 +110,17 @@ both methods, with the finest admissible power of ten in the error:
   a `descriptor_geometry` reconstruction (§6.1), therefore receives the same
   decision; a test on the raw coordinates would put a sharp boundary inside
   the cell that a reconstruction can cross.
-- For a `C` descriptor it is `precision · 2^35 < R` on the raw extent.
+- For a `C` descriptor the decision is likewise exact and uses the hashed
+  distances `q_ij` (grid cells). With weights `w_i = Z_i` and `W = Σ w_i`,
+  atom `i` lies `√A_i / W` cells from the weighted centroid, where
+  `A_i = W · Σ_j w_j q_ij² − Σ_{j<k} w_j w_k q_jk²`; the input is rejected if
+  any `A_i > W² · 2^70`. A stored `C` section can therefore be checked
+  against the same rule (§6.1).
 - Before either, inputs with `precision · 2^35 · (1 + 2^-10) < R` are
-  rejected outright. No input that the exact `F` rule accepts can reach this
-  screen, since a hashed row differs from the raw extent by less than one
-  cell.
+  rejected outright. No input that either exact rule accepts can reach this
+  screen: a hashed row differs from the raw extent by less than one cell, and
+  rounded distances change `A_i / W²` by at most about `3 · 2^35` cells²,
+  far below the `2^-9 · 2^70` cells² of slack.
 
 `R` is a rigid-motion and relabeling invariant; a single atom has no floor.
 This rejects only grids that float64 cannot support; it does not change any
@@ -347,21 +353,31 @@ implementation provides this as `hash_descriptor(descriptor, length=...)`.
 The readable `<formula><state>-` prefix is not part of the descriptor and
 is stored alongside it.
 
-A re-hashed descriptor must be one the generator could have emitted;
-anything else is rejected rather than hashed. The checks are:
+A re-hashed descriptor must satisfy every rule its own version's generator
+enforced; anything else is rejected rather than hashed. The checks are:
 
-- a known version (`5-CANON-SHA256` with a `C` section, `6`–`10-FRAME-SHA256`
-  with `F` or `C`);
-- the precision written exactly as §6 renders a power of ten ≤ 1 Å;
+- a known version, with the sections it produced: `5-CANON-SHA256` and
+  `6-FRAME-SHA256` with `F`, `C` or `W` (release 0.7.0 wrote only `C` and
+  `W` under version 5; 0.8.0 added `F`), `7`–`10-FRAME-SHA256` with `F` or
+  `C`;
+- the precision written exactly as that version rendered it: any positive
+  finite value for version 5 (which snapped its grid to the nearest power of
+  ten but recorded the precision as given, e.g. `P:5.0e-02`), a power of
+  ten ≤ 1 Å from version 6;
 - atomic numbers in `[1, 118]` and in ascending order;
 - integers in canonical decimal form (no sign on zero, no `+`, no leading
   zeros) and within the int64 range of the format;
 - `F` rows: one per atom, elements equal to `Z`, in canonical row order;
-- `C` sections: exactly `N(N−1)/2` non-negative distances.
+- `C` sections: exactly `N(N−1)/2` non-negative distances;
+- `W` sections (versions 5–6): one sorted `Z,color:color-distance,...` row
+  per atom, with elements equal to `Z` and, in each row, the colors of the
+  other `N − 1` atoms.
 
 Version 10 additionally requires every `F` value to lie within its rounding
-margin (§4.5 step 9) and every descriptor to satisfy the resolution floor
-(§3; `C` distances at most `2^36` cells).
+margin (§4.5 step 9) and every descriptor to satisfy the exact resolution
+floor of §3, on its `F` rows or `C` distances. These are necessary
+conditions, not a proof of origin: they do not check that `C` distances are
+realizable in three dimensions or that `W` rows come from one geometry.
 
 The `F` rows are also a canonical-frame geometry, centered on the
 Z-weighted centroid, on the fine grid. Hashing them as coordinates at the

@@ -246,15 +246,26 @@ repository (open question 5 still applies).
   placed within a few ulps of it hashed, reconstructed, and the
   reconstruction was then rejected (376 of 2,000). Decided on hashed rows,
   every verified reconstruction gets the same decision (0 of 10,533
-  accepted boundary inputs failed). A raw screen with 2⁻¹⁰ slack still runs
-  first, to bound work and integer sizes.
+  accepted boundary inputs failed). `C` descriptors are decided the same
+  way, on the hashed distances: the squared distance of each atom from the
+  weighted centroid follows exactly from them in integer arithmetic. A bound
+  of twice the floor on single distances, used first, let unequal weights
+  through (`Z:1,118|C:51539607552`, whose hydrogen lies past the floor). A
+  raw screen with 2⁻¹⁰ slack still runs first, to bound work and integer
+  sizes.
 * **Descriptor validation.** `hash_descriptor` and `descriptor_geometry`
-  accept only descriptors the generator can emit (version table, canonical
-  precision and integers, Z range and order, row/Z consistency, canonical
-  row order, distance count, int64 bounds; for version 10 also the rounding
-  margin and the floor). Before this, `P:invalid` or a `C:` body that was not
-  a distance list hashed, and an `F` row could contradict `Z`. Validation
-  makes `hash_descriptor` about 3× slower (≈ 85 µs per QM9 descriptor).
+  check each descriptor against the rules of its own version (version table
+  with the sections each release wrote, including 0.8.0's version-5 `F` and
+  the `W` fallback of versions 5–6; the precision as each version wrote it;
+  canonical integers; Z range and order; row/Z consistency; canonical row
+  order; distance count; int64 bounds; for version 10 also the rounding
+  margin and the exact floor). Before this, `P:invalid` or a `C:` body that
+  was not a distance list hashed, and an `F` row could contradict `Z`.
+  Descriptors emitted by all 17 revisions of `core.py` from version 5 to 9
+  (QM9 sample, random clouds, symmetric and linear cases, odd version-5
+  precisions, forced `W` fallbacks) re-hash to their original digests.
+  Validation makes `hash_descriptor` about 2–3× slower (≈ 85 µs per QM9 `F`
+  descriptor, ≈ 120 µs per `C` descriptor).
 * **Cost.** Hashing is about 1.6× slower than version 9 on QM9-sized
   molecules (236 vs 146 µs) and 1.5× for a 5,000-atom cloud; verification in
   `descriptor_geometry` costs one more frame computation.

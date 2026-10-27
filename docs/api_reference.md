@@ -108,13 +108,18 @@ descriptors, and for stored descriptors of earlier versions. `length`
 defaults to 32 hex characters. The readable `<formula><state>-` prefix is not
 part of the descriptor; keep it alongside.
 
-The descriptor is validated first and rejected with `ValueError` unless
-`hash_molecule` could have produced it: known version (5–10), canonical
-precision field, atomic numbers in range and ascending, `F` row elements
-matching `Z` in canonical order, the right number of `C` distances,
-canonical integers within int64, and for version 10 the rounding margin and
+The descriptor is validated first, against the rules of its own version,
+and rejected with `ValueError` if it breaks any of them: known version
+(5–10) with a section that version produced (`F`, `C`, or the `W` fallback
+of versions 5–6), the precision field as that version wrote it (any
+positive value for version 5, a power of ten ≤ 1 Å from version 6), atomic
+numbers in range and ascending, `F`/`W` row elements matching `Z` in
+canonical order, the right number of `C` distances, canonical integers
+within int64, and for version 10 the rounding margin and the exact
 resolution floor ([specification §6.1](specification.md#61-idempotent-re-hashing)).
-Corrupted or hand-edited descriptors therefore fail instead of hashing.
+Corrupted or hand-edited descriptors therefore fail instead of hashing. The
+checks are necessary conditions: they do not test whether `C` distances are
+realizable in three dimensions.
 
 ## `descriptor_geometry(descriptor)`
 

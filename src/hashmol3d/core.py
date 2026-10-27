@@ -98,12 +98,21 @@ _REPAIR_STEPS = 8
 _FINE_ROWS_SINCE = 10
 
 # Stored descriptors that hash_descriptor() accepts, with the sections each
-# version could produce. Version 5 introduced the V|P|Z|<section> layout;
-# earlier versions hashed different bodies.
+# version could produce. Version 5 introduced the V|P|Z|<section> layout
+# (earlier versions hashed different bodies); release 0.7.0 wrote C and W
+# sections under it and 0.8.0 added F. Versions 5 and 6 fell back to the W
+# (Weisfeiler-Lehman multiset) section when the canonical search exhausted
+# its budget; version 7 made exhaustion an error.
 _DESCRIPTOR_SECTIONS = {
-    "5-CANON-SHA256": "C",
-    **{f"{v}-FRAME-SHA256": "FC" for v in range(6, 11)},
+    "5-CANON-SHA256": "FCW",
+    "6-FRAME-SHA256": "FCW",
+    **{f"{v}-FRAME-SHA256": "FC" for v in range(7, 11)},
 }
+
+# First descriptor version that requires a power-of-ten precision <= 1 Å.
+# Version 5 wrote any positive precision as given (``P:5.0e-02``) and
+# snapped its grid to the nearest power of ten.
+_POWER_OF_TEN_PRECISION_SINCE = 6
 assert DESCRIPTOR_VERSION in _DESCRIPTOR_SECTIONS
 
 # Default geometry-hash length in hex characters. The hash is a truncated
@@ -431,6 +440,44 @@ def _cells_within_floor(coarse: np.ndarray) -> bool:
     if np.any(estimate > limit * (1 + 2.0**-30)):
         return False
     return all(sum(int(v) * int(v) for v in row) <= _RESOLUTION_CELLS**2 for row in near.tolist())
+
+
+def _distances_within_floor(atomic_nums: np.ndarray, qmat: np.ndarray) -> bool:
+    """Whether every atom lies within the resolution floor, from hashed distances.
+
+    ``qmat`` is the symmetric matrix of hashed distances in grid cells. With
+    weights ``w = Z`` and ``W = sum(w)``, the squared distance of atom ``i``
+    from the weighted centroid is ``A_i / W**2``, where
+    ``A_i = W * sum_j w_j q_ij**2 - sum_{j<k} w_j w_k q_jk**2``. The test
+    ``A_i <= W**2 * _RESOLUTION_CELLS**2`` uses only the hashed distances, so
+    it is the same for every geometry with the same ``C`` section, and a
+    stored descriptor can be checked against it exactly. A floating-point
+    estimate settles all atoms except those near the limit, which are
+    recomputed with Python integers.
+    """
+    n = atomic_nums.shape[0]
+    if n < 2:
+        return True
+    w = atomic_nums.astype(float)
+    total = float(w.sum())
+    q2 = qmat.astype(float) ** 2
+    v = q2 @ w
+    a = total * v - 0.5 * float(w @ v)
+    limit = total * total * float(_RESOLUTION_CELLS) ** 2
+    # Bound on the rounding error of the estimate: every term is at most
+    # total**2 * max(q2), and each sum has at most n of them.
+    tol = 8.0 * (n + 2) * 2.0**-52 * total * total * float(q2.max())
+    if np.any(a > limit + tol):
+        return False
+    near = np.flatnonzero(a >= limit - tol)
+    if near.size == 0:
+        return True
+    wi = [int(x) for x in atomic_nums.tolist()]
+    qi = qmat.tolist()
+    vi = [sum(wj * int(q) ** 2 for wj, q in zip(wi, row)) for row in qi]
+    s = sum(wj * x for wj, x in zip(wi, vi)) // 2  # each pair counted twice
+    exact_limit = sum(wi) ** 2 * _RESOLUTION_CELLS**2
+    return all(sum(wi) * vi[i] - s <= exact_limit for i in near.tolist())
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
@@ -988,15 +1035,63 @@ def _parse_int(text: str, what: str, *, signed: bool) -> int:
     return value
 
 
+def _check_wl_rows(body: str, z: tuple[int, ...]) -> None:
+    """Validate a version 5-6 ``W`` body ``Z,color:color-distance,...;...``.
+
+    One row per atom, sorted, with the elements of ``Z``; each lists the
+    sorted ``(color, distance)`` pairs to the other ``n - 1`` atoms, whose
+    colors must be the colors of the other rows.
+    """
+    n = len(z)
+    parts = body.split(";")
+    if n < 2 or len(parts) != n:
+        raise _invalid(f"{len(parts)} W rows for {n} atoms")
+    rows = []
+    for part in parts:
+        try:
+            head, tail = part.split(":")
+            zi, ci = head.split(",")
+            pairs = [entry.split("-") for entry in tail.split(",")]
+            row = tuple(
+                (_parse_int(c, "color", signed=False), _parse_int(d, "distance", signed=False))
+                for c, d in pairs
+            )
+        except ValueError as err:
+            if str(err).startswith("invalid HashMol3D"):
+                raise
+            raise ValueError(f"malformed W row in descriptor: {part!r}") from None
+        rows.append(
+            (
+                _parse_int(zi, "atomic number", signed=False),
+                _parse_int(ci, "color", signed=False),
+                row,
+            )
+        )
+    if tuple(r[0] for r in rows) != z:
+        raise _invalid("W row elements do not match the Z field")
+    if rows != sorted(rows):
+        raise _invalid("W rows are not in canonical order")
+    colors = Counter(r[1] for r in rows)
+    for _, color, row in rows:
+        others = colors.copy()
+        others[color] -= 1
+        if list(row) != sorted(row) or Counter(c for c, _ in row) != +others:
+            raise _invalid("W row colors do not match the other atoms")
+
+
 def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
-    """Parse a stored descriptor, accepting only what the generator can emit.
+    """Parse a stored descriptor against the rules of its own version.
 
     Checks the version (5-10, with the sections each version produced), the
-    canonical precision field, atomic numbers (range and ascending order),
-    row elements against ``Z``, the canonical row order, the distance count,
-    integer formatting and int64 bounds. For version 10 it also checks the
-    fine-row rounding margin and the resolution floor, which every
-    descriptor produced by :func:`hash_molecule` satisfies.
+    precision field (any positive value for version 5, a power of ten
+    <= 1 Å from version 6, written as the generator wrote it), atomic
+    numbers (range and ascending order), row elements against ``Z``, the
+    canonical row order, the distance count, integer formatting and int64
+    bounds. For version 10 it also checks the fine-row rounding margin and
+    the exact resolution floor of the ``F`` rows or ``C`` distances. These
+    are necessary conditions: they do not check that ``C`` distances are
+    realizable in three dimensions or that ``W`` rows come from one
+    geometry.
 
     Raises:
         ValueError: for anything else.
@@ -1009,10 +1104,10 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
         or not fields[0].startswith("V:")
         or not fields[1].startswith("P:")
         or not fields[2].startswith("Z:")
-        or fields[3][:2] not in ("F:", "C:")
+        or fields[3][:2] not in ("F:", "C:", "W:")
     ):
         raise ValueError(
-            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' or '...|C:...'"
+            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' (or a C or W section)"
         )
     version = fields[0][2:]
     match = re.fullmatch(r"([1-9][0-9]*)-[A-Z0-9]+(?:-[A-Z0-9]+)*", version)
@@ -1035,11 +1130,24 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
 
     text = fields[1][2:]
     try:
-        decimals, precision = _precision_to_decimals(float(text))
+        value = float(text)
     except ValueError:
-        raise _invalid(f"precision {text!r} is not a power of ten <= 1 Å") from None
+        raise _invalid(f"precision {text!r} is not a number") from None
+    if number >= _POWER_OF_TEN_PRECISION_SINCE:
+        try:
+            decimals, precision = _precision_to_decimals(value)
+        except ValueError:
+            raise _invalid(f"precision {text!r} is not a power of ten <= 1 Å") from None
+    else:
+        # Version 5 wrote the precision as given and snapped its grid.
+        if not (math.isfinite(value) and value > 0):
+            raise _invalid(f"precision {text!r} is not a positive finite number")
+        precision = value
+        decimals = int(max(0, round(-math.log10(value))))
     if text != f"{precision:.1e}":
         raise _invalid(f"precision {text!r} is not written as {precision:.1e}")
+    if number < _POWER_OF_TEN_PRECISION_SINCE:
+        precision = 10.0**-decimals
 
     z_text = fields[2][2:]
     z = tuple(_parse_int(t, "atomic number", signed=False) for t in z_text.split(","))
@@ -1056,9 +1164,19 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
         if len(values) != n * (n - 1) // 2:
             raise _invalid(f"{len(values)} distances for {n} atoms; expected {n * (n - 1) // 2}")
         distances = [_parse_int(t, "distance", signed=False) for t in values]
-        # Distances are at most twice the extent from the centroid.
-        if fine and distances and max(distances) > 2 * _RESOLUTION_CELLS:
-            raise _invalid("distances exceed the resolution floor of the precision grid")
+        if fine and n > 1:
+            # A distance above twice the floor is past it whatever the
+            # weights; this also keeps the exact test below small.
+            if max(distances) > 2 * _RESOLUTION_CELLS:
+                raise _invalid("distances exceed the resolution floor of the precision grid")
+            qmat = np.zeros((n, n), dtype=np.int64)
+            qmat[np.triu_indices(n, k=1)] = distances
+            qmat += qmat.T
+            if not _distances_within_floor(np.array(z, dtype=np.int64), qmat):
+                raise _invalid("distances exceed the resolution floor of the precision grid")
+        return _ParsedDescriptor(fields, number, decimals, precision, z, tag, None, None)
+    if tag == "W":
+        _check_wl_rows(body, z)
         return _ParsedDescriptor(fields, number, decimals, precision, z, tag, None, None)
 
     parts = body.split(";")
@@ -1404,9 +1522,9 @@ def hash_molecule(
     decimals, effective_precision = _precision_to_decimals(precision)
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
     # Resolution floor (see _MIN_RELATIVE_PRECISION). A loose screen on the
-    # raw coordinates first, then an exact decision: on the hashed rows for
-    # F descriptors, so that every geometry with the same hashed rows is
-    # treated alike, and on the raw extent for C descriptors.
+    # raw coordinates first, then an exact decision on what gets hashed (the
+    # F rows or the C distances), so that every geometry with the same
+    # hashed values -- and the stored descriptor itself -- is treated alike.
     extent = _extent(atomic_nums, coords)
     if effective_precision * _RESOLUTION_CELLS * (1 + _RESOLUTION_SCREEN_SLACK) < extent:
         raise _resolution_error(effective_precision, extent)
@@ -1424,9 +1542,9 @@ def hash_molecule(
                 stacklevel=2,
             )
     if signature is None:
-        if effective_precision * _RESOLUTION_CELLS < extent:
-            raise _resolution_error(effective_precision, extent)
         qmat = _scaled_distances(coords, decimals)
+        if not _distances_within_floor(atomic_nums, qmat):
+            raise _resolution_error(effective_precision, extent)
         tag, z_ordered, body = _canonical_signature(atomic_nums, qmat, node_budget)
         hashed_body = body
     else:
