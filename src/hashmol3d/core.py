@@ -30,6 +30,12 @@ specified precision, and the descriptor version. Total charge and spin
 multiplicity are encoded in the readable prefix, not inside the hash, so
 changing charge or multiplicity only changes the prefix.
 
+Re-hashing is idempotent. ``F`` descriptors store canonical-frame rows on a
+grid ``10**4`` times finer than the precision and hash them rounded back to
+it, so ``hash_descriptor(result.descriptor)`` reproduces the geometry hash
+exactly, and ``descriptor_geometry(result.descriptor)`` gives coordinates that
+``hash_molecule`` maps back to the same identifier.
+
 The implementation has no RDKit dependency; it uses only NumPy and the
 Python standard library.
 """
@@ -52,7 +58,9 @@ __all__ = [
     "DESCRIPTOR_VERSION",
     "HashMol3DResult",
     "SearchBudgetExceeded",
+    "descriptor_geometry",
     "generate_hashmol3d",
+    "hash_descriptor",
     "hash_length_for",
     "hash_molecule",
 ]
@@ -60,7 +68,33 @@ __all__ = [
 
 # The descriptor version is part of the hashed payload. Bump it whenever
 # the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "9-FRAME-SHA256"
+DESCRIPTOR_VERSION = "10-FRAME-SHA256"
+
+# Extra decimal digits carried by ``F`` rows beyond the hashing grid. The
+# descriptor stores canonical-frame coordinates on the fine grid
+# ``precision * 10**-_FINE_DIGITS`` so they can be fed back into
+# :func:`hash_molecule`; the hash covers only the values rounded back to
+# ``precision`` (see :func:`_hashed_payload`). One or two extra digits
+# put fine values on or near the coarse rounding boundaries and re-hash worse
+# than none; four keep the recomputed frame's roundoff well inside a cell
+# (docs/design_idempotent_rows.md).
+_FINE_DIGITS = 4
+_FINE_FACTOR = 10**_FINE_DIGITS
+# Stored F values keep at least this many fine units from a rounding boundary
+# of the hashing grid, which is about the shift a re-hash of the stored
+# coordinates produces (docs/design_idempotent_rows.md). Larger margins move
+# the stored geometry further from its own frame and re-hash worse.
+_FINE_MARGIN = 3
+
+# descriptor_geometry() settles stored rows that do not re-hash correctly:
+# values within _REPAIR_PIN fine units of a boundary are pinned that far
+# inside their cell, for at most _REPAIR_STEPS attempts.
+_REPAIR_PIN = 50
+_REPAIR_STEPS = 8
+
+# First descriptor version whose ``F`` rows carry fine digits. Earlier
+# versions stored (and hashed) rows on the precision grid itself.
+_FINE_ROWS_SINCE = 10
 
 # Default geometry-hash length in hex characters. The hash is a truncated
 # SHA-256 digest, and its collision resistance is governed by how many
@@ -520,16 +554,59 @@ def _lex_less(a: np.ndarray, b: np.ndarray) -> bool:
     return bool(af[i] < bf[i])
 
 
+def _coarsen(fine: np.ndarray) -> np.ndarray:
+    """Round fine-grid integers to the hashing grid, half to even, exactly.
+
+    ``fine`` holds multiples of ``precision * 10**-_FINE_DIGITS``; the result
+    holds multiples of ``precision``. Integer arithmetic only, so the hashed
+    integers never depend on floating-point rounding of the division.
+    """
+    q, r = np.divmod(fine, _FINE_FACTOR)
+    half = _FINE_FACTOR // 2
+    return q + ((r > half) | ((r == half) & (q % 2 == 1)))
+
+
+def _rows_less(a: np.ndarray, b: np.ndarray) -> bool:
+    """'<' for ``(Z, coarse xyz, fine xyz)`` row arrays.
+
+    All hashed values (``Z`` and the coarse coordinates) are compared first,
+    so a minimum is a minimum of the hashed rows; the fine digits only break
+    exact ties between them.
+    """
+    if not np.array_equal(a[:, :4], b[:, :4]):
+        return _lex_less(a[:, :4], b[:, :4])
+    return _lex_less(a[:, 4:], b[:, 4:])
+
+
+def _sort_rows(rows: np.ndarray, by_fine: bool = True) -> np.ndarray:
+    """Sort rows by their hashed values, then (if ``by_fine``) by fine digits."""
+    keys = rows if by_fine else rows[:, :4]
+    return rows[np.lexsort(keys[:, ::-1].T)]
+
+
+def _has_tied_rows(rows: np.ndarray) -> bool:
+    """Whether two rows share all hashed values (``Z`` and coarse xyz)."""
+    head = _sort_rows(rows, by_fine=False)[:, :4]
+    return bool(np.any(np.all(head[1:] == head[:-1], axis=1)))
+
+
 def _sorted_signed_rows(
-    z: np.ndarray, q: np.ndarray, sign_choices: tuple[tuple[int, int, int], ...]
+    z: np.ndarray, fine: np.ndarray, sign_choices: tuple[tuple[int, int, int], ...]
 ) -> np.ndarray:
-    """Smallest sorted ``(Z, x, y, z)`` rows over ``sign_choices``."""
+    """Smallest sorted ``(Z, coarse xyz, fine xyz)`` rows over ``sign_choices``.
+
+    Round-half-even commutes with negation, so the coarse values of a sign
+    flip are the sign flip of the coarse values. Sign flips also preserve
+    which rows tie on their hashed values, so the fine digits enter the sort
+    only if such ties exist.
+    """
+    coarse = _coarsen(fine)
+    by_fine = _has_tied_rows(np.column_stack([z, coarse]))
     best: np.ndarray | None = None
     for signs in sign_choices:
-        rows = np.column_stack([z, q * np.asarray(signs, dtype=np.int64)])
-        order = np.lexsort((rows[:, 3], rows[:, 2], rows[:, 1], rows[:, 0]))
-        cand = rows[order]
-        if best is None or _lex_less(cand, best):
+        s = np.asarray(signs, dtype=np.int64)
+        cand = _sort_rows(np.column_stack([z, coarse * s, fine * s]), by_fine)
+        if best is None or _rows_less(cand, best):
             best = cand
     assert best is not None
     return best
@@ -539,10 +616,10 @@ _ALL_AXIS_SIGNS = tuple((sx, sy, sz) for sx in (1, -1) for sy in (1, -1) for sz 
 
 
 def _rows_in_basis(
-    z: np.ndarray, centered: np.ndarray, basis: np.ndarray, scale: float
+    z: np.ndarray, centered: np.ndarray, basis: np.ndarray, fine_scale: float
 ) -> np.ndarray:
     """Quantize coordinates in an orthonormal basis and resolve axis signs."""
-    scaled = (centered @ basis) * scale
+    scaled = (centered @ basis) * fine_scale
     if scaled.size and float(np.abs(scaled).max()) >= _MAX_SCALED:
         raise ValueError(
             "precision too fine for this geometry's extent: scaled coordinates "
@@ -552,15 +629,29 @@ def _rows_in_basis(
     return _sorted_signed_rows(z, q, _ALL_AXIS_SIGNS)
 
 
-def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str]:
-    """Serialize a winning frame row array as an ``F`` signature."""
-    body = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in best.tolist())
-    return "F", tuple(int(v) for v in best[:, 0].tolist()), body
+def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str]:
+    """Serialize a winning frame row array as an ``F`` signature.
+
+    Returns ``(tag, z_ordered, stored_body, hashed_body)``. The stored body
+    carries the fine-grid coordinates. Each stored value is first moved at
+    least ``_FINE_MARGIN`` fine units inside its coarse cell, so the stored
+    geometry never sits on, or within re-hash roundoff of, a rounding
+    boundary of the hashing grid. This changes neither the coarse values nor
+    the order of rows that differ in them, so the hashed body equals
+    :func:`_hashed_payload` applied to the stored one.
+    """
+    coarse, fine = best[:, 1:4], best[:, 4:7]
+    limit = _FINE_FACTOR // 2 - _FINE_MARGIN
+    stored = coarse * _FINE_FACTOR + np.clip(fine - coarse * _FINE_FACTOR, -limit, limit)
+    rows = _sort_rows(np.column_stack([best[:, :4], stored]))
+    body = ";".join(f"{r[0]}:{r[4]},{r[5]},{r[6]}" for r in rows.tolist())
+    hashed = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in rows.tolist())
+    return "F", tuple(int(v) for v in rows[:, 0].tolist()), body, hashed
 
 
 def _frame_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
-) -> tuple[str, tuple[int, ...], str] | None:
+) -> tuple[str, tuple[int, ...], str, str] | None:
     """Canonical frame signature, or ``None`` for the distance fallback.
 
     Coordinates are expressed in the eigenbasis of the Z-weighted gyration
@@ -590,6 +681,9 @@ def _frame_signature(
     z = atomic_nums.astype(np.int64)
     w = z.astype(float)
     scale = 10.0**decimals
+    # Rows are quantized once, on the fine grid; the hashed coarse values are
+    # derived from those integers, never rounded from the coordinates directly.
+    fine_scale = 10.0 ** (decimals + _FINE_DIGITS)
 
     def ksum(a: np.ndarray) -> float:
         # Permutation-invariant summation: sort addends first.
@@ -604,7 +698,7 @@ def _frame_signature(
     lam, vec = np.linalg.eigh(t)
     radii = np.linalg.norm(c, axis=1)
     max_radius_grid = float(radii.max()) * scale
-    if max_radius_grid >= _MAX_SCALED:
+    if float(radii.max()) * fine_scale >= _MAX_SCALED:
         raise ValueError(
             "precision too fine for this geometry's extent: scaled coordinates "
             "exceed the exact-integer range; use a coarser precision"
@@ -618,7 +712,7 @@ def _frame_signature(
 
     def line_rows(axis: np.ndarray) -> np.ndarray:
         q = np.zeros((n, 3), dtype=np.int64)
-        scaled_axial = (c @ axis) * scale
+        scaled_axial = (c @ axis) * fine_scale
         if scaled_axial.size and float(np.abs(scaled_axial).max()) >= _MAX_SCALED:
             raise ValueError(
                 "precision too fine for this geometry's extent: scaled coordinates "
@@ -646,7 +740,7 @@ def _frame_signature(
     gap0 = float((lam[1] - lam[0]) / lam[2])
     gap1 = float((lam[2] - lam[1]) / lam[2])
     if min(gap0, gap1) >= _FRAME_GAP_MIN:
-        return _frame_body(_rows_in_basis(z, c, vec, scale))
+        return _frame_body(_rows_in_basis(z, c, vec, fine_scale))
 
     # Principal axes need no atom anchor: their conditioning is controlled by
     # the relative moment gaps above, independently of the output grid. Only
@@ -673,8 +767,8 @@ def _frame_signature(
         candidates += 1
         if candidates > _FRAME_CANDIDATE_BUDGET:
             return False
-        cand = _rows_in_basis(z, c, basis, scale)
-        if best is None or _lex_less(cand, best):
+        cand = _rows_in_basis(z, c, basis, fine_scale)
+        if best is None or _rows_less(cand, best):
             best = cand
         return True
 
@@ -792,6 +886,239 @@ def _format_descriptor(
     )
 
 
+def _split_descriptor(descriptor: str) -> tuple[int, list[str]]:
+    """Split a descriptor into its four fields and return its version number."""
+    if not isinstance(descriptor, str):
+        raise ValueError(f"descriptor must be a string, got {type(descriptor).__name__}")
+    fields = descriptor.split("|")
+    if (
+        len(fields) != 4
+        or not fields[0].startswith("V:")
+        or not fields[1].startswith("P:")
+        or not fields[2].startswith("Z:")
+        or fields[3][:2] not in ("F:", "C:")
+    ):
+        raise ValueError(
+            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' or '...|C:...'"
+        )
+    try:
+        version = int(fields[0][2:].split("-", 1)[0])
+    except ValueError:
+        raise ValueError(f"unrecognized descriptor version {fields[0][2:]!r}") from None
+    if version > int(DESCRIPTOR_VERSION.split("-", 1)[0]):
+        raise ValueError(
+            f"descriptor version {fields[0][2:]!r} is newer than this HashMol3D "
+            f"({DESCRIPTOR_VERSION})"
+        )
+    return version, fields
+
+
+def _parse_frame_rows(body: str) -> list[tuple[int, int, int, int]]:
+    """Parse an ``F`` body ``Z:x,y,z;...`` into integer tuples."""
+    rows = []
+    try:
+        for row in body.split(";"):
+            z, xyz = row.split(":")
+            x, y, w = xyz.split(",")
+            rows.append((int(z), int(x), int(y), int(w)))
+    except ValueError:
+        raise ValueError(f"malformed F row in descriptor: {row!r}") from None
+    return rows
+
+
+def _coarsen_int(v: int) -> int:
+    """Scalar, arbitrary-precision twin of :func:`_coarsen`."""
+    q, r = divmod(v, _FINE_FACTOR)
+    half = _FINE_FACTOR // 2
+    return q + int(r > half or (r == half and q % 2 == 1))
+
+
+def _hashed_payload(descriptor: str) -> str:
+    """The exact string whose SHA-256 digest is the geometry hash.
+
+    For descriptor version 10 and later, ``F`` rows carry canonical-frame
+    coordinates on a grid ``10**4`` times finer than the ``P:`` precision.
+    Normalization rounds each of those integers half-to-even back onto the
+    precision grid, in exact integer arithmetic, and leaves every other field
+    unchanged. ``C`` descriptors and descriptors from earlier versions are
+    already in hashed form and are returned unchanged. The payload shares the
+    stored form's version tag, so it is kept internal: normalizing it again
+    would round the coarse values a second time.
+
+    Raises:
+        ValueError: if ``descriptor`` is malformed or from a newer version.
+    """
+    version, fields = _split_descriptor(descriptor)
+    if version < _FINE_ROWS_SINCE or fields[3].startswith("C:"):
+        return descriptor
+    rows = _parse_frame_rows(fields[3][2:])
+    fields[3] = "F:" + ";".join(
+        f"{z}:{_coarsen_int(x)},{_coarsen_int(y)},{_coarsen_int(w)}" for z, x, y, w in rows
+    )
+    return "|".join(fields)
+
+
+def _check_length(length) -> int:
+    """Validate a hash length, defaulting to :data:`DEFAULT_LENGTH`."""
+    if length is None:
+        return DEFAULT_LENGTH
+    # Accept any integer type (incl. NumPy integers) but not bool, which
+    # is an int subclass and would silently truncate the hash.
+    if isinstance(length, bool) or not isinstance(length, numbers.Integral):
+        raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
+    length = int(length)
+    if not (1 <= length <= _MAX_LENGTH):
+        raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
+    return length
+
+
+def hash_descriptor(descriptor: str, *, length: int | None = None) -> str:
+    """Geometry hash of a stored descriptor, without recomputing the geometry.
+
+    ``hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
+    r.geometry_hash`` holds exactly for every :class:`HashMol3DResult` ``r``,
+    for ``F`` and ``C`` descriptors alike. This is the exact idempotent
+    re-hash; the readable ``<formula><state>-`` prefix is not part of the
+    descriptor and must be kept alongside it.
+
+    Args:
+        descriptor: a descriptor string as returned in
+            :attr:`HashMol3DResult.descriptor`.
+        length: number of hex characters to keep (default
+            :data:`DEFAULT_LENGTH`).
+    """
+    length = _check_length(length)
+    payload = _hashed_payload(descriptor)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
+
+
+def _settle_frame_rows(z: np.ndarray, fine: np.ndarray, coarse: np.ndarray) -> np.ndarray:
+    """Move fine rows into the ``coarse`` cells so their own frame keeps them there.
+
+    Rounding to the fine grid leaves the stored coordinates slightly off their
+    own canonical frame, so recomputing the frame shifts every value by about
+    one fine unit. A value that lies within that shift of a coarse rounding
+    boundary can change cell. Clamping such a value alone does not help: the
+    recomputed frame rotates to absorb the move. Instead, every value within
+    ``_REPAIR_PIN`` fine units of a boundary is pinned that far inside its
+    cell, and the remaining values take the minimum-norm change that keeps
+    the weighted centroid and the full gyration tensor at their current
+    values (Gauss-Newton). The frame recomputed from the result therefore
+    stays where it was, in the principal-axes and anchored branches alike,
+    while the pinned values gain their margin. Values that had left their
+    target cell are pinned back into it.
+    """
+    w = z.astype(float)
+    n = z.shape[0]
+    pairs = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
+
+    def moments(x: np.ndarray) -> np.ndarray:
+        xc = x - (w @ x) / w.sum()
+        return np.concatenate([w @ x, [w @ (xc[:, a] * xc[:, b]) for a, b in pairs]])
+
+    offset = fine - coarse * _FINE_FACTOR
+    pin = np.abs(offset) > _FINE_FACTOR // 2 - _REPAIR_PIN
+    x = fine.astype(float)
+    stored = moments(x)
+    pin_limit = _FINE_FACTOR // 2 - _REPAIR_PIN
+    x[pin] = (coarse * _FINE_FACTOR + np.clip(offset, -pin_limit, pin_limit))[pin]
+    free = ~pin.reshape(-1)
+    for _ in range(3):
+        xc = x - (w @ x) / w.sum()
+        jac = np.zeros((9, n, 3))
+        for a in range(3):
+            jac[a, :, a] = w
+        for k, (a, b) in enumerate(pairs):
+            jac[3 + k, :, a] += w * xc[:, b]
+            jac[3 + k, :, b] += w * xc[:, a]
+        jf = jac.reshape(9, -1)[:, free]
+        step = jf.T @ np.linalg.lstsq(jf @ jf.T, stored - moments(x), rcond=None)[0]
+        flat = x.reshape(-1)
+        flat[free] += step
+        x = flat.reshape(n, 3)
+    limit = _FINE_FACTOR // 2 - _FINE_MARGIN
+    settled = np.rint(x).astype(np.int64) - coarse * _FINE_FACTOR
+    return coarse * _FINE_FACTOR + np.clip(settled, -limit, limit)
+
+
+def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
+    """Atomic numbers and canonical-frame coordinates (Å) of an ``F`` descriptor.
+
+    Returns a geometry that :func:`hash_molecule` maps back to the same
+    geometry hash at the descriptor's precision (default ``method="frame"``).
+    The coordinates are the molecule centered on its Z-weighted centroid in
+    its canonical frame, on the descriptor's fine grid. They are re-hashed
+    before being returned; in the rare case that the recomputed frame moves a
+    value across a rounding boundary of the precision grid, the values are
+    deterministically settled (by a small fraction of a grid cell; at most
+    about 5 % on QM9) until they re-hash correctly. The result is a pure function of the
+    descriptor. :func:`hash_descriptor` re-hashes the descriptor itself and
+    needs no geometry.
+
+    Raises:
+        ValueError: for a ``C`` descriptor, whose canonical labelled distance
+            matrix has no coordinates; for a descriptor of another version;
+            or for a malformed descriptor.
+
+    Warns:
+        UserWarning: if no settled geometry re-hashes to the descriptor's
+            hash within ``_REPAIR_STEPS`` attempts; the stored coordinates are
+            returned unchanged.
+    """
+    version, fields = _split_descriptor(descriptor)
+    if fields[3].startswith("C:"):
+        raise ValueError(
+            "C descriptors store a canonical distance matrix, not coordinates; "
+            "keep the source coordinates or use hash_descriptor() to re-hash"
+        )
+    if fields[0] != "V:" + DESCRIPTOR_VERSION:
+        raise ValueError(
+            f"descriptor version {fields[0][2:]!r} cannot be re-hashed by this "
+            f"HashMol3D ({DESCRIPTOR_VERSION}); use hash_descriptor() instead"
+        )
+    try:
+        decimals, precision = _precision_to_decimals(float(fields[1][2:]))
+    except ValueError:
+        raise ValueError(f"unrecognized descriptor precision {fields[1][2:]!r}") from None
+    rows = np.array(_parse_frame_rows(fields[3][2:]), dtype=np.int64)
+    z, stored = rows[:, 0], rows[:, 1:]
+    target = _hashed_payload(descriptor)
+
+    def to_coords(fine: np.ndarray) -> np.ndarray:
+        # Dividing exact integers by an exact power of ten rounds once.
+        return fine.astype(float) / 10.0 ** (decimals + _FINE_DIGITS)
+
+    coarse = _coarsen(stored)
+    fine = stored
+    for _ in range(_REPAIR_STEPS + 1):
+        coords = to_coords(fine)
+        signature = _frame_signature(z, coords, decimals)
+        if signature is not None:
+            tag, z_ordered, body, hashed_body = signature
+            rehashed = _format_descriptor(
+                DESCRIPTOR_VERSION, precision, z_ordered, tag, hashed_body
+            )
+            if rehashed == target:
+                return z, coords
+            # Settle in the frame the re-hash chose. Among tied anchors of a
+            # symmetric molecule it can differ from the stored frame by a
+            # symmetry operation, which moves other atoms onto the boundaries.
+            rows = np.array(_parse_frame_rows(body), dtype=np.int64)
+            if np.array_equal(rows[:, 0], z) and (
+                np.abs(rows[:, 1:] - coarse * _FINE_FACTOR).max() <= _FINE_FACTOR
+            ):
+                fine = rows[:, 1:]
+        fine = _settle_frame_rows(z, fine, coarse)
+    warnings.warn(
+        "the stored coordinates of this descriptor do not re-hash to its "
+        "geometry hash and could not be settled; use hash_descriptor() for an "
+        "exact re-hash",
+        UserWarning,
+        stacklevel=2,
+    )
+    return z, to_coords(stored)
+
+
 def hash_molecule(
     atomic_nums,
     coords,
@@ -866,16 +1193,7 @@ def hash_molecule(
     if not np.all(np.isfinite(coords)):
         raise ValueError("coords contain non-finite values")
 
-    if length is None:
-        length = DEFAULT_LENGTH
-    else:
-        # Accept any integer type (incl. NumPy integers) but not bool, which
-        # is an int subclass and would silently truncate the hash.
-        if isinstance(length, bool) or not isinstance(length, numbers.Integral):
-            raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
-        length = int(length)
-        if not (1 <= length <= _MAX_LENGTH):
-            raise ValueError(f"length must be an int in [1, {_MAX_LENGTH}]")
+    length = _check_length(length)
 
     if method not in ("canonical", "frame"):
         raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
@@ -909,10 +1227,16 @@ def hash_molecule(
             )
     if signature is None:
         qmat = _scaled_distances(coords, decimals)
-        signature = _canonical_signature(atomic_nums, qmat, node_budget)
-    tag, z_ordered, body = signature
+        tag, z_ordered, body = _canonical_signature(atomic_nums, qmat, node_budget)
+        hashed_body = body
+    else:
+        tag, z_ordered, body, hashed_body = signature
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
-    digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:length]
+    # Equal to _hashed_payload(descriptor), built without re-parsing it.
+    payload = _format_descriptor(
+        DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, hashed_body
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
 
     formula = _hill_formula(atomic_nums)
     identifier = f"{formula}{_state_tag(charge, used_mult)}-{digest}"

@@ -1,8 +1,8 @@
-# HashMol3D Specification v0.13.0
+# HashMol3D Specification v0.14.0
 
 **Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
-**Canonical version tag:** `9-FRAME-SHA256`
+**Canonical version tag:** `10-FRAME-SHA256`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
@@ -14,7 +14,7 @@ A HashMol3D identifier is a single ASCII string with three parts:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-2525b97db42fc1c282844ba9478d561f`.
+For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
 
 - **Hill formula** — carbon first if present, then hydrogen, then the
   remaining elements alphabetically by symbol. A count of 1 is omitted.
@@ -230,10 +230,22 @@ The default method normally takes O(N log N) time and O(N) memory:
    shorter than 1 grid unit, deterministically selects the canonical method
    of §4.1–4.4 with a `UserWarning`.
 8. For every candidate basis, project the **original centered coordinates**
-   (anchors never perturb the geometry), quantize with `rint`, evaluate all
-   eight axis-sign combinations, sort `(Z,x,y,z)` rows lexicographically,
-   and keep the globally smallest row list. The sign set includes both
-   parities, making the descriptor reflection-invariant.
+   (anchors never perturb the geometry) and quantize them **once**, on the
+   fine grid `s' = 10^(decimals+4)`, with `rint`. Derive each hashed
+   coordinate from its fine integer `f` by exact integer round-half-to-even
+   division by `10^4` (never by rounding the coordinate at `s` directly:
+   rounding twice differs from rounding once at exact half-cells).
+   Evaluate all eight axis-sign combinations, sort the rows by their hashed
+   values `(Z,x,y,z)` (fine values break ties between equal hashed rows),
+   and keep the globally smallest row list, comparing hashed rows first and
+   fine rows only when the hashed rows are equal. The sign set includes
+   both parities, making the descriptor reflection-invariant. Anchor keys in
+   steps 5–6 remain on the precision grid `s`.
+9. Before serialization, move every stored fine value `f` with hashed value
+   `h` into `[h·10^4 − 4997, h·10^4 + 4997]`. The stored geometry then keeps
+   at least three fine units from every rounding boundary of the hashing grid,
+   so a re-hash of it is not decided by an exact tie. This changes neither
+   the hashed values nor the order of rows that differ in them.
 
 The result uses section tag `F` (§6). Generic inputs evaluate one frame;
 an axial degeneracy can evaluate up to N tied anchors, and a fully
@@ -263,7 +275,7 @@ components, in this fixed order:
 
 Where:
 
-- `<version>` is a string, e.g. `9-FRAME-SHA256`.
+- `<version>` is a string, e.g. `10-FRAME-SHA256`.
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
 - `<z_ordered>` is the list of atomic numbers in canonical atom order,
   comma-separated (this always coincides with the ascending-sorted
@@ -273,25 +285,72 @@ Where:
   (`q_12, q_13, ..., q_1N, q_23, ...`), comma-separated. Empty for a
   single atom.
 - `<coordinates>` (frame method only) is the winning sorted row list of
-  §4.5, each row formatted as `Z:x,y,z` with quantized integer
-  coordinates, joined by `;`; `<z_rows>` lists the atomic numbers in
-  that row order.
+  §4.5, each row formatted as `Z:x,y,z` with the **fine** integer
+  coordinates of §4.5 steps 8–9 (multiples of `precision·10^-4`), joined
+  by `;`; `<z_rows>` lists the atomic numbers in that row order.
 
 Charge and multiplicity are **not** part of the descriptor; they are
 written into the readable prefix of the identifier instead.
 
-Example using the default frame method (water, `precision = 1e-4`); this
-descriptor's SHA-256 digest, truncated to the default 32 hex characters,
-is the geometry hash `2525b97db42fc1c282844ba9478d561f`:
+This is the **stored descriptor** returned as `HashMol3DResult.descriptor`.
+The **hashed payload** is the stored descriptor with every `F` coordinate
+replaced by its hashed value (exact round-half-to-even division by `10^4`);
+`C` descriptors are their own hashed payload.
 
-    V:9-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
+Example using the default frame method (water, `precision = 1e-4`):
+
+    V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0
+
+Its hashed payload, whose SHA-256 digest truncated to the default 32 hex
+characters is the geometry hash `8ec3152acf35859ba58ced3e101c87e1`:
+
+    V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
 
 (The molecular-plane normal occupies the first axis. The two hydrogen rows
 precede oxygen after lexicographic sorting.)
 
+### 6.1 Idempotent re-hashing
+
+A stored descriptor determines its identifier without the source geometry:
+re-hashing it (normalize, then §7) reproduces the geometry hash exactly,
+for `F` and `C` descriptors and for stored descriptors of earlier versions
+(whose `F` rows are already on the precision grid). The reference
+implementation provides this as `hash_descriptor(descriptor, length=...)`.
+The readable `<formula><state>-` prefix is not part of the descriptor and
+is stored alongside it.
+
+The `F` rows are also a canonical-frame geometry, centered on the
+Z-weighted centroid, on the fine grid. Hashing them as coordinates at the
+descriptor's precision recomputes the frame, which shifts each value by
+about one fine unit; a value that close to a rounding boundary of the
+hashing grid can change cell. `descriptor_geometry(descriptor)` therefore
+re-hashes the stored rows before returning them and, if the identifier
+differs, settles them deterministically: in the frame the re-hash chose,
+values within 50 fine units of a boundary are pinned 50 units inside their
+target cell, and the other values take the minimum-norm change that keeps
+the weighted centroid and gyration tensor unchanged (three Gauss–Newton
+steps), for at most eight rounds. The result is a pure function of the
+descriptor and is not part of the hashed payload, so it never affects an
+identifier.
+
+Measured on all 133,885 QM9 molecules at 10⁻², 10⁻³ and 10⁻⁴ Å, every
+`descriptor_geometry` result hashed back to the original identifier, also
+after a random rigid motion and relabeling and after a second round trip;
+for 8–22 molecules per precision (at most 0.02 %) the raw stored rows alone
+did not. Settling moved
+coordinates by at most 5.4 % of a grid cell (0.5 % in all but one case).
+For the version-9 rows read back as coordinates the round-trip rate is
+54–56 %. Exactly symmetric inputs with tied anchor frames are the remaining
+exception: a scan of 7,010 exactly symmetric `F` cases (benzene, methane, SF₆,
+NH₃, C₅H₅, cubane, each at 301 scales and four precisions) left 5 that
+could not be settled, because the lexicographic minimum over tied anchors
+selects whichever frame moves a value across a boundary. In that case
+`descriptor_geometry` warns and returns the stored rows; `hash_descriptor`
+remains exact.
+
 ## 7. Hashing
 
-1. Encode the descriptor as UTF-8 bytes.
+1. Encode the hashed payload (§6) as UTF-8 bytes.
 2. Compute the SHA-256 digest.
 3. Take the first `length` hex characters of the hex digest.
 
@@ -314,7 +373,9 @@ To guarantee identical identifiers across machines:
 - Use the same precision.
 - Format atomic numbers and scaled distances as decimal integers with
   no leading zeros or sign.
-- Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1.
+- Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1, and
+  derive hashed frame coordinates from the fine integers in exact integer
+  arithmetic (§4.5 step 8).
 - Complete the canonical search (§4.4); the node budget only controls whether
   a result is available. For the frame method,
   use the relative eigenvalue-gap threshold 0.05, whole-cloud size guard
@@ -343,6 +404,13 @@ version field is hashed, **every version-9 digest differs from earlier
 versions**, even when the geometry body is unchanged. Recompute a corpus
 consistently when migrating; identifiers from different versions must not be
 mixed.
+Version 10 stores `F` rows on a grid `10^4` times finer than the precision
+and hashes them rounded back to it (§4.5 steps 8–9, §6), so a stored
+descriptor carries a canonical geometry that re-hashes to its own identifier
+(§6.1). Deriving the hashed values from the fine integers, rather than
+rounding at the precision directly, changes the hashed rows of about 0.3 % of
+QM9 molecules (371 of 133,885 at 10⁻⁴ Å) relative to version 9; all other
+hashed rows are identical. As with every version, all digests change.
 
 ## 9. Future tagged extensions
 
@@ -374,8 +442,18 @@ result = hash_molecule(
     length=None,  # 32 hex (128-bit) if None
     method="frame",  # default; use "canonical" for the distance method
 )
-print(result.hash_str)  # H2Oq0m1-2525b97db42fc1c282844ba9478d561f
-print(result.geometry_hash)  # 2525b97db42fc1c282844ba9478d561f
+print(result.hash_str)  # H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
+print(result.geometry_hash)  # 8ec3152acf35859ba58ced3e101c87e1
+```
+
+Re-hashing a stored descriptor (§6.1):
+
+```python
+from hashmol3d import descriptor_geometry, hash_descriptor
+
+assert hash_descriptor(result.descriptor) == result.geometry_hash  # exact
+z, xyz = descriptor_geometry(result.descriptor)  # canonical-frame geometry
+assert hash_molecule(z, xyz).hash_str == result.hash_str
 ```
 
 A file-based convenience wrapper is also provided:

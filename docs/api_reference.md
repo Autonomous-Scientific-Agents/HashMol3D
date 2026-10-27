@@ -6,7 +6,7 @@ A HashMol3D identifier has the form:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-2525b97db42fc1c282844ba9478d561f`.
+For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
 
 - **Hill formula**: carbon first if present, then hydrogen, then the
   remaining elements alphabetically. A count of 1 is omitted
@@ -77,7 +77,11 @@ res = hash_molecule(z, coords, length=L)
 - `precision`: geometry-grid precision used (Å)
 - `charge`: charge used
 - `multiplicity`: multiplicity used
-- `descriptor`: raw descriptor string that was hashed (for debugging)
+- `descriptor`: the stored descriptor. Its `F` rows carry canonical-frame
+  coordinates on a grid 10⁴ times finer than `precision`; the geometry hash
+  is the SHA-256 digest of these values rounded back to `precision`
+  ([specification §6](specification.md#6-canonical-descriptor-string)).
+  Re-hash it with `hash_descriptor`.
 
 `str(result)` returns `result.hash_str`.
 
@@ -91,6 +95,43 @@ smaller than `precision`: see [specification §2](specification.md), which is
 normative here. A perturbation changes the identifier when it moves the
 quantized representation to a different grid cell, and its magnitude alone
 does not determine whether it does.
+
+## `hash_descriptor(descriptor, *, length=None)`
+
+Return the geometry hash of a stored descriptor without recomputing any
+geometry. `hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
+r.geometry_hash` holds exactly for every result `r`, for `F` and `C`
+descriptors, and for stored descriptors of earlier versions. `length`
+defaults to 32 hex characters. The readable `<formula><state>-` prefix is not
+part of the descriptor; keep it alongside. Raises `ValueError` for a
+malformed descriptor or one from a newer version.
+
+## `descriptor_geometry(descriptor)`
+
+Return `(atomic_nums, coords)` for an `F` descriptor of the current version:
+the molecule centered on its Z-weighted centroid in its canonical frame, in
+Å. Hashing the result with `hash_molecule` at the descriptor's precision
+(default `method="frame"`) reproduces the descriptor's identifier, in any
+orientation and atom order. The coordinates are re-hashed before they are
+returned; if recomputing the frame would move a value across a rounding
+boundary, they are deterministically settled by a small fraction of a grid
+cell ([specification §6.1](specification.md#61-idempotent-re-hashing)). If no
+settled geometry re-hashes correctly, which has been observed only for
+exactly symmetric inputs with tied anchor frames, a `UserWarning` is emitted
+and the stored rows are returned unchanged.
+
+Raises `ValueError` for a `C` descriptor (a distance matrix has no
+coordinates), for a descriptor of another version, or for a malformed
+descriptor.
+
+```python
+from hashmol3d import descriptor_geometry, hash_descriptor, hash_molecule
+
+res = hash_molecule(z, coords)
+assert hash_descriptor(res.descriptor) == res.geometry_hash
+z2, coords2 = descriptor_geometry(res.descriptor)
+assert hash_molecule(z2, coords2).hash_str == res.hash_str
+```
 
 ## `hash_xyz(path, **kwargs)`
 

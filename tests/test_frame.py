@@ -28,6 +28,12 @@ def _scramble(z, coords, rng, reflect):
     return z[perm], c[perm]
 
 
+def _hashed(result):
+    """The hashed payload. Invariance is a property of the hashed values; the
+    stored fine digits are a representative and may differ by roundoff."""
+    return core._hashed_payload(result.descriptor)
+
+
 def _chain(n, seed):
     """Random-walk chain, scaled anisotropically so the principal moments
     are guaranteed well separated (individual random walks can come out
@@ -57,10 +63,9 @@ class TestFrameMethod:
             rng = np.random.default_rng(83)
             for t in range(20):
                 zz, cc = _scramble(z, coords, rng, reflect=t % 2 == 1)
-                assert (
-                    hash_molecule(zz, cc, precision=precision, node_budget=1).descriptor
-                    == result.descriptor
-                )
+                assert _hashed(
+                    hash_molecule(zz, cc, precision=precision, node_budget=1)
+                ) == _hashed(result)
 
     def test_frame_is_default(self, chiral_chfclbr):
         z, coords = chiral_chfclbr
@@ -177,11 +182,12 @@ class TestDegenerateFrames:
             for t in range(10):
                 zz, cc = _scramble(z, coords, rng, reflect=t % 2 == 1)
                 other = hash_molecule(zz, cc, precision=precision, node_budget=1)
-                assert other.descriptor == base.descriptor
+                assert _hashed(other) == _hashed(base)
 
     def test_short_line_keeps_resolved_axial_coordinates(self):
         res = hash_molecule([6, 6], [[-1, 0, 0], [1, 0, 0]], precision=1.0)
-        assert res.descriptor.endswith("|F:6:0,0,-1;6:0,0,1")
+        assert _hashed(res).endswith("|F:6:0,0,-1;6:0,0,1")
+        assert res.descriptor.endswith("|F:6:0,0,-10000;6:0,0,10000")
 
     def test_methane_spherical_top(self):
         a = 1.09 / np.sqrt(3)
@@ -255,7 +261,7 @@ class TestNearLinearAnchors:
         rng = np.random.default_rng(23)
         for t in range(20):
             zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
-            assert hash_molecule(zz, cc, precision=precision).descriptor == res.descriptor
+            assert _hashed(hash_molecule(zz, cc, precision=precision)) == _hashed(res)
 
     def test_anchor_below_one_cell_still_falls_back(self):
         z, coords = _near_linear_chain(8, 0.75, 1e-4, seed=5)
@@ -317,7 +323,7 @@ class TestQM9NearLines:
         rng = np.random.default_rng(41)
         for t in range(20):
             zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
-            assert hash_molecule(zz, cc, precision=precision).descriptor == res.descriptor
+            assert _hashed(hash_molecule(zz, cc, precision=precision)) == _hashed(res)
 
     @pytest.mark.parametrize(
         "case_id, precision, expected",

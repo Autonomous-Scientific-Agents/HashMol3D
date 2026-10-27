@@ -11,7 +11,7 @@ It produces a **readable** identifier of the form
 
     <Hill formula><state tag>-<geometry hash>
 
-e.g. `H2Oq0m1-2525b97db42fc1c282844ba9478d561f` for neutral singlet water. The trailing
+e.g. `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1` for neutral singlet water. The trailing
 geometry hash is **rotation-, translation-, permutation-, and
 parity-invariant** (matching the invariances of the eigenvalues of the
 non-relativistic molecular Hamiltonian), and depends on:
@@ -33,8 +33,8 @@ the hash, so two states of the same geometry share the same hex tail
 and can be grouped by suffix matching:
 
 ```text
-H2Oq0m1-2525b97db42fc1c282844ba9478d561f     # neutral singlet water
-H2Oq1m2-2525b97db42fc1c282844ba9478d561f     # water cation, same geometry → same hex tail
+H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1     # neutral singlet water
+H2Oq1m2-8ec3152acf35859ba58ced3e101c87e1     # water cation, same geometry → same hex tail
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -127,12 +127,45 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.13.0 uses descriptor `9-FRAME-SHA256`, which lowers the minimum
-transverse-anchor extent to one grid unit so that nearly linear molecules
-anchor their frame instead of using the distance fallback. Because the version
-field is hashed, all digests change from earlier versions; recompute
-identifiers consistently when migrating a corpus. The paper's corpus
-statistics describe version 8 and are labelled accordingly.
+Version 0.14.0 uses descriptor `10-FRAME-SHA256`, which makes re-hashing
+idempotent (see [Re-hashing a stored descriptor](#re-hashing-a-stored-descriptor)).
+Version 9 lowered the minimum transverse-anchor extent to one grid unit so
+that nearly linear molecules anchor their frame instead of using the distance
+fallback. Because the version field is hashed, all digests change from earlier
+versions; recompute identifiers consistently when migrating a corpus. The
+paper's corpus statistics describe version 8 and are labelled accordingly.
+
+## Re-hashing a stored descriptor
+
+Hashing the same input again always gives the same identifier. Version 10 also
+makes the stored descriptor self-sufficient, so a corpus can keep descriptors
+instead of source geometries and still re-derive every identifier:
+
+```python
+from hashmol3d import descriptor_geometry, hash_descriptor, hash_molecule
+
+res = hash_molecule(z, coords)
+
+# Exact, for F and C descriptors: no geometry is recomputed.
+assert hash_descriptor(res.descriptor) == res.geometry_hash
+
+# F descriptors also carry a canonical-frame geometry that hashes back to
+# the same identifier, in any orientation or atom order.
+z2, coords2 = descriptor_geometry(res.descriptor)
+assert hash_molecule(z2, coords2).hash_str == res.hash_str
+```
+
+`F` rows are stored on a grid 10⁴ times finer than `precision`, and only their
+values rounded back to `precision` are hashed, so the extra digits never make
+the identifier more sensitive to noise. Before returning coordinates,
+`descriptor_geometry` re-hashes them and, in the rare case that recomputing the
+frame moves a value across a rounding boundary, settles them by a small
+fraction of a grid cell. On all of QM9 at 10⁻², 10⁻³ and 10⁻⁴ Å every round
+trip reproduced the identifier (version-9 rows read back as coordinates did so
+for 54–56 %). Exactly symmetric inputs with tied anchor frames can occasionally
+not be settled; `descriptor_geometry` then warns, and `hash_descriptor` remains
+exact. `C` descriptors hold distances, not coordinates; keep their source
+geometry if coordinates are needed.
 
 ## Descriptor tags
 
@@ -144,13 +177,14 @@ V:<version>|P:<precision>|Z:<atomic numbers>|C:<distance matrix upper triangle>
 ```
 
 - `V` identifies the descriptor format and canonicalization rules (currently
-  `9-FRAME-SHA256`).
+  `10-FRAME-SHA256`).
 - `P` records the quantization grid spacing in angstroms, such as `1.0e-04`.
 - `Z` lists atomic numbers in the order used by the selected representation.
-- `F` stores the sorted element-labelled, quantized canonical-frame rows.
+- `F` stores the sorted element-labelled canonical-frame rows on a grid 10⁴
+  times finer than `P`.
 - `C` stores the quantized distance matrix upper triangle in canonical atom order.
 
-All these fields enter the hash. The readable `q` and `m` tags instead record
+All these fields enter the hash, with `F` values rounded back to the `P` grid. The readable `q` and `m` tags instead record
 charge and spin multiplicity outside the geometry hash.
 
 ## Install
@@ -192,11 +226,11 @@ uv pip install -e .  # Or: pip install -e .
 
 ```bash
 $ hashmol3d water.xyz
-H2Oq0m1-2525b97db42fc1c282844ba9478d561f
+H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
 
 # Cation with explicit multiplicity — only the prefix changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-H2Oq1m2-2525b97db42fc1c282844ba9478d561f
+H2Oq1m2-8ec3152acf35859ba58ced3e101c87e1
 
 # Pin a fixed hash length and a coarser precision.
 $ hashmol3d -p 1e-3 -l 32 benzene.xyz
@@ -230,9 +264,9 @@ coords = np.array(
     ]
 )
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)  # H2Oq0m1-2525b97db42fc1c282844ba9478d561f
+print(res.hash_str)  # H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
 print(res.formula)  # H2O
-print(res.geometry_hash)  # 2525b97db42fc1c282844ba9478d561f
+print(res.geometry_hash)  # 8ec3152acf35859ba58ced3e101c87e1
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
@@ -248,9 +282,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-2525b97db42fc1c282844ba9478d561f
+print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# H2Oq1m2-2525b97db42fc1c282844ba9478d561f
+# H2Oq1m2-8ec3152acf35859ba58ced3e101c87e1
 ```
 
 See [`docs/`](docs/) for the full
