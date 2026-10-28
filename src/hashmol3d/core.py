@@ -167,7 +167,7 @@ _MAX_SCALED = float(2**62)
 # representation error, which the centroid, gyration-tensor, eigenvector and
 # distance computations amplify. Measured on random 30-atom clouds (R = 1 to
 # 500 Å), frame identifiers change under rigid motions for 0.5-3 % of motions
-# at precision / R ~ 1e-11 and for most of them near 1e-13.5; distance (C)
+# at precision / R ~ 1e-11 and for most of them near 1e-13.5; distance (D)
 # identifiers hold down to ~1e-12.5. 2**-35 (~2.9e-11) keeps about half a
 # decade above the last observed frame failure. It also keeps every
 # fine-grid frame integer below 2**53, where float64 represents integers
@@ -831,7 +831,7 @@ def _frame_signature(
     Anchor keys use only rotation-, reflection-, and permutation-invariant
     integers on the precision grid. Every tied candidate is evaluated and the
     lexicographically smallest hashed row list wins. ``None`` is returned for
-    coincident atoms, for a cloud with degenerate moments whose radius is
+    a cloud with degenerate moments whose radius is
     below ``_FRAME_MIN_RADIUS_GRID``, for ill-conditioned anchors, and for a
     candidate-budget overflow; the caller then uses the complete canonical
     distance descriptor. Otherwise the result is that of :func:`_frame_body`.
@@ -1158,7 +1158,7 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
     match = _S_VERSION.fullmatch(fields[0][2:]) if fields[0].startswith("V:") else None
     if match is None or not fields[4].startswith("S:"):
         raise ValueError(
-            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' (or a C or W "
+            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' (or a D, C or W "
             "section), optionally followed by an RDKit '|S:...' section"
         )
     if fields[4] == "S:":
@@ -1175,12 +1175,12 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
 def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
     """Parse a stored descriptor against the rules of its own version.
 
-    Checks the version (5-10, with the sections each version produced), the
+    Checks the version (5-11, with the sections each version produced), the
     precision field (any positive value for version 5, a power of ten
     <= 1 Å from version 6, written as the generator wrote it), atomic
     numbers (range and ascending order), row elements against ``Z``, the
     canonical row order, the distance count, integer formatting and int64
-    bounds. For version 10 it also checks the fine-row rounding margin and
+    bounds. From version 10 it also checks the fine-row rounding margin and
     the exact resolution floor of the ``F`` rows or ``C``/``D`` distances.
     These are necessary conditions: they do not check that distances are
     realizable in three dimensions or that ``W`` rows come from one
@@ -1464,8 +1464,7 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
     value across a rounding boundary of the precision grid, the values are
     deterministically settled (by a small fraction of a grid cell; at most
     about 5 % on QM9) until they re-hash correctly. The result is a pure
-    function of the descriptor. For an RDKit S descriptor it is the geometry
-    of the base descriptor, which hashes to the base geometry hash.
+    function of the descriptor.
     :func:`hash_descriptor` re-hashes the descriptor itself and needs no
     geometry.
 

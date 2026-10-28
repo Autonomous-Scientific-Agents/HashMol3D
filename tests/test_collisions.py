@@ -191,7 +191,7 @@ class TestCanonicalSearchBudget:
     def test_numpy_integer_budget(self, water):
         assert hash_molecule(*water, method="distance", node_budget=np.int64(3))
 
-    def test_explicit_canonical_method_uses_canonical_path(self, water, benzene):
+    def test_explicit_distance_method_uses_distance_path(self, water, benzene):
         for z, coords in (water, benzene):
             assert "|D:" in hash_molecule(z, coords, method="distance").descriptor
 

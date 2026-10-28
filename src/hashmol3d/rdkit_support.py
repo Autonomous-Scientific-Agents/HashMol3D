@@ -40,18 +40,18 @@ def canonical_smiles(mol, *, conf_id: int | None = None) -> str:
         raise ValueError("expected a non-empty RDKit Mol")
     mol = Chem.Mol(mol)
     if mol.GetStereoGroups():
-        raise ValueError("S tags do not support enhanced stereo groups")
+        raise ValueError("canonical_smiles does not support enhanced stereo groups")
     if any(atom.HasQuery() for atom in mol.GetAtoms()) or any(
         bond.HasQuery() for bond in mol.GetBonds()
     ):
-        raise ValueError("S tags require a molecule, not a query/SMARTS graph")
+        raise ValueError("canonical_smiles requires a molecule, not a query/SMARTS graph")
     for atom in mol.GetAtoms():
         atom.SetAtomMapNum(0)
     Chem.SanitizeMol(mol)
     if conf_id is not None:
         conf = mol.GetConformer(conf_id)
         if not conf.Is3D():
-            raise ValueError("S tagging requires a 3D conformer")
+            raise ValueError("canonical_smiles requires a 3D conformer")
         # Unknown/wavy bond flags survive replaceExistingTags=True and can
         # suppress otherwise resolved E/Z geometry. The conformer is authoritative.
         Chem.RemoveStereochemistry(mol)
@@ -60,7 +60,7 @@ def canonical_smiles(mol, *, conf_id: int | None = None) -> str:
     mol = Chem.RemoveHs(mol)
     smiles = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=True)
     if not smiles or "|" in smiles or any(c.isspace() for c in smiles):
-        raise ValueError("RDKit returned an invalid S-tag payload")
+        raise ValueError("RDKit returned an invalid canonical SMILES")
     return smiles
 
 

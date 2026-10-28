@@ -49,9 +49,10 @@ canonical atom order**:
    refine, recurse, and keep the lexicographically smallest distance
    matrix over all leaves. The leaf set is a function of the geometry
    alone, so the winner is permutation-invariant; the number of leaves
-   equals the order of the rounded-distance symmetry group (1 for
+   is at least the order of the rounded-distance symmetry group, and
+   equals it when refinement separates every non-equivalent atom (1 for
    generic molecules, 12 for benzene, 24 for a perfect tetrahedral
-   cluster).
+   cluster; see specification §4.3).
 
 A labeled distance matrix in a well-defined order determines the point
 set up to congruence, so **equal descriptors now occur if and only if

@@ -346,7 +346,8 @@ components, in this fixed order:
 Where:
 
 - `<version>` is the descriptor version `<major>.<minor>`, e.g. `11.0`
-  (versions 5–10 were written `<n>-FRAME-SHA256` and used `C` for the
+  (versions 5–10 were written `<n>-CANON-SHA256` or `<n>-FRAME-SHA256`,
+  see §8, and used `C` for the
   distance section).
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
 - `<z_ordered>` is the list of atomic numbers in canonical atom order,
@@ -400,8 +401,9 @@ for `F` and `D` descriptors and for stored descriptors of earlier versions
 (which hash their full `V|P|Z|<section>` string, and whose `F` rows before
 version 10 are already on the precision grid). The reference
 implementation provides this as `hash_descriptor(descriptor, length=...)`.
-The rest of the identifier (`hm3d`, version, formula and state tag) is not
-in the descriptor and is stored alongside it.
+The descriptor determines the identifier's version, precision and formula
+fields; only the state tag (charge and multiplicity) is not in the
+descriptor and must be stored alongside it.
 
 A re-hashed descriptor must satisfy every rule its own version's generator
 enforced; anything else is rejected rather than hashed. The checks are:
