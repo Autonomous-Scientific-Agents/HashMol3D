@@ -1,8 +1,8 @@
-# HashMol3D Specification v0.15.0
+# HashMol3D Specification v0.16.0
 
 **Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
-**Descriptor version:** `11.0`
+**Descriptor version:** `12.0`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
@@ -15,11 +15,11 @@ fields:
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example: `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
+For example: `hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
 
 - **`hm3d`** — fixed prefix.
 - **Descriptor version** — `v` followed by the major number of the
-  descriptor version (`v11` for `11.0`). The major number increases with any
+  descriptor version (`v12` for `12.0`). The major number increases with any
   change that can alter a geometry hash; the minor number, which appears only
   in the stored descriptor (§6), with compatible changes that alter none, so
   it never changes an identifier.
@@ -151,7 +151,8 @@ hashed:
   rounded distances change `A_i / W²` by at most about `3 · 2^35` cells²,
   far below the `2^-9 · 2^70` cells² of slack.
 
-`R` is a rigid-motion and relabeling invariant; a single atom has no floor.
+`R` is a rigid-motion and relabeling invariant. It is zero, so there is no
+floor, when all atoms share one position (always for a single atom).
 This rejects only grids that float64 cannot support; it does not change any
 identifier. It also bounds every fine-grid frame integer (§4.5) below
 `2^53`.
@@ -243,17 +244,22 @@ The default method normally takes O(N log N) time and O(N) memory:
    addends so atom permutation cannot change summation order. Let centered
    vectors be `v_i`, scale `s = 10^decimals`, and eigenvalues
    `λ1 ≤ λ2 ≤ λ3`.
-2. If `max_i ||v_i|| s < 0.5`, serialize every coordinate as zero. This
-   is the intrinsic point-like representation.
+2. If all input positions are exactly equal (always for a single atom), or
+   if `max_i ||v_i|| s < 0.5`, serialize every coordinate as zero. This is
+   the intrinsic point-like representation. The first test is made on the
+   input coordinates because a computed centroid need not equal a shared
+   position exactly.
 3. Otherwise require `λ3 > 0` (else select the distance method, as in
    step 7). Before rejecting a cloud with
    `R s < 10`, where `R = max_i ||v_i||`, test collinearity about the
    largest-moment eigenvector `u3`. Let `rho = max_i ||v_i - (v_i·u3)u3||`.
-   If `rho ≤ 64 * eps64 * R`, with `eps64 = 2^-52`, serialize the
+   If `rho ≤ 64 * eps64 * M`, with `eps64 = 2^-52` and
+   `M = max(R, max_i ||r_i||)`, serialize the
    intrinsic line `(Z, 0, 0, a_i)` with axial coordinate `a_i = v_i·u3`,
    quantized and rounded as in steps 8–9, minimizing over both axial
    signs. This accepts a line up to float64 roundoff, not an arbitrary
-   sub-grid bend. Continue to the gap test for other clouds, including those
+   sub-grid bend. `M` includes the input coordinate norms because
+   centering roundoff grows with the distance from the origin. Continue to the gap test for other clouds, including those
    with `R s < 10`.
 4. Define relative gaps `g1=(λ2−λ1)/λ3` and `g2=(λ3−λ2)/λ3`.
    If both are at least **0.05**, use the eigenvectors in ascending
@@ -345,7 +351,7 @@ components, in this fixed order:
 
 Where:
 
-- `<version>` is the descriptor version `<major>.<minor>`, e.g. `11.0`
+- `<version>` is the descriptor version `<major>.<minor>`, e.g. `12.0`
   (versions 5–10 were written `<n>-CANON-SHA256` or `<n>-FRAME-SHA256`,
   see §8, and used `C` for the
   distance section).
@@ -381,14 +387,14 @@ longer re-hashes to its digest. (Versions 5–10 hashed the full
 
 Example using the default frame method (water, `precision = 1e-4`):
 
-    V:11.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0
+    V:12.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0
 
 Its hashed payload, whose SHA-256 digest truncated to the default 32 hex
 characters is the geometry hash `8e9eedf5032cf387541d637f56c682dc`:
 
     P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
 
-The identifier is `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
+The identifier is `hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
 
 (The molecular-plane normal occupies the first axis. The two hydrogen rows
 precede oxygen after lexicographic sorting.)
@@ -411,7 +417,7 @@ enforced; anything else is rejected rather than hashed. The checks are:
 - a known version, with the sections it produced: `5-CANON-SHA256` and
   `6-FRAME-SHA256` with `F`, `C` or `W` (release 0.7.0 wrote only `C` and
   `W` under version 5; 0.8.0 added `F`), `7`–`10-FRAME-SHA256` with `F` or
-  `C`, `11.0` with `F` or `D`;
+  `C`, `11.0` and `12.0` with `F` or `D`;
 - the precision written exactly as that version rendered it: any positive
   finite value for version 5 (which snapped its grid to the nearest power of
   ten, but no coarser than 1 Å, and recorded the precision as given, e.g.
@@ -551,6 +557,16 @@ to `D` (`method="distance"`; `"canonical"` remains a deprecated alias) and
 removes the RDKit S extension (§9). The geometry algorithm and every stored
 `F`/`D` body are unchanged from version 10 except for the `V` field and the
 section letter, but every geometry hash changes.
+Version 12 (`12.0`) fixes two position dependences. A short exact line
+(`R s < 10`) far from the origin failed the collinearity test of §4.5 step
+3, whose tolerance was relative to `R` alone, and fell back to the distance
+method; the tolerance now also scales with the input coordinate norms. A
+single atom (or coincident atoms) away from the origin could get a nonzero
+row at very fine precision, because the computed centroid did not equal the
+atom's position; such inputs now always serialize as zero (§4.5 step 2) and
+have no resolution floor (§3). Only these inputs change geometry hash. The
+hashed payload has no `V` field, so every other geometry keeps its version-11
+geometry hash, and its identifier differs only in the `v12` field.
 
 ## 9. Connectivity and the historical S extension
 
@@ -586,7 +602,7 @@ result = hash_molecule(
     method="frame",  # default; use "distance" for the distance method
     node_budget=10_000,  # canonical search budget (§4.4)
 )
-print(result.hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
+print(result.hash_str)  # hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 print(result.geometry_hash)  # 8e9eedf5032cf387541d637f56c682dc
 ```
 

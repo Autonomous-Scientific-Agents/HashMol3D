@@ -35,7 +35,7 @@ def test_cli_length_option(tmp_path, capsys):
     out = capsys.readouterr().out.strip()
     # Identifier is "hm3d_v<major>_p<dec>_<formula>_<state>_<hash>"; only the
     # hash portion is controlled by --length.
-    assert out.startswith("hm3d_v11_p4_H2O_q0m1_")
+    assert out.startswith("hm3d_v12_p4_H2O_q0m1_")
     assert len(out.split("_")[5]) == 16
 
 

@@ -6,11 +6,11 @@ A HashMol3D identifier has the form:
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example: `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
+For example: `hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
 
 - **`hm3d`**: fixed prefix.
-- **`v<major version>`**: the major number of `DESCRIPTOR_VERSION` (`v11`
-  for `"11.0"`). It changes whenever any geometry hash can change; minor
+- **`v<major version>`**: the major number of `DESCRIPTOR_VERSION` (`v12`
+  for `"12.0"`). It changes whenever any geometry hash can change; minor
   versions change no hash and are therefore not written.
 - **`p<decimals>`**: the precision as its number of decimals (`p4` for
   `1e-4` Å, `p0` for 1 Å). The precision is also hashed, so this
@@ -125,7 +125,7 @@ descriptor nor the hash; keep it alongside.
 
 The descriptor is validated first, against the rules of its own version,
 and rejected with `ValueError` if it breaks any of them: known version
-(5–11) with a section that version produced (`F`; `D` from version 11, `C`
+(5–12) with a section that version produced (`F`; `D` from version 11, `C`
 before it; the `W` fallback of versions 5–6), the precision field as that version wrote it (any
 positive value for version 5, a power of ten ≤ 1 Å from version 6), atomic
 numbers in range and ascending, `F`/`W` row elements matching `Z` in
@@ -177,7 +177,7 @@ arguments to `hash_molecule`.
 from hashmol3d import hash_xyz
 
 result = hash_xyz("water.xyz", precision=1e-3, charge=0)
-print(result.hash_str)  # hm3d_v11_p3_H2O_q0m1_...
+print(result.hash_str)  # hm3d_v12_p3_H2O_q0m1_...
 print(result.geometry_hash)  # ...
 ```
 
@@ -220,13 +220,13 @@ are the geometry-only `hash_molecule` results described above.
 
 ## Constants
 
-- `DESCRIPTOR_VERSION`: the descriptor-format version (`"11.0"`), written
-  in every stored descriptor as `V:11.0`; identifiers carry only the major
-  number (`v11`).
+- `DESCRIPTOR_VERSION`: the descriptor-format version (`"12.0"`), written
+  in every stored descriptor as `V:12.0`; identifiers carry only the major
+  number (`v12`).
   It is not hashed; a new major version accompanies any change that can alter
   a geometry hash.
 - `DEFAULT_LENGTH`: default geometry-hash length in hex characters (`32`).
-- `__version__`: the package version (`"0.15.0"`).
+- `__version__`: the package version (`"0.16.0"`).
 
 ## Deprecated
 

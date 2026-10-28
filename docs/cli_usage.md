@@ -18,7 +18,7 @@ extra formatting — suitable for piping.
 
 The identifier has the form
 `hm3d_v<major version>_p<decimals>_<formula>_<state>_<geometry hash>`, e.g.
-`hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`. See the
+`hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
@@ -42,7 +42,7 @@ Hash a geometry with default settings:
 
 ```bash
 hashmol3d ethanol.xyz
-# hm3d_v11_p4_C2H6O_q0m1_...
+# hm3d_v12_p4_C2H6O_q0m1_...
 ```
 
 Use a coarser precision and a shorter, 20-hex-character hash:

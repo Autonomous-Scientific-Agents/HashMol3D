@@ -15,7 +15,7 @@ def test_returns_result(water):
     assert res.formula == "H2O"
     assert res.charge == 0
     assert res.multiplicity == 1
-    assert res.hash_str == f"hm3d_v11_p4_H2O_q0m1_{res.geometry_hash}"
+    assert res.hash_str == f"hm3d_v12_p4_H2O_q0m1_{res.geometry_hash}"
     assert str(res) == res.hash_str
 
 
@@ -28,14 +28,14 @@ def test_documented_water_identifier(water):
     """
     z, coords = water
     res = hash_molecule(z, coords)
-    assert res.version == "11.0"
+    assert res.version == "12.0"
     assert res.descriptor == (
-        "V:11.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
+        "V:12.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
     )
     # The hash covers the P and Z fields and the hashed F rows, not V.
     payload = "P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
     assert res.geometry_hash == hashlib.sha256(payload.encode()).hexdigest()[:32]
-    assert res.hash_str == "hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc"
+    assert res.hash_str == "hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc"
 
 
 def test_descriptor_contains_geometry_fields(water):
@@ -97,7 +97,7 @@ def test_single_atom_is_valid():
     coords = np.array([[0.0, 0.0, 0.0]])
     res = hash_molecule(z, coords)
     assert res.formula == "C"
-    assert res.hash_str.startswith("hm3d_v11_p4_C_q0m1_")
+    assert res.hash_str.startswith("hm3d_v12_p4_C_q0m1_")
 
 
 def test_identifier_layout(water):
@@ -106,7 +106,7 @@ def test_identifier_layout(water):
     for precision, decimals in ((1.0, 0), (1e-2, 2), (1e-4, 4)):
         res = hash_molecule(z, coords, precision=precision, charge=-1, multiplicity=2)
         prefix, version, grid, formula, state, digest = res.hash_str.split("_")
-        assert (prefix, version, grid, formula) == ("hm3d", "v11", f"p{decimals}", "H2O")
+        assert (prefix, version, grid, formula) == ("hm3d", "v12", f"p{decimals}", "H2O")
         assert digest == res.geometry_hash
         assert state == "q-1m2"
 

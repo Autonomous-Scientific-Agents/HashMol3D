@@ -153,6 +153,15 @@ class TestHashDescriptor:
         )
         assert hash_descriptor(v10) == "8ec3152acf35859ba58ced3e101c87e1"
 
+    def test_version_11_descriptor_rehashes_to_its_own_digest(self):
+        # The water descriptor and identifier quoted by version 0.15.0. Its
+        # payload has no V field, so version 12 gives water the same digest.
+        v11 = (
+            "V:11.0|P:1.0e-04|Z:1,1,8|"
+            "F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
+        )
+        assert hash_descriptor(v11) == "8e9eedf5032cf387541d637f56c682dc"
+
     def test_payload_is_precision_z_field_and_hashed_rows(self, water):
         # Version 11 does not hash the version, which is a field of
         # the identifier; the precision stays hashed. The hashed rows equal
@@ -200,11 +209,12 @@ class TestHashDescriptor:
             ("not a descriptor", "not a HashMol3D descriptor"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|X:6:0,0,0", "not a HashMol3D descriptor"),
             ("V:x-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "unrecognized descriptor version"),
-            ("V:12.0|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
-            ("V:11.1|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
+            ("V:13.0|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
+            ("V:12.1|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
             ("V:11.00|P:1.0e-04|Z:6|F:6:0,0,0", "unrecognized descriptor version"),
             ("V:11-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "unsupported descriptor version"),
             ("V:11.0|P:1.0e-04|Z:6,6|C:12345", "has no 'C' section"),
+            ("V:12.0|P:1.0e-04|Z:6,6|C:12345", "has no 'C' section"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|D:12345", "has no 'D' section"),
             ("V:11.0|P:1.0e-04|Z:6,6|D:68719476737", "resolution floor"),
             ("V:11.0|P:1.0e-04|Z:6|F:6:5000,0,0", "rounding boundary"),
