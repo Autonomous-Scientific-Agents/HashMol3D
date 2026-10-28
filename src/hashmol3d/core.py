@@ -903,12 +903,14 @@ def _frame_signature(
 
     # A line needs only its isolated longitudinal axis, even when its extent
     # is too small for the whole-cloud size guard. As for larger clouds below,
-    # it is recognized when every transverse residual is below half a grid
-    # cell, where it rounds to zero. Versions 7-11 instead accepted only a
-    # residual within float64 roundoff of the centered radius. That roundoff
-    # grows with the distance from the origin, so a short line far from it
-    # fell back to D; no roundoff-scale tolerance is translation-invariant.
-    if max_radius_grid < _FRAME_MIN_RADIUS_GRID and gap0 < _FRAME_GAP_MIN:
+    # it is recognized only when that axis is isolated (in a spherical cloud
+    # the largest eigenvector is arbitrary) and every transverse residual is
+    # below half a grid cell, where it rounds to zero. Versions 7-11 instead
+    # accepted only a residual within float64 roundoff of the centered radius.
+    # That roundoff grows with the distance from the origin, so a short line
+    # far from it fell back to D; no roundoff-scale tolerance is
+    # translation-invariant.
+    if max_radius_grid < _FRAME_MIN_RADIUS_GRID and gap0 < _FRAME_GAP_MIN <= gap1:
         axis = vec[:, 2]
         projected = c - np.outer(c @ axis, axis)
         if float(np.linalg.norm(projected, axis=1).max()) * scale < 0.5:

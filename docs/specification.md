@@ -252,7 +252,8 @@ The default method normally takes O(N log N) time and O(N) memory:
 3. Otherwise require `λ3 > 0` (else select the distance method, as in
    step 7), and define relative gaps `g1=(λ2−λ1)/λ3` and
    `g2=(λ3−λ2)/λ3`. Before rejecting a cloud with `R s < 10`, where
-   `R = max_i ||v_i||`, test it for a line: if `g1 < 0.05`, let
+   `R = max_i ||v_i||`, test it for a line: if `g1 < 0.05 ≤ g2` (an isolated longitudinal
+   axis), let
    `rho = max_i ||v_i - (v_i·u3)u3||` about the largest-moment eigenvector
    `u3`. If `rho s < 0.5`, serialize the intrinsic line `(Z, 0, 0, a_i)`
    with axial coordinate `a_i = v_i·u3`, quantized and rounded as in steps

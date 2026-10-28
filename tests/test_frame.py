@@ -421,6 +421,23 @@ def test_short_bent_molecule_is_classified_independently_of_position(z, coords, 
             assert hash_molecule(z, moved, precision=1.0) == ref
 
 
+@pytest.mark.parametrize("seed", [123, 0, 1, 2])
+def test_short_spherical_cloud_is_not_taken_for_a_line(seed):
+    # With all three moments degenerate the largest eigenvector is arbitrary.
+    # A version-12 draft checked only the lower gap, so this tetrahedron gave
+    # F in one orientation and D after a rotation.
+    z = [6, 6, 6, 6]
+    coords = 0.3 * np.array([[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=float)
+    rng = np.random.default_rng(seed)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ref = hash_molecule(z, coords, precision=1.0)
+        assert ref == hash_molecule(z, coords @ _random_rotation(rng).T, precision=1.0)
+        for _ in range(25):
+            moved = coords @ _random_rotation(rng).T + rng.uniform(-100, 100, 3)
+            assert hash_molecule(z, moved, precision=1.0) == ref
+
+
 @pytest.mark.parametrize("method", ["frame", "distance"])
 @pytest.mark.parametrize("precision", [1e-4, 1e-14, 1e-28])
 def test_coincident_atoms_have_zero_rows_anywhere(method, precision):
