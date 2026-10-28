@@ -11,19 +11,20 @@ It produces a **readable** identifier of the form
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-e.g. `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb` for neutral singlet water on the
+e.g. `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc` for neutral singlet water on the
 default 10⁻⁴ Å grid (`p4`). The geometry hash is **rotation-, translation-,
 permutation-, and parity-invariant** (matching the invariances of the
 eigenvalues of the non-relativistic molecular Hamiltonian), and depends only
 on:
 
 - atomic numbers
+- the precision of the quantization grid
 - coordinates quantized in a canonical frame (or, with the distance method,
   canonical interatomic distances)
 
-The descriptor version and the precision are not hashed; they are the `v11`
-and `p4` fields of the identifier, so identifiers made with different versions
-or grids never compare equal. Fields are joined by `_`, and every character is
+The descriptor version is not hashed; its major number is the `v11` field of
+the identifier, so identifiers made with different versions never compare
+equal. The precision is both hashed and shown as the `p4` field. Fields are joined by `_`, and every character is
 a letter, a digit, `_` or `-` (in a negative charge), so identifiers are safe
 as file names.
 
@@ -40,8 +41,8 @@ hash, so two states of the same geometry share the same geometry hash and can
 be grouped by it:
 
 ```text
-hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb     # neutral singlet water
-hm3d_v11_p4_H2O_q1m2_a3528714040eea8068be04d9807fadfb     # water cation, same geometry → same hash
+hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc     # neutral singlet water
+hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc     # water cation, same geometry → same hash
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -135,7 +136,7 @@ the identifiers support:
 - LLM scientific agents  
 
 Version 0.15.0 uses descriptor version `11.0`. It introduces the `hm3d_`
-identifier, hashes only the `Z` field and the geometry section, and renames
+identifier, stops hashing the version (it is in the identifier), and renames
 the distance section from `C` to `D`. Version 10 made re-hashing idempotent
 (see [Re-hashing a stored descriptor](#re-hashing-a-stored-descriptor)), and
 version 9 let nearly linear molecules anchor their frame instead of using the
@@ -196,11 +197,12 @@ V:<version>|P:<precision>|Z:<atomic numbers>|D:<distance matrix upper triangle>
 - `D` stores the quantized distance matrix upper triangle in canonical atom
   order (the distance method; called `C` before version 11).
 
-Only `Z` and the geometry section enter the hash, with `F` values rounded back
+`P`, `Z` and the geometry section enter the hash, with `F` values rounded back
 to the `P` grid: the geometry hash is the SHA-256 digest of
-`Z:<atomic numbers>|F:<hashed rows>` (or `|D:<distances>`). `V` and `P` appear
-in the identifier as `v11` (the major version) and `p<decimals>`, and the
-`q`/`m` state tag records charge and spin multiplicity.
+`P:<precision>|Z:<atomic numbers>|F:<hashed rows>` (or `|D:<distances>`). `V`
+is not hashed; it appears in the identifier as `v11` (the major version), next
+to `p<decimals>`, and the `q`/`m` state tag records charge and spin
+multiplicity.
 
 ## Optional RDKit support
 
@@ -271,11 +273,11 @@ uv pip install -e '.[rdkit]'  # Or: pip install -e '.[rdkit]'
 
 ```bash
 $ hashmol3d water.xyz
-hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
+hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 
 # Cation with explicit multiplicity — only the state tag changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-hm3d_v11_p4_H2O_q1m2_a3528714040eea8068be04d9807fadfb
+hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
 
 # A coarser precision and a shorter, 20-hex-character hash.
 $ hashmol3d -p 1e-3 -l 20 benzene.xyz
@@ -311,9 +313,9 @@ coords = np.array(
     ]
 )
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)  # hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
+print(res.hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 print(res.formula)  # H2O
-print(res.geometry_hash)  # a3528714040eea8068be04d9807fadfb
+print(res.geometry_hash)  # 8e9eedf5032cf387541d637f56c682dc
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
@@ -333,9 +335,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)  # hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
+print(hash_xyz("water.xyz").hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# hm3d_v11_p4_H2O_q1m2_a3528714040eea8068be04d9807fadfb
+# hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
 ```
 
 See [`docs/`](docs/) for the full

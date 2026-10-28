@@ -6,15 +6,15 @@ A HashMol3D identifier has the form:
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example: `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
+For example: `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
 
 - **`hm3d`**: fixed prefix.
 - **`v<major version>`**: the major number of `DESCRIPTOR_VERSION` (`v11`
   for `"11.0"`). It changes whenever any geometry hash can change; minor
   versions change no hash and are therefore not written.
 - **`p<decimals>`**: the precision as its number of decimals (`p4` for
-  `1e-4` Å, `p0` for 1 Å). The geometry hash does not cover the precision,
-  so this field is what keeps identifiers on different grids apart.
+  `1e-4` Å, `p0` for 1 Å). The precision is also hashed, so this readable
+  field is confirmed by the geometry hash.
 
 - **Hill formula**: when carbon is present, carbon first, then hydrogen,
   then the remaining elements alphabetically; without carbon, all elements
@@ -23,9 +23,9 @@ For example: `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
 - **State tag**: `q<charge>m<mult>`. Zero and positive charges have no
   sign (`q0`, `q1`); only negative charges carry a leading `-`
   (`q-1`, `q-2`). Charge and multiplicity are not hashed.
-- **Geometry hash**: hex truncation of SHA-256 over `Z:<atomic
-  numbers>|F:<hashed frame rows>` (or `|D:<distances>`) only. The version,
-  precision, charge and multiplicity are *not* hashed, so molecules that
+- **Geometry hash**: hex truncation of SHA-256 over `P:<precision>|Z:<atomic
+  numbers>|F:<hashed frame rows>` (or `|D:<distances>`). The version, charge
+  and multiplicity are *not* hashed, so molecules that
   differ only in charge or multiplicity share the same `geometry_hash` and
   can be found by suffix match.
 

@@ -27,10 +27,11 @@ a plain multiset of pairwise distances, homometric pairs do not collide.
 Exhausting the canonical search budget raises ``SearchBudgetExceeded``
 without creating a descriptor or hash.
 
-The geometry hash is the SHA-256 digest of ``Z:<atomic numbers>|F:<rows>``
-(or ``|D:<distances>``) only. The descriptor version and the precision are
-written in the readable identifier instead, and total charge and spin
-multiplicity in its state tag, so changing charge or multiplicity
+The geometry hash is the SHA-256 digest of
+``P:<precision>|Z:<atomic numbers>|F:<rows>`` (or ``|D:<distances>``). The
+descriptor version is not hashed; its major number is written in the readable
+identifier, next to the precision, and total charge and spin multiplicity in
+its state tag, so changing charge or multiplicity
 only changes that tag.
 
 Re-hashing is idempotent. ``F`` descriptors store canonical-frame rows on a
@@ -73,11 +74,11 @@ __all__ = [
 
 # The descriptor version, ``<major>.<minor>``, written in full in stored
 # descriptors (``V:11.0``). From version 11 it is not hashed: its major
-# number appears in the readable identifier (``hm3d_v11_...``) together with
-# the precision, and the geometry hash covers only the Z field and the
-# geometry section. Bump the major version whenever any geometry hash can
-# change, and the minor version for compatible changes (for example stricter
-# validation) that leave every hash, and so every identifier, unchanged.
+# number appears in the readable identifier (``hm3d_v11_...``), and the
+# geometry hash covers the P and Z fields and the geometry section. Bump the
+# major version whenever any geometry hash can change, and the minor version
+# for compatible changes (for example stricter validation) that leave every
+# hash, and so every identifier, unchanged.
 DESCRIPTOR_VERSION = "11.0"
 _VERSION_NUMBER = int(DESCRIPTOR_VERSION.split(".")[0])
 
@@ -85,9 +86,11 @@ _VERSION_NUMBER = int(DESCRIPTOR_VERSION.split(".")[0])
 # field contains, so identifiers are file-name safe and split unambiguously.
 _IDENTIFIER_PREFIX = "hm3d"
 
-# First descriptor version whose hashed payload is ``Z:...|<section>`` only.
-# Earlier versions hashed ``V:...|P:...|Z:...|<section>``.
-_GEOMETRY_ONLY_PAYLOAD_SINCE = 11
+# First descriptor version whose hashed payload omits the version:
+# ``P:...|Z:...|<section>``. Earlier versions hashed ``V:...|P:...|Z:...|<section>``.
+# The precision stays hashed, so a bare geometry hash identifies a geometry
+# on one grid, and an edited ``P`` field no longer re-hashes to the digest.
+_UNVERSIONED_PAYLOAD_SINCE = 11
 
 # Extra decimal digits carried by ``F`` rows beyond the hashing grid. The
 # descriptor stores canonical-frame coordinates on the fine grid
@@ -534,9 +537,9 @@ def _hill_formula(atomic_nums: np.ndarray) -> str:
 def _identifier(decimals: int, formula: str, digest: str, charge: int, mult: int) -> str:
     """``hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>``.
 
-    The precision appears as its number of decimals (``p4`` for 1e-4 Å), so
-    identifiers on different grids never compare equal even though the
-    geometry hash does not cover the precision. Only the major version is
+    The precision appears as its number of decimals (``p4`` for 1e-4 Å); it
+    is also hashed, so the field is a readable label that the geometry hash
+    confirms. Only the major version is
     written: a minor version never changes a hash, so it must not change the
     identifier either.
     """
@@ -1044,13 +1047,16 @@ def _format_descriptor(
     )
 
 
-def _geometry_payload(z_ordered: tuple[int, ...], tag: str, hashed_body: str) -> str:
-    """The hashed payload of a current-version descriptor: ``Z:...|<section>``.
+def _geometry_payload(
+    precision: float, z_ordered: tuple[int, ...], tag: str, hashed_body: str
+) -> str:
+    """The hashed payload of a current-version descriptor, ``P:...|Z:...|<section>``.
 
-    The version and precision are not hashed; they are part of the readable
+    The version is not hashed; its major number is part of the readable
     identifier (see :func:`hash_molecule`).
     """
-    return "Z:" + ",".join(str(v) for v in z_ordered) + "|" + tag + ":" + hashed_body
+    z_part = ",".join(str(v) for v in z_ordered)
+    return f"P:{precision:.1e}|Z:{z_part}|{tag}:{hashed_body}"
 
 
 _CANONICAL_INT = re.compile(r"0|-?[1-9][0-9]*")
@@ -1335,7 +1341,8 @@ def _hashed_payload(descriptor: str) -> str:
     Normalization rounds each of those integers half-to-even back onto the
     precision grid, in exact integer arithmetic; distance sections and
     earlier versions' rows are already in hashed form. From version 11 the
-    payload is ``Z:...|<section>`` only; earlier versions hash the full
+    payload is ``P:...|Z:...|<section>``, without the version; earlier
+    versions hash the full
     ``V|P|Z|<section>`` string (plus ``|S:...`` for the RDKit S extension
     of versions 8-10). The payload is kept internal: it is not a stored
     descriptor, and normalizing a version 10 payload again would round the
@@ -1350,8 +1357,8 @@ def _hashed_payload(descriptor: str) -> str:
     if parsed.coarse is not None:
         rows = zip(parsed.rows, parsed.coarse)
         section = "F:" + ";".join(f"{r[0]}:{c[0]},{c[1]},{c[2]}" for r, c in rows)
-    if parsed.number >= _GEOMETRY_ONLY_PAYLOAD_SINCE:
-        return parsed.fields[2] + "|" + section
+    if parsed.number >= _UNVERSIONED_PAYLOAD_SINCE:
+        return "|".join((*parsed.fields[1:3], section))
     return "|".join((*parsed.fields[:3], section, *parsed.fields[4:]))
 
 
@@ -1503,7 +1510,7 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
         signature = _frame_signature(z, coords, decimals)
         if signature is not None:
             tag, z_ordered, body, hashed_body, within_floor = signature
-            rehashed = _geometry_payload(z_ordered, tag, hashed_body)
+            rehashed = _geometry_payload(parsed.precision, z_ordered, tag, hashed_body)
             # The same hashed rows imply the same resolution-floor decision
             # in hash_molecule(); check it anyway, as hash_molecule() does.
             if rehashed == target and within_floor:
@@ -1542,8 +1549,8 @@ def hash_molecule(
 
     The identifier has the form
     ``hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>``,
-    e.g. ``hm3d_v11_p4_H2O_q0m1_<32 hex>``. Only the atomic numbers and the
-    quantized geometry contribute to the hash.
+    e.g. ``hm3d_v11_p4_H2O_q0m1_<32 hex>``. Only the precision, the atomic
+    numbers and the quantized geometry contribute to the hash.
 
     Args:
         atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
@@ -1665,7 +1672,7 @@ def hash_molecule(
             raise _resolution_error(effective_precision, extent)
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
     # Equal to _hashed_payload(descriptor), built without re-parsing it.
-    payload = _geometry_payload(z_ordered, tag, hashed_body)
+    payload = _geometry_payload(effective_precision, z_ordered, tag, hashed_body)
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
 
     formula = _hill_formula(atomic_nums)

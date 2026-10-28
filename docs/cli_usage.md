@@ -17,7 +17,7 @@ extra formatting — suitable for piping.
 
 The identifier has the form
 `hm3d_v<major version>_p<decimals>_<formula>_<state>_<geometry hash>`, e.g.
-`hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`. See the
+`hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
@@ -66,7 +66,7 @@ Find all stored states of the same geometry by suffix-matching the
 `geometry_hash`, the last field:
 
 ```bash
-grep -E -- "_a3528714040eea8068be04d9807fadfb$" identifiers.txt
+grep -E -- "_8e9eedf5032cf387541d637f56c682dc$" identifiers.txt
 ```
 
 ## Exit codes

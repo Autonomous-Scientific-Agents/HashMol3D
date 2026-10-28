@@ -153,15 +153,21 @@ class TestHashDescriptor:
         )
         assert hash_descriptor(v10) == "8ec3152acf35859ba58ced3e101c87e1"
 
-    def test_payload_is_the_z_field_and_hashed_rows_only(self, water):
-        # Version 11 hashes neither the version nor the precision: they are
-        # in the readable identifier. The hashed rows equal version 9's.
+    def test_payload_is_precision_z_field_and_hashed_rows(self, water):
+        # Version 11 does not hash the version, which is in the readable
+        # identifier; the precision stays hashed. The hashed rows equal
+        # version 9's.
         res = hash_molecule(*water)
         assert core._hashed_payload(res.descriptor) == (
-            "Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
+            "P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
         )
         distance = hash_molecule(*water, method="distance")
-        assert core._hashed_payload(distance.descriptor) == "Z:1,1,8|D:15144,9575,9575"
+        assert core._hashed_payload(distance.descriptor) == ("P:1.0e-04|Z:1,1,8|D:15144,9575,9575")
+
+    def test_edited_precision_does_not_rehash(self, water):
+        res = hash_molecule(*water)
+        edited = res.descriptor.replace("|P:1.0e-04|", "|P:1.0e-03|")
+        assert hash_descriptor(edited) != res.geometry_hash
 
     @pytest.mark.parametrize(
         "descriptor, digest",

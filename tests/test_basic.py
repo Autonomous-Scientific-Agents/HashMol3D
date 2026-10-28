@@ -32,10 +32,10 @@ def test_documented_water_identifier(water):
     assert res.descriptor == (
         "V:11.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
     )
-    # The hash covers only the Z field and the hashed F rows.
-    payload = "Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
+    # The hash covers the P and Z fields and the hashed F rows, not V.
+    payload = "P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
     assert res.geometry_hash == hashlib.sha256(payload.encode()).hexdigest()[:32]
-    assert res.hash_str == "hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb"
+    assert res.hash_str == "hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc"
 
 
 def test_descriptor_contains_geometry_fields(water):
@@ -111,14 +111,15 @@ def test_identifier_layout(water):
         assert state == "q-1m2"
 
 
-def test_precision_is_in_the_identifier_not_the_hash(water):
-    # The same integers on different grids give the same geometry hash; the
-    # identifier still tells them apart through its p<decimals> field.
+def test_precision_is_hashed(water):
+    # The same integers on different grids are different geometries: water
+    # at 1e-4 Å and the same atoms scaled tenfold at 1e-3 Å store identical
+    # rows, and the hashed precision keeps their geometry hashes apart.
     z, coords = water
     fine = hash_molecule(z, coords, precision=1e-4)
     coarse = hash_molecule(z, 10 * coords, precision=1e-3)
-    assert fine.geometry_hash == coarse.geometry_hash
-    assert fine.hash_str != coarse.hash_str
+    assert fine.descriptor.split("|")[2:] == coarse.descriptor.split("|")[2:]
+    assert fine.geometry_hash != coarse.geometry_hash
 
 
 def test_canonical_method_is_a_deprecated_alias(water):

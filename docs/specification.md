@@ -15,7 +15,7 @@ fields:
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example: `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
+For example: `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
 
 - **`hm3d`** — fixed prefix.
 - **Descriptor version** — `v` followed by the major number of the
@@ -24,10 +24,10 @@ For example: `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
   in the stored descriptor (§6), with compatible changes that alter none, so
   it never changes an identifier.
 - **Precision** — `p` followed by the number of decimals of the precision
-  grid (`p4` for `10⁻⁴` Å, `p0` for 1 Å). The geometry hash does not cover
-  the precision (§7), so this field keeps identifiers on different grids
-  distinct: water at 10⁻⁴ Å and the same molecule scaled tenfold at 10⁻³ Å
-  have identical integer rows and therefore the same geometry hash.
+  grid (`p4` for `10⁻⁴` Å, `p0` for 1 Å). The precision is also hashed
+  (§6), so this readable field is confirmed by the geometry hash. Hashing it
+  is necessary: water at 10⁻⁴ Å and the same atoms scaled tenfold at 10⁻³ Å
+  have identical integer rows, and only the precision tells them apart.
 
 - **Hill formula** — if carbon is present: carbon, then hydrogen, then the
   remaining elements alphabetically by symbol; if carbon is absent: all
@@ -37,7 +37,8 @@ For example: `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
   have no sign (`q0`, `q1`); only negative charges carry a leading `-`
   (`q-1`, `q-2`). Multiplicity is a positive integer with no sign.
 - **Geometry hash** — lowercase hex truncation of the SHA-256 digest of
-  the hashed payload `Z:...|F:...` or `Z:...|D:...` (see §4, §6, §7).
+  the hashed payload `P:...|Z:...|F:...` or `P:...|Z:...|D:...` (see §4,
+  §6, §7).
 - **`_`** — separator. No field contains `_`, so splitting at every `_`
   recovers the six fields. Identifiers use only letters, digits, `_` and `-`
   (in a negative charge), the portable file-name character set, so they are
@@ -364,15 +365,17 @@ Charge and multiplicity are **not** part of the descriptor; they are
 written into the state tag of the identifier instead.
 
 This is the **stored descriptor** returned as `HashMol3DResult.descriptor`.
-The **hashed payload** is its `Z` field and geometry section only, with every
-`F` coordinate replaced by its hashed value (exact round-half-to-even
+The **hashed payload** is the stored descriptor without its `V` field, with
+every `F` coordinate replaced by its hashed value (exact round-half-to-even
 division by `10^4`); `D` sections are hashed as stored:
 
-    Z:<z_rows>|F:<hashed coordinates>
-    Z:<z_ordered>|D:<distances>
+    P:<precision>|Z:<z_rows>|F:<hashed coordinates>
+    P:<precision>|Z:<z_ordered>|D:<distances>
 
-The `V` and `P` fields are not hashed: they appear in the identifier as
-`v<major>` and `p<decimals>`. (Versions 5–10 hashed the full
+The `V` field is not hashed: its major number appears in the identifier as
+`v<major>`. The precision is hashed, so a bare geometry hash identifies a
+geometry on one grid, and a stored descriptor whose `P` field was edited no
+longer re-hashes to its digest. (Versions 5–10 hashed the full
 `V|P|Z|<section>` string.)
 
 Example using the default frame method (water, `precision = 1e-4`):
@@ -380,11 +383,11 @@ Example using the default frame method (water, `precision = 1e-4`):
     V:11.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0
 
 Its hashed payload, whose SHA-256 digest truncated to the default 32 hex
-characters is the geometry hash `a3528714040eea8068be04d9807fadfb`:
+characters is the geometry hash `8e9eedf5032cf387541d637f56c682dc`:
 
-    Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
+    P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
 
-The identifier is `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
+The identifier is `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
 
 (The molecular-plane normal occupies the first axis. The two hydrogen rows
 precede oxygen after lexicographic sorting.)
@@ -397,8 +400,8 @@ for `F` and `D` descriptors and for stored descriptors of earlier versions
 (which hash their full `V|P|Z|<section>` string, and whose `F` rows before
 version 10 are already on the precision grid). The reference
 implementation provides this as `hash_descriptor(descriptor, length=...)`.
-The rest of the identifier (`hm3d`, version, precision, formula and state
-tag) is not hashed and is stored alongside it.
+The rest of the identifier (`hm3d`, version, formula and state tag) is not
+in the descriptor and is stored alongside it.
 
 A re-hashed descriptor must satisfy every rule its own version's generator
 enforced; anything else is rejected rather than hashed. The checks are:
@@ -464,7 +467,7 @@ remains exact.
 
 ## 7. Hashing
 
-1. Encode the hashed payload (§6, `Z:...|<section>`) as UTF-8 bytes.
+1. Encode the hashed payload (§6, `P:...|Z:...|<section>`) as UTF-8 bytes.
 2. Compute the SHA-256 digest.
 3. Take the first `length` hex characters of the hex digest.
 
@@ -483,8 +486,10 @@ any fixed value in `[1, 64]`.
 
 To guarantee identical identifiers across machines:
 
-- Use the same descriptor version and precision, and compare complete
-  identifiers (which carry both), not bare geometry hashes.
+- Use the same descriptor version and precision. Geometry hashes from
+  different major versions can coincide when a geometry body is unchanged,
+  so compare complete identifiers, which carry the version, across
+  versions.
 - Format atomic numbers, scaled distances, and `F` coordinates as decimal
   integers with no leading zeros, `+` sign, or signed zero; only negative
   `F` coordinates carry a leading `-`.
@@ -537,9 +542,9 @@ validates stored descriptors before re-hashing them (§6.1). As with every
 version, all digests change.
 Version 11 (`11.0`) introduces the
 `hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>` identifier
-(§1). Its hashed payload is the `Z`
-field and the geometry section only (§6): the version and the precision move
-from the hash into the identifier. It renames the distance section from `C`
+(§1). Its hashed payload omits the `V` field (§6): the version moves from the
+hash into the identifier, while the precision stays hashed and is also shown
+in the identifier. It renames the distance section from `C`
 to `D` (`method="distance"`; `"canonical"` remains a deprecated alias) and
 removes the RDKit S extension (§9). The geometry algorithm and every stored
 `F`/`D` body are unchanged from version 10 except for the `V` field and the
@@ -579,8 +584,8 @@ result = hash_molecule(
     method="frame",  # default; use "distance" for the distance method
     node_budget=10_000,  # canonical search budget (§4.4)
 )
-print(result.hash_str)  # hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
-print(result.geometry_hash)  # a3528714040eea8068be04d9807fadfb
+print(result.hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
+print(result.geometry_hash)  # 8e9eedf5032cf387541d637f56c682dc
 ```
 
 Re-hashing a stored descriptor (§6.1):
