@@ -154,8 +154,8 @@ class TestHashDescriptor:
         assert hash_descriptor(v10) == "8ec3152acf35859ba58ced3e101c87e1"
 
     def test_payload_is_precision_z_field_and_hashed_rows(self, water):
-        # Version 11 does not hash the version, which is in the readable
-        # identifier; the precision stays hashed. The hashed rows equal
+        # Version 11 does not hash the version, which is a field of
+        # the identifier; the precision stays hashed. The hashed rows equal
         # version 9's.
         res = hash_molecule(*water)
         assert core._hashed_payload(res.descriptor) == (

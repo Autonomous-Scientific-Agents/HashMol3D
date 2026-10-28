@@ -25,7 +25,7 @@ For example: `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
   it never changes an identifier.
 - **Precision** — `p` followed by the number of decimals of the precision
   grid (`p4` for `10⁻⁴` Å, `p0` for 1 Å). The precision is also hashed
-  (§6), so this readable field is confirmed by the geometry hash. Hashing it
+  (§6), so this field is confirmed by the geometry hash. Hashing it
   is necessary: water at 10⁻⁴ Å and the same atoms scaled tenfold at 10⁻³ Å
   have identical integer rows, and only the precision tells them apart.
 

@@ -374,7 +374,7 @@ class TestDeterminism:
         z, coords = water
         a = hash_molecule(z, coords, charge=0)
         b = hash_molecule(z, coords, charge=1)
-        # Full identifier differs in the readable prefix...
+        # Full identifier differs in the state tag...
         assert a.hash_str != b.hash_str
         assert a.hash_str.split("_")[4] == "q0m1"
         assert b.hash_str.split("_")[4] == "q1m2"

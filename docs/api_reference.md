@@ -13,7 +13,7 @@ For example: `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
   for `"11.0"`). It changes whenever any geometry hash can change; minor
   versions change no hash and are therefore not written.
 - **`p<decimals>`**: the precision as its number of decimals (`p4` for
-  `1e-4` Å, `p0` for 1 Å). The precision is also hashed, so this readable
+  `1e-4` Å, `p0` for 1 Å). The precision is also hashed, so this
   field is confirmed by the geometry hash.
 
 - **Hill formula**: when carbon is present, carbon first, then hydrogen,
@@ -234,4 +234,4 @@ are the geometry-only `hash_molecule` results described above.
   `hash_molecule` that emits a `DeprecationWarning` and does not expose
   `method` or `node_budget`. The old `hash_length=` keyword still works (it
   maps to `length=`). Note that since 0.5.0 the returned `hash_str` is
-  the full readable identifier, not just the hex digest.
+  the full identifier, not just the hex digest.
