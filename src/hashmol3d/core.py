@@ -5,7 +5,7 @@ The identifier has the form::
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example, ``hm3d_v11_p4_H2O_q0m1_<32 hex>`` for neutral singlet water at
+For example, ``hm3d_v12_p4_H2O_q0m1_<32 hex>`` for neutral singlet water at
 the default 1e-4 Å grid.
 
 The hexadecimal geometry hash is invariant under the operations that
@@ -73,13 +73,13 @@ __all__ = [
 
 
 # The descriptor version, ``<major>.<minor>``, written in full in stored
-# descriptors (``V:11.0``). From version 11 it is not hashed: its major
-# number appears in the identifier (``hm3d_v11_...``), and the
+# descriptors (``V:12.0``). From version 11 it is not hashed: its major
+# number appears in the identifier (``hm3d_v12_...``), and the
 # geometry hash covers the P and Z fields and the geometry section. Bump the
 # major version whenever any geometry hash can change, and the minor version
 # for compatible changes (for example stricter validation) that leave every
 # hash, and so every identifier, unchanged.
-DESCRIPTOR_VERSION = "11.0"
+DESCRIPTOR_VERSION = "12.0"
 _VERSION_NUMBER = int(DESCRIPTOR_VERSION.split(".")[0])
 
 # Prefix of every identifier. Fields are joined by "_", which no
@@ -124,12 +124,14 @@ _FINE_ROWS_SINCE = 10
 # sections under it and 0.8.0 added F. Versions 5 and 6 fell back to the W
 # (Weisfeiler-Lehman multiset) section when the canonical search exhausted
 # its budget; version 7 made exhaustion an error. Version 11 renamed the
-# distance section from C to D.
+# distance section from C to D. Version 12 changed only which geometries
+# reach the F or D section, not either format.
 _DESCRIPTOR_SECTIONS = {
     "5-CANON-SHA256": "FCW",
     "6-FRAME-SHA256": "FCW",
     **{f"{v}-FRAME-SHA256": "FC" for v in range(7, 11)},
     "11.0": "FD",
+    "12.0": "FD",
 }
 
 # First descriptor version that requires a power-of-ten precision <= 1 Å.
@@ -214,9 +216,6 @@ _FRAME_MIN_RADIUS_GRID = 10.0
 # 3N-value F descriptors this rule now produces.
 _FRAME_ANCHOR_MIN_GRID = 1.0
 
-# Relative residual accepted as collinear up to float64 roundoff. This is
-# independent of the requested grid: it must not flatten a resolved bend.
-_FRAME_LINEAR_REL_TOL = 64.0 * np.finfo(np.float64).eps
 
 # Canonically tied anchors must all be evaluated. Bound that work so an
 # adversarial highly symmetric geometry cannot turn the frame method into an
@@ -427,12 +426,20 @@ def _validate_coords(coords) -> np.ndarray:
         raise ValueError("coords must be an (N, 3) array of real numbers") from err
 
 
+def _coincident(coords: np.ndarray) -> bool:
+    """Whether every atom is at one point (always true for a single atom)."""
+    return bool((coords == coords[0]).all())
+
+
 def _extent(atomic_nums: np.ndarray, coords: np.ndarray) -> float:
     """Largest distance from the Z-weighted centroid (Å).
 
     A rigid-motion and relabeling invariant; zero for a single atom, which
     therefore has no resolution floor.
     """
+    if _coincident(coords):
+        # The weighted centroid need not round-trip to the shared position.
+        return 0.0
     w = atomic_nums.astype(float)
     return float(np.linalg.norm(coords - (w @ coords) / w.sum(), axis=1).max())
 
@@ -844,6 +851,12 @@ def _frame_signature(
     # derived from those integers, never rounded from the coordinates directly.
     fine_scale = 10.0 ** (decimals + _FINE_DIGITS)
 
+    # All atoms at one point have all-zero rows. Computed, the centroid
+    # need not round-trip to that point, which before version 12 gave a single
+    # atom far from the origin a nonzero row at fine precision.
+    if _coincident(coords):
+        return _frame_body(_sorted_signed_rows(z, np.zeros((n, 3), dtype=np.int64), ((1, 1, 1),)))
+
     def ksum(a: np.ndarray) -> float:
         # Permutation-invariant summation: sort addends first.
         return float(np.sum(np.sort(a)))
@@ -885,19 +898,24 @@ def _frame_signature(
     if not lam[2] > 0.0:
         return None
 
-    # A true line needs only its isolated longitudinal axis, even when its
-    # extent is too small for the whole-cloud size guard. Recognize it up
-    # to relative float64 roundoff, not by a grid-dependent bend tolerance.
-    # Larger systems retain the existing intrinsic-line/anchor decisions.
-    if max_radius_grid < _FRAME_MIN_RADIUS_GRID:
-        axis = vec[:, 2]
-        projected = c - np.outer(c @ axis, axis)
-        max_projected = float(np.linalg.norm(projected, axis=1).max())
-        if max_projected <= _FRAME_LINEAR_REL_TOL * float(radii.max()):
-            return _frame_body(line_rows(axis))
-
     gap0 = float((lam[1] - lam[0]) / lam[2])
     gap1 = float((lam[2] - lam[1]) / lam[2])
+
+    # A line needs only its isolated longitudinal axis, even when its extent
+    # is too small for the whole-cloud size guard. As for larger clouds below,
+    # it is recognized only when that axis is isolated (in a spherical cloud
+    # the largest eigenvector is arbitrary) and every transverse residual is
+    # below half a grid cell, where it rounds to zero. Versions 7-11 instead
+    # accepted only a residual within float64 roundoff of the centered radius.
+    # That roundoff grows with the distance from the origin, so a short line
+    # far from it fell back to D; no roundoff-scale tolerance is
+    # translation-invariant.
+    if max_radius_grid < _FRAME_MIN_RADIUS_GRID and gap0 < _FRAME_GAP_MIN <= gap1:
+        axis = vec[:, 2]
+        projected = c - np.outer(c @ axis, axis)
+        if float(np.linalg.norm(projected, axis=1).max()) * scale < 0.5:
+            return _frame_body(line_rows(axis))
+
     if min(gap0, gap1) >= _FRAME_GAP_MIN:
         return _frame_body(_rows_in_basis(z, c, vec, fine_scale))
 
@@ -1175,7 +1193,7 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
 def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
     """Parse a stored descriptor against the rules of its own version.
 
-    Checks the version (5-11, with the sections each version produced), the
+    Checks the version (5-12, with the sections each version produced), the
     precision field (any positive value for version 5, a power of ten
     <= 1 Å from version 6, written as the generator wrote it), atomic
     numbers (range and ascending order), row elements against ``Z``, the
@@ -1565,7 +1583,7 @@ def hash_molecule(
 
     The identifier has the form
     ``hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>``,
-    e.g. ``hm3d_v11_p4_H2O_q0m1_<32 hex>``. Only the precision, the atomic
+    e.g. ``hm3d_v12_p4_H2O_q0m1_<32 hex>``. Only the precision, the atomic
     numbers and the quantized geometry contribute to the hash.
 
     Args:
@@ -1717,7 +1735,7 @@ def generate_hashmol3d(
         Use :func:`hash_molecule` instead. The ``hash_length`` keyword is
         renamed to ``length`` in the new function. Note that as of 0.5.0
         the returned ``hash_str`` is the full identifier
-        (``hm3d_v11_p4_H2O_q0m1_<hash>``), not just the hex digest.
+        (``hm3d_v12_p4_H2O_q0m1_<hash>``), not just the hex digest.
     """
     warnings.warn(
         "generate_hashmol3d() is deprecated; use hash_molecule() instead "

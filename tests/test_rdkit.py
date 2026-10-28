@@ -440,7 +440,7 @@ def test_mol2_reader(tmp_path):
     )
     assert read_rdkit(path).GetNumAtoms() == 3
     assert hash_file(path, input_format="mol2").hash_str == (
-        "hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc"
+        "hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc"
     )
 
 

@@ -127,12 +127,16 @@ pair constructs the frame. Every invariantly tied anchor is evaluated and
 the smallest sorted list of hashed rows wins (since version 10, fine digits
 break exact ties). Point-like and linear
 sets are serialized in zero and one intrinsic dimensions, so arbitrary null
-axes are never invented. Version 7 recognizes a short exact line before the
-minimum-size guard: its maximum transverse residual must be at most
-`64 * eps64 * R`, where `R` is the maximum centered radius and `eps64 = 2^-52`.
-This removes a coarse-grid fallback without treating a finite bend as exact
-collinearity. The ordinary half-grid intrinsic-line rule remains in effect
-for larger clouds.
+axes are never invented. Version 7 recognized a short exact line before the
+minimum-size guard, accepting a transverse residual of at most
+`64 * eps64 * R` (`R` the maximum centered radius, `eps64 = 2^-52`). That
+tolerance is not translation-invariant: the roundoff in stored and centered
+coordinates grows with the distance from the origin, so short lines far
+from it fell back to the distance method, while widening the tolerance with
+the coordinate magnitude flattened real bends only far from the origin.
+Version 12 applies the half-grid intrinsic-line rule of larger clouds
+instead: a residual below half a cell rounds to zero in every frame, so the
+line representation loses nothing the grid could resolve.
 
 Anchors affect only frame construction: the original coordinates are always
 projected and hashed. All eight axis signs are evaluated, retaining parity

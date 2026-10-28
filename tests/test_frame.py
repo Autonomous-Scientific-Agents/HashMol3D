@@ -278,11 +278,11 @@ class TestNearLinearAnchors:
         assert all(row.split(":", 1)[1].split(",")[:2] == ["0", "0"] for row in rows)
 
     def test_whole_cloud_size_guard_is_unchanged(self):
-        # A non-collinear cloud below ten grid units of radius with degenerate
-        # moments still uses the distance fallback (the guard is separate from
-        # the transverse-anchor minimum).
+        # A cloud below ten grid units of radius with degenerate moments and a
+        # bend of more than half a cell still uses the distance fallback (the
+        # guard is separate from the transverse-anchor minimum).
         z = np.array([6, 6, 6])
-        coords = np.array([[-1.0, 0.0, 0.0], [0.0, 0.3, 0.0], [1.0, 0.0, 0.0]])
+        coords = np.array([[-5.0, 0.0, 0.0], [0.0, 0.9, 0.0], [5.0, 0.0, 0.0]])
         with pytest.warns(UserWarning, match="stable canonical frame"):
             res = hash_molecule(z, coords, precision=1.0)
         assert "|D:" in res.descriptor
@@ -340,7 +340,7 @@ class TestQM9NearLines:
 class TestFrameFallback:
     def test_ill_conditioned_anchor_falls_back(self):
         z = np.array([6, 6, 6])
-        coords = np.array([[-1.0, 0.0, 0.0], [0.0, 0.01, 0.0], [1.0, 0.0, 0.0]])
+        coords = np.array([[-5.0, 0.0, 0.0], [0.0, 0.9, 0.0], [5.0, 0.0, 0.0]])
         with pytest.warns(UserWarning, match="stable canonical frame"):
             res = hash_molecule(z, coords, precision=1.0, method="frame")
         canonical = hash_molecule(z, coords, precision=1.0, method="distance")
@@ -364,3 +364,89 @@ class TestFrameFallback:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             hash_molecule(z, coords, method="distance")
+
+
+def _random_rotation(rng):
+    rot, _ = np.linalg.qr(rng.standard_normal((3, 3)))
+    return rot
+
+
+@pytest.mark.parametrize(
+    "z, coords, precision",
+    [
+        ([1, 1], [[0, 0, 0], [0, 0, 0.74]], 0.1),
+        ([7, 7], [[0, 0, 0], [0, 0, 1.098]], 0.1),
+        ([8, 6, 8], [[0, 0, -1.16], [0, 0, 0], [0, 0, 1.16]], 1.0),
+        ([1, 6, 7], [[0, 0, -1.066], [0, 0, 0], [0, 0, 1.156]], 1.0),
+    ],
+)
+def test_short_line_far_from_origin_keeps_its_identifier(z, coords, precision):
+    # Before version 12 the exact-line test was relative to the centered
+    # radius only, so centering roundoff far from the origin sent these to D.
+    rng = np.random.default_rng(12)
+    coords = np.array(coords, dtype=float)
+    ref = hash_molecule(z, coords, precision=precision)
+    assert "|F:" in ref.descriptor
+    for offset in (100.0, 1e3, 1e4, 1e5):
+        for _ in range(25):
+            moved = coords @ _random_rotation(rng).T + rng.uniform(-offset, offset, 3)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                assert hash_molecule(z, moved, precision=precision) == ref
+
+
+@pytest.mark.parametrize(
+    "z, coords, section",
+    [
+        # CO2 bent by 1e-9 A and 0.3 A: below half a cell, so a line.
+        ([8, 6, 8], [[0, 0, -1.16], [0, 1e-9, 0], [0, 0, 1.16]], "F"),
+        ([8, 6, 8], [[0, 0, -1.16], [0, 0.3, 0], [0, 0, 1.16]], "F"),
+        # Bent by more than half a cell, degenerate moments, below ten cells.
+        ([6, 6, 6], [[-5, 0, 0], [0, 0.9, 0], [5, 0, 0]], "D"),
+    ],
+)
+def test_short_bent_molecule_is_classified_independently_of_position(z, coords, section):
+    # A version-12 draft widened the roundoff tolerance with the coordinate
+    # magnitude, so CO2 bent by 1e-9 A gave D at the origin and F at 1e5 A.
+    # The half-cell rule decides on the geometry alone.
+    coords = np.array(coords, dtype=float)
+    rng = np.random.default_rng(7)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ref = hash_molecule(z, coords, precision=1.0)
+        assert f"|{section}:" in ref.descriptor
+        for offset in ([1e5, 0, 0], [0, -1e3, 0], [3e4, 2e4, -1e4]):
+            assert hash_molecule(z, coords + offset, precision=1.0) == ref
+            moved = coords @ _random_rotation(rng).T + offset
+            assert hash_molecule(z, moved, precision=1.0) == ref
+
+
+@pytest.mark.parametrize("seed", [123, 0, 1, 2])
+def test_short_spherical_cloud_is_not_taken_for_a_line(seed):
+    # With all three moments degenerate the largest eigenvector is arbitrary.
+    # A version-12 draft checked only the lower gap, so this tetrahedron gave
+    # F in one orientation and D after a rotation.
+    z = [6, 6, 6, 6]
+    coords = 0.3 * np.array([[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]], dtype=float)
+    rng = np.random.default_rng(seed)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ref = hash_molecule(z, coords, precision=1.0)
+        assert ref == hash_molecule(z, coords @ _random_rotation(rng).T, precision=1.0)
+        for _ in range(25):
+            moved = coords @ _random_rotation(rng).T + rng.uniform(-100, 100, 3)
+            assert hash_molecule(z, moved, precision=1.0) == ref
+
+
+@pytest.mark.parametrize("method", ["frame", "distance"])
+@pytest.mark.parametrize("precision", [1e-4, 1e-14, 1e-28])
+def test_coincident_atoms_have_zero_rows_anywhere(method, precision):
+    # A computed centroid need not round-trip to a shared position; before
+    # version 12 a single atom away from the origin got a nonzero row.
+    for z in ([3], [6, 6]):
+        results = {
+            hash_molecule(z, [position] * len(z), precision=precision, method=method)
+            for position in ([0, 0, 0], [123.4, 56.7, -89.1], [1e5, -3, 7])
+        }
+        assert len(results) == 1
+    assert hash_molecule([3], [[1e5, -3, 7]], precision=1e-14).descriptor.endswith("|F:3:0,0,0")

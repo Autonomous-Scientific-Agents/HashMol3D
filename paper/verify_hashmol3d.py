@@ -204,9 +204,9 @@ check(
 # canonical fallback; canonical exhaustion is checked separately below.
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
-    rff = hash_molecule([6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0)
+    rff = hash_molecule([6, 6, 6], [[-5, 0, 0], [0, 0.9, 0], [5, 0, 0]], precision=1.0)
 rfc = hash_molecule(
-    [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, method="distance"
+    [6, 6, 6], [[-5, 0, 0], [0, 0.9, 0], [5, 0, 0]], precision=1.0, method="distance"
 )
 check(
     "ill-conditioned frame uses deterministic distance fallback", rff.descriptor == rfc.descriptor

@@ -11,7 +11,7 @@ It produces a file-name-safe identifier of the form
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-e.g. `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc` for neutral singlet water on the
+e.g. `hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc` for neutral singlet water on the
 default 10⁻⁴ Å grid (`p4`). The geometry hash is **rotation-, translation-,
 permutation-, and parity-invariant** (matching the invariances of the
 eigenvalues of the non-relativistic molecular Hamiltonian), and depends only
@@ -22,7 +22,7 @@ on:
 - coordinates quantized in a canonical frame (or, with the distance method,
   canonical interatomic distances)
 
-The descriptor version is not hashed; its major number is the `v11` field of
+The descriptor version is not hashed; its major number is the `v12` field of
 the identifier, so identifiers made with different versions never compare
 equal. The precision is both hashed and shown as the `p4` field. Fields are joined by `_`, and every character is
 a letter, a digit, `_` or `-` (in a negative charge), so identifiers are safe
@@ -41,8 +41,8 @@ hash, so two states of the same geometry share the same geometry hash and can
 be grouped by it:
 
 ```text
-hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc     # neutral singlet water
-hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc     # water cation, same geometry → same hash
+hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc     # neutral singlet water
+hm3d_v12_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc     # water cation, same geometry → same hash
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -135,12 +135,18 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.15.0 uses descriptor version `11.0`. It introduces the `hm3d_`
-identifier, stops hashing the version (it is in the identifier), and renames
-the distance section from `C` to `D`. Version 10 made re-hashing idempotent
+Version 0.16.0 uses descriptor version `12.0`. It fixes two invariance bugs:
+short linear molecules far from the origin, and a single atom away from the
+origin at very fine precision, could get a position-dependent identifier.
+Short nearly linear molecules now use the same half-cell line rule as larger
+ones; on QM9 this changes 7 of 133,885 geometry hashes at 1 Å and none at
+finer precisions. Every other geometry keeps its version-11 geometry hash;
+only the `v12` field of the identifier changes. Version 11 introduced the `hm3d_` identifier,
+stopped hashing the version (it is in the identifier), and renamed the
+distance section from `C` to `D`. Version 10 made re-hashing idempotent
 (see [Re-hashing a stored descriptor](#re-hashing-a-stored-descriptor)), and
 version 9 let nearly linear molecules anchor their frame instead of using the
-distance fallback. Every geometry hash changes from earlier versions;
+distance fallback. Every geometry hash before version 11 differs;
 recompute identifiers consistently when migrating a corpus. The paper's corpus
 statistics describe version 8 and are labelled accordingly.
 
@@ -189,7 +195,7 @@ V:<version>|P:<precision>|Z:<atomic numbers>|D:<distance matrix upper triangle>
 ```
 
 - `V` identifies the descriptor format and canonicalization rules (currently
-  `11.0`).
+  `12.0`).
 - `P` records the quantization grid spacing in angstroms, such as `1.0e-04`.
 - `Z` lists atomic numbers in the order used by the selected representation.
 - `F` stores the sorted element-labelled canonical-frame rows on a grid 10⁴
@@ -200,7 +206,7 @@ V:<version>|P:<precision>|Z:<atomic numbers>|D:<distance matrix upper triangle>
 `P`, `Z` and the geometry section enter the hash, with `F` values rounded back
 to the `P` grid: the geometry hash is the SHA-256 digest of
 `P:<precision>|Z:<atomic numbers>|F:<hashed rows>` (or `|D:<distances>`). `V`
-is not hashed; it appears in the identifier as `v11` (the major version), next
+is not hashed; it appears in the identifier as `v12` (the major version), next
 to `p<decimals>`, and the `q`/`m` state tag records charge and spin
 multiplicity.
 
@@ -242,7 +248,7 @@ Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
 ## Install
 
 HashMol3D needs Python ≥ 3.8 and NumPy; RDKit (2023.9.6 or newer) is an
-optional extra. Install 0.15.0 from source: the release on PyPI is older
+optional extra. Install 0.16.0 from source: the release on PyPI is older
 (0.9.x), uses an earlier descriptor version and therefore different
 identifiers, and lacks `hash_descriptor`, `descriptor_geometry` and the RDKit
 adapters.
@@ -273,11 +279,11 @@ uv pip install -e '.[rdkit]'  # Or: pip install -e '.[rdkit]'
 
 ```bash
 $ hashmol3d water.xyz
-hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
+hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 
 # Cation with explicit multiplicity — only the state tag changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
+hm3d_v12_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
 
 # A coarser precision and a shorter, 20-hex-character hash.
 $ hashmol3d -p 1e-3 -l 20 benzene.xyz
@@ -313,7 +319,7 @@ coords = np.array(
     ]
 )
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
+print(res.hash_str)  # hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 print(res.formula)  # H2O
 print(res.geometry_hash)  # 8e9eedf5032cf387541d637f56c682dc
 print(res.charge, res.multiplicity)  # 0 1
@@ -335,9 +341,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
+print(hash_xyz("water.xyz").hash_str)  # hm3d_v12_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
+# hm3d_v12_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
 ```
 
 See [`docs/`](docs/) for the full
