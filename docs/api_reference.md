@@ -4,9 +4,16 @@
 
 A HashMol3D identifier has the form:
 
-    <Hill formula><state tag>-<geometry hash>
+    h3md-v<descriptor version>-p<decimals>-<Hill formula>-<geometry hash>-<state tag>
 
-For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
+For example: `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
+
+- **`h3md`**: fixed prefix.
+- **`v<descriptor version>`**: `DESCRIPTOR_VERSION` (`v11.0`). The major
+  number changes whenever any geometry hash can change.
+- **`p<decimals>`**: the precision as its number of decimals (`p4` for
+  `1e-4` Å, `p0` for 1 Å). The geometry hash does not cover the precision,
+  so this field is what keeps identifiers on different grids apart.
 
 - **Hill formula**: when carbon is present, carbon first, then hydrogen,
   then the remaining elements alphabetically; without carbon, all elements
@@ -15,13 +22,14 @@ For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
 - **State tag**: `q<charge>m<mult>`. Zero and positive charges have no
   sign (`q0`, `q1`); only negative charges carry a leading `-`
   (`q-1`, `q-2`).
-- **Geometry hash**: hex truncation of SHA-256 over the geometry-only
-  descriptor (atomic numbers + canonical-frame coordinates or canonical
-  pairwise distances + precision +
-  descriptor version). Charge and multiplicity are *not* hashed — they
-  live in the readable prefix — so molecules that differ only in charge
-  or multiplicity share the same `geometry_hash` and you can find them
-  by suffix match.
+- **Geometry hash**: hex truncation of SHA-256 over `Z:<atomic
+  numbers>|F:<hashed frame rows>` (or `|D:<distances>`) only. The version,
+  precision, charge and multiplicity are *not* hashed, so molecules that
+  differ only in charge or multiplicity share the same `geometry_hash` and
+  can be found by matching it.
+
+Fields are separated by `-`; only the state tag can contain a further `-`
+(a negative charge), so `hash_str.split("-", 5)` recovers all six fields.
 
 ## `hash_molecule(atomic_nums, coords, *, precision=1e-4, charge=0, multiplicity=None, length=None, method="frame", node_budget=10000)`
 
@@ -48,9 +56,10 @@ All optional arguments are **keyword-only**.
   to a target corpus.
 - `method`: `"frame"` (default) normally uses O(N log N) time and O(N)
   memory. Degenerate eigenspaces use intrinsic point/line coordinates or
-  canonical atom anchors. `"canonical"` selects the O(N²) labelled
-  distance-matrix descriptor. A frame that is ill-conditioned or exceeds
-  its 10,000-candidate budget warns and uses the canonical path.
+  canonical atom anchors. `"distance"` selects the O(N²) labelled
+  distance-matrix descriptor (`D:` section); `"canonical"` is a deprecated
+  alias that emits `DeprecationWarning`. A frame that is ill-conditioned or
+  exceeds its 10,000-candidate budget warns and uses the distance method.
 
 - `node_budget`: positive integer maximum number of canonical search states
   (default 10,000), including after frame fallback. Exhaustion raises the public
@@ -68,23 +77,23 @@ All optional arguments are **keyword-only**.
   canonical search exhausts `node_budget`.
 
 **Warns:** `UserWarning` when `method="frame"` finds no stable frame and falls
-back to the canonical method.
+back to the distance method.
 
 **Returns:** a `HashMol3DResult`, a frozen dataclass (importable from
 `hashmol3d`) with fields:
 
-- `hash_str`: full HashMol3D identifier (formula + state + `-` + hash)
+- `hash_str`: full HashMol3D identifier (see [Identifier format](#identifier-format))
 - `formula`: Hill-order molecular formula
 - `geometry_hash`: hex-only geometry portion (useful for grouping
   molecules that differ only in charge/multiplicity)
-- `version`: descriptor version string: `DESCRIPTOR_VERSION` for
-  geometry-only results; RDKit S results append `-S1-RDKIT-<rdkitVersion>`
+- `version`: descriptor version string, `DESCRIPTOR_VERSION`
 - `precision`: geometry-grid precision used (Å)
 - `charge`: charge used
 - `multiplicity`: multiplicity used
 - `descriptor`: the stored descriptor. Its `F` rows carry canonical-frame
   coordinates on a grid 10⁴ times finer than `precision`; the geometry hash
-  is the SHA-256 digest of these values rounded back to `precision`
+  is the SHA-256 digest of the `Z` field and these values rounded back to
+  `precision`
   ([specification §6](specification.md#6-canonical-descriptor-string)).
   Re-hash it with `hash_descriptor`.
 
@@ -105,26 +114,27 @@ does not determine whether it does.
 
 Return the geometry hash of a stored descriptor without recomputing any
 geometry. `hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
-r.geometry_hash` holds exactly for every result `r`, for `F` and `C`
-descriptors, and for stored descriptors of earlier versions. `length`
-defaults to 32 hex characters. The readable `<formula><state>-` prefix is not
-part of the descriptor; keep it alongside.
+r.geometry_hash` holds exactly for every result `r`, for `F` and `D`
+descriptors, and for stored descriptors of earlier versions (which hashed
+their full `V|P|Z|<section>` string). `length` defaults to 32 hex characters.
+The rest of the identifier (version, precision, formula, state tag) is not
+hashed; keep it alongside.
 
 The descriptor is validated first, against the rules of its own version,
 and rejected with `ValueError` if it breaks any of them: known version
-(5–10) with a section that version produced (`F`, `C`, or the `W` fallback
-of versions 5–6), the precision field as that version wrote it (any
+(5–11) with a section that version produced (`F`; `D` from version 11, `C`
+before it; the `W` fallback of versions 5–6), the precision field as that version wrote it (any
 positive value for version 5, a power of ten ≤ 1 Å from version 6), atomic
 numbers in range and ascending, `F`/`W` row elements matching `Z` in
-canonical order, the right number of `C` distances, canonical integers
-with absolute value below 2⁶², and for version 10 the rounding margin and the exact
+canonical order, the right number of distances, canonical integers
+with absolute value below 2⁶², and from version 10 the rounding margin and the exact
 resolution floor ([specification §6.1](specification.md#61-idempotent-re-hashing)).
 Corrupted or hand-edited descriptors therefore fail instead of hashing. The
-checks are necessary conditions: they do not test whether `C` distances are
-realizable in three dimensions. A descriptor from the RDKit S extension
-(`V:<base>-S1-RDKIT-<rdkit>|...|S:<SMILES>`, base version 8 or later) is
-validated as its base descriptor plus a non-empty `S` field and re-hashes to
-its S digest; the SMILES is not interpreted.
+checks are necessary conditions: they do not test whether distances are
+realizable in three dimensions. A stored descriptor of the RDKit S extension
+of versions 8–10 (`V:<base>-S1-RDKIT-<rdkit>|...|S:<SMILES>`, removed in
+version 11) is validated as its base descriptor plus a non-empty `S` field
+and re-hashes to its S digest; the SMILES is not interpreted.
 
 ## `descriptor_geometry(descriptor)`
 
@@ -140,7 +150,7 @@ settled geometry re-hashes correctly, which has been observed only for
 exactly symmetric inputs with tied anchor frames, a `UserWarning` is emitted
 and the stored rows are returned unchanged.
 
-Raises `ValueError` for a `C` descriptor (a distance matrix has no
+Raises `ValueError` for a `D` (or `C`) descriptor (a distance matrix has no
 coordinates), for a descriptor of another version, or for a descriptor that
 fails the validation of `hash_descriptor`. A geometry accepted at the
 resolution floor reconstructs to one that `hash_molecule` also accepts: the
@@ -155,18 +165,16 @@ z2, coords2 = descriptor_geometry(res.descriptor)
 assert hash_molecule(z2, coords2).hash_str == res.hash_str
 ```
 
-## `hash_xyz(path, *, include_smiles=False, **kwargs)`
+## `hash_xyz(path, **kwargs)`
 
 Convenience wrapper that reads an XYZ file and forwards the keyword
 arguments to `hash_molecule`.
-With `include_smiles=True`, opt into RDKit bond perception and the separately
-versioned S descriptor. The default remains unchanged.
 
 ```python
 from hashmol3d import hash_xyz
 
 result = hash_xyz("water.xyz", precision=1e-3, charge=0)
-print(result.hash_str)  # H2Oq0m1-...
+print(result.hash_str)  # h3md-v11.0-p3-H2O-...-q0m1
 print(result.geometry_hash)  # ...
 ```
 
@@ -204,18 +212,17 @@ res = hash_molecule(z, coords, length=L)
 ## Optional RDKit APIs
 
 For optional `hash_rdkit`, `hash_file`, `read_rdkit`, and `canonical_smiles`
-APIs, see [RDKit support](rdkit.md). The geometry-only invariance and
-charge-independent suffix rules above apply when `include_smiles=False`.
-S results use a version that includes the extension revision and RDKit version;
-their `geometry_hash` field hashes geometry plus SMILES.
+APIs, see [RDKit input](rdkit.md). They only read structures: their results
+are the geometry-only `hash_molecule` results described above.
 
 ## Constants
 
-- `DESCRIPTOR_VERSION`: the descriptor-format version baked into every
-  geometry hash (`"10-FRAME-SHA256"`). Bumping this value invalidates
-  previously computed hashes.
+- `DESCRIPTOR_VERSION`: the descriptor-format version (`"11.0"`), written
+  in every identifier as `v11.0` and in every stored descriptor as `V:11.0`.
+  It is not hashed; a new major version accompanies any change that can alter
+  a geometry hash.
 - `DEFAULT_LENGTH`: default geometry-hash length in hex characters (`32`).
-- `__version__`: the package version (`"0.14.0"`).
+- `__version__`: the package version (`"0.15.0"`).
 
 ## Deprecated
 

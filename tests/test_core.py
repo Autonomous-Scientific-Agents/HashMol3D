@@ -64,7 +64,7 @@ class TestPrecisionToDecimals:
         with pytest.raises(ValueError):
             hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.1]], precision=1e-309)
 
-    @pytest.mark.parametrize("method", ["frame", "canonical"])
+    @pytest.mark.parametrize("method", ["frame", "distance"])
     def test_rejects_precision_below_float64_resolution(self, water, method):
         # Water extends ~0.89 Å from its centroid: 1e-10 Å is resolvable,
         # 1e-11 Å is below 2**-35 of the extent.
@@ -77,7 +77,7 @@ class TestPrecisionToDecimals:
         res = hash_molecule([6], [[1e3, -2e3, 5e2]], precision=1e-30)
         assert res.descriptor.endswith("|F:6:0,0,0")
 
-    @pytest.mark.parametrize("method", ["frame", "canonical"])
+    @pytest.mark.parametrize("method", ["frame", "distance"])
     @pytest.mark.parametrize("extent", [1.0, 50.0, 500.0])
     def test_finest_accepted_precision_is_invariant(self, method, extent):
         rng = np.random.default_rng(int(extent))
@@ -210,7 +210,7 @@ class TestCanonicalSignature:
         z, coords = water
         q = _scaled_distances(coords, decimals=4)
         tag, z_ordered, body = _canonical_signature(z, q)
-        assert tag == "C"
+        assert tag == "D"
         # Canonical order groups atoms by ascending Z.
         assert z_ordered == (1, 1, 8)
         # Three pair distances on the 1e-4 grid.
@@ -219,7 +219,7 @@ class TestCanonicalSignature:
     def test_single_atom(self):
         q = _scaled_distances(np.zeros((1, 3)), decimals=4)
         tag, z_ordered, body = _canonical_signature(np.array([6]), q)
-        assert tag == "C"
+        assert tag == "D"
         assert z_ordered == (6,)
         assert body == ""
 
@@ -376,8 +376,8 @@ class TestDeterminism:
         b = hash_molecule(z, coords, charge=1)
         # Full identifier differs in the readable prefix...
         assert a.hash_str != b.hash_str
-        assert a.hash_str.startswith("H2Oq0")
-        assert b.hash_str.startswith("H2Oq1")
+        assert a.hash_str.endswith("-q0m1")
+        assert b.hash_str.endswith("-q1m2")
         # ...but the geometry hash is identical.
         assert a.geometry_hash == b.geometry_hash
 

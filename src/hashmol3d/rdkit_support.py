@@ -1,18 +1,16 @@
 """Opt-in RDKit adapters; importing this module does not import RDKit.
 
-The NumPy-only descriptor is unchanged unless ``include_smiles=True``.
-RDKit molecules are always copied before chemistry or coordinate operations.
+RDKit only reads structures: the descriptor and hash are the geometry-only
+ones of :func:`hash_molecule`, whatever the input format. RDKit molecules
+are always copied before chemistry or coordinate operations.
 """
 
 from __future__ import annotations
 
-import hashlib
 import io
-from dataclasses import replace
 from pathlib import Path
-from urllib.parse import quote
 
-from .core import HashMol3DResult, _hashed_payload, hash_molecule
+from .core import HashMol3DResult, hash_molecule
 from .io import read_xyz
 
 __all__ = ["canonical_smiles", "hash_file", "hash_rdkit", "read_rdkit"]
@@ -70,7 +68,6 @@ def hash_rdkit(
     mol,
     *,
     conf_id: int = -1,
-    include_smiles: bool = False,
     charge: int | None = None,
     allow_implicit_hydrogens: bool = False,
     **kwargs,
@@ -82,12 +79,7 @@ def hash_rdkit(
     Hydrogens represented only as atom counts are rejected unless
     ``allow_implicit_hydrogens=True`` explicitly permits incomplete geometry.
     Charge defaults to the graph's total formal charge. Other keywords go to
-    ``hash_molecule``. Without S, this returns the ordinary geometry descriptor.
-
-    ``include_smiles=True`` appends canonical isomeric SMILES, using stereo from
-    the selected geometry, and selects a separate versioned descriptor namespace.
-    A charge override must then match the graph. Chemistry errors are fatal;
-    there is no fallback to a descriptor without S.
+    ``hash_molecule``; the result is its geometry-only identifier.
     """
     Chem, _ = _require_rdkit()
     if not isinstance(mol, Chem.Mol) or mol.GetNumAtoms() == 0:
@@ -103,7 +95,7 @@ def hash_rdkit(
             "RDKit input has a 2D conformer; provide or explicitly generate 3D geometry"
         )
     # Unsanitized caller-built molecules may not yet have implicit valences.
-    # Initialize only the copy; S tagging separately performs full sanitization.
+    # Initialize only the copy.
     mol.UpdatePropertyCache(strict=False)
     if not allow_implicit_hydrogens and any(atom.GetTotalNumHs() for atom in mol.GetAtoms()):
         raise ValueError(
@@ -111,35 +103,11 @@ def hash_rdkit(
             "provide a complete explicit-H geometry, or set allow_implicit_hydrogens=True "
             "(--allow-implicit-hydrogens) to hash only the atoms present"
         )
-    graph_charge = Chem.GetFormalCharge(mol)
-    result = hash_molecule(
+    return hash_molecule(
         [atom.GetAtomicNum() for atom in mol.GetAtoms()],
         conf.GetPositions(),
-        charge=graph_charge if charge is None else charge,
+        charge=Chem.GetFormalCharge(mol) if charge is None else charge,
         **kwargs,
-    )
-    if not include_smiles:
-        return result
-    if result.charge != graph_charge:
-        raise ValueError("charge must match the RDKit graph when include_smiles=True")
-    return _with_smiles(result, mol, conf.GetId())
-
-
-def _with_smiles(result, mol, conf_id):
-    _, rdBase = _require_rdkit()
-    smiles = canonical_smiles(mol, conf_id=conf_id)
-    version = f"{result.version}-S1-RDKIT-{quote(rdBase.rdkitVersion, safe='.-')}"
-    descriptor = "V:" + version + "|" + result.descriptor.split("|", 1)[1] + "|S:" + smiles
-    # Hash the rounded F rows, as for the base descriptor, not the stored fine
-    # ones; hash_descriptor(descriptor) reproduces this digest.
-    payload = _hashed_payload(descriptor)
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[: len(result.geometry_hash)]
-    return replace(
-        result,
-        version=version,
-        descriptor=descriptor,
-        geometry_hash=digest,
-        hash_str=result.hash_str.rsplit("-", 1)[0] + "-" + digest,
     )
 
 
@@ -231,7 +199,6 @@ def hash_file(
     path,
     *,
     input_format: str = "xyz",
-    include_smiles: bool = False,
     generate_coordinates: bool = False,
     allow_implicit_hydrogens: bool = False,
     **kwargs,
@@ -239,10 +206,8 @@ def hash_file(
     """Hash a file; only explicitly selected features use RDKit.
 
     XYZ uses the native parser and defaults, regardless of installed packages.
-    With S enabled, XYZ requires all atoms (including H); RDKit determines bonds
-    from coordinates and the requested total charge (default zero).
 
-    Other formats use ``read_rdkit``; PDB is refused for S tagging and coordinate
+    Other formats use ``read_rdkit``; PDB is refused for coordinate
     generation because its inferred bond orders cannot be trusted. PDB
     geometry-only input hashes the atoms present without checking guessed
     implicit-H counts. Other formats
@@ -253,11 +218,6 @@ def hash_file(
     on RDKit version and input atom order; they are not canonical conformers.
     """
     fmt = input_format.lower()
-    if fmt == "pdb" and include_smiles:
-        raise ValueError(
-            "PDB input is not supported for S tagging: bond orders are unreliable; "
-            "use SDF or hash_rdkit with a chemically prepared Mol"
-        )
     if fmt == "pdb" and generate_coordinates:
         raise ValueError(
             "generate_coordinates is not supported for PDB input: inferred bond orders "
@@ -269,30 +229,7 @@ def hash_file(
         if generate_coordinates:
             raise ValueError("generate_coordinates is not supported for XYZ input")
         atomic_nums, coords = read_xyz(path)
-        if not include_smiles:
-            return hash_molecule(atomic_nums, coords, **kwargs)
-        Chem, _ = _require_rdkit()
-        from rdkit.Chem import rdDetermineBonds
-
-        # Validate geometry/options before passing anything to bond perception.
-        validated = hash_molecule(atomic_nums, coords, **kwargs)
-        mol = Chem.RWMol()
-        conf = Chem.Conformer(len(atomic_nums))
-        conf.Set3D(True)
-        for i, (z, point) in enumerate(zip(atomic_nums, coords)):
-            mol.AddAtom(Chem.Atom(int(z)))
-            conf.SetAtomPosition(i, tuple(point))
-        mol.AddConformer(conf)
-        try:
-            rdDetermineBonds.DetermineBonds(mol, charge=validated.charge, embedChiral=True)
-        except (ValueError, RuntimeError) as err:
-            raise ValueError(
-                f"bond perception failed for XYZ input at charge {validated.charge}; "
-                "check the atom list and charge. Radicals, metals, or unusual valence "
-                "may require a chemically prepared RDKit Mol for S tagging; "
-                "multiplicity does not control bond perception"
-            ) from err
-        return _with_smiles(validated, mol, mol.GetConformer().GetId())
+        return hash_molecule(atomic_nums, coords, **kwargs)
 
     mol = read_rdkit(path, input_format=fmt)
     if generate_coordinates:
@@ -308,7 +245,6 @@ def hash_file(
             raise ValueError("RDKit could not generate 3D coordinates")
     return hash_rdkit(
         mol,
-        include_smiles=include_smiles,
         # PDB's guessed single bonds can imply extra H even for complete inputs.
         # Its geometry-only path must not infer completeness from that graph.
         allow_implicit_hydrogens=allow_implicit_hydrogens or fmt == "pdb",

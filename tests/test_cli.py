@@ -28,18 +28,18 @@ def test_cli_length_option(tmp_path, capsys):
     rc = cli([path, "-l", "16"])
     assert rc == 0
     out = capsys.readouterr().out.strip()
-    # Identifier is "<formula><state>-<hash>"; only the hash portion is
-    # controlled by --length.
-    assert out.startswith("H2Oq0m1-")
-    assert len(out.rsplit("-", 1)[-1]) == 16
+    # Identifier is "h3md-v<ver>-p<dec>-<formula>-<hash>-<state>"; only the
+    # hash portion is controlled by --length.
+    assert out.startswith("h3md-v11.0-p4-H2O-") and out.endswith("-q0m1")
+    assert len(out.split("-")[4]) == 16
 
 
 def test_cli_method_option(tmp_path, capsys):
     path = _write_water(tmp_path)
-    rc = cli([path, "--method", "canonical", "-v"])
+    rc = cli([path, "--method", "distance", "-v"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "|C:" in out
+    assert "|D:" in out
 
 
 def test_cli_verbose(tmp_path, capsys):
@@ -82,14 +82,14 @@ def test_cli_bad_xyz_is_clean_error(tmp_path, capsys):
 def test_cli_budget_exhaustion_and_retry(tmp_path, capsys):
     path = _write_water(tmp_path)
     for verbose in ([], ["-v"]):
-        assert cli([path, "--method", "canonical", "--node-budget", "2", *verbose]) == 1
+        assert cli([path, "--method", "distance", "--node-budget", "2", *verbose]) == 1
         out = capsys.readouterr()
         assert out.out == ""
         assert "no identifier or hash was created" in out.err
         assert "--node-budget" in out.err
         assert "Traceback" not in out.err
-    assert cli([path, "--method", "canonical", "--node-budget", "3"]) == 0
-    assert capsys.readouterr().out.strip() == hash_xyz(path, method="canonical").hash_str
+    assert cli([path, "--method", "distance", "--node-budget", "3"]) == 0
+    assert capsys.readouterr().out.strip() == hash_xyz(path, method="distance").hash_str
 
 
 def test_cli_invalid_node_budget(tmp_path, capsys):

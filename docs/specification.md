@@ -1,8 +1,8 @@
-# HashMol3D Specification v0.14.0
+# HashMol3D Specification v0.15.0
 
 **Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
-**Canonical version tag:** `10-FRAME-SHA256`
+**Descriptor version:** `11.0`
 
 HashMol3D is a deterministic identifier for 3D molecular conformers.
 It is designed for reproducible identification of geometries in
@@ -10,11 +10,22 @@ computational-chemistry workflows and databases.
 
 ## 1. Identifier format
 
-A HashMol3D identifier is a single ASCII string with three parts:
+A HashMol3D identifier is a single ASCII string with six `-`-separated
+fields:
 
-    <Hill formula><state tag>-<geometry hash>
+    h3md-v<descriptor version>-p<decimals>-<Hill formula>-<geometry hash>-<state tag>
 
-For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
+For example: `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
+
+- **`h3md`** — fixed prefix.
+- **Descriptor version** — `v` followed by `<major>.<minor>` (currently
+  `v11.0`). The major number increases with any change that can alter a
+  geometry hash; the minor number with compatible changes that alter none.
+- **Precision** — `p` followed by the number of decimals of the precision
+  grid (`p4` for `10⁻⁴` Å, `p0` for 1 Å). The geometry hash does not cover
+  the precision (§7), so this field keeps identifiers on different grids
+  distinct: water at 10⁻⁴ Å and the same molecule scaled tenfold at 10⁻³ Å
+  have identical integer rows and therefore the same geometry hash.
 
 - **Hill formula** — if carbon is present: carbon, then hydrogen, then the
   remaining elements alphabetically by symbol; if carbon is absent: all
@@ -23,11 +34,11 @@ For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
 - **State tag** — `q<charge>m<multiplicity>`. Zero and positive charges
   have no sign (`q0`, `q1`); only negative charges carry a leading `-`
   (`q-1`, `q-2`). Multiplicity is a positive integer with no sign.
-- **`-`** — single hyphen separator, so the start of the geometry hash
-  is unambiguous even though the formula and state tag contain no
-  delimiters.
 - **Geometry hash** — lowercase hex truncation of the SHA-256 digest of
-  the hashed payload of the geometry-only descriptor (see §4, §6, §7).
+  the hashed payload `Z:...|F:...` or `Z:...|D:...` (see §4, §6, §7).
+- **`-`** — separator. No field but the state tag contains `-` (only a
+  negative charge does), so splitting at the first five hyphens recovers all
+  six fields.
 
 ## 2. Invariance contract
 
@@ -58,14 +69,16 @@ changes identifiers.
 The geometry hash is also **not** invariant under:
 
 - changes in any atomic number Z (isotopes share Z and therefore hash alike)
-- changes in the descriptor version tag
+- changes in the precision, or in the descriptor's geometry algorithm
+  (which change the hashed integers; the version and precision fields of
+  the identifier record both)
 - geometric distortions that move the quantized representation to a
   different grid cell (a distortion larger than the chosen precision need
   not do so, and a smaller one can)
 
 The default frame signature is furthermore **complete on its coordinate
 grid**: equal descriptors contain the same sorted element-labelled
-coordinates in an orthonormal canonical frame. The optional canonical
+coordinates in an orthonormal canonical frame. The optional
 distance signature is complete on its rounded-distance grid. Completeness
 concerns each method's specified *quantized* representation: quantization
 can merge distinct unrounded geometries into one grid cell. Subject to
@@ -76,14 +89,13 @@ truncated SHA-256 collision, §7). Search exhaustion produces no hash (§4.4).
 The **state tag** (and therefore the full identifier) additionally
 changes with charge or multiplicity. Two states of the same geometry
 share the same geometry hash but differ in their state tag, so they can
-be grouped by suffix matching on the part after `-`.
+be grouped by their geometry hash field.
 
 > **Note on chirality.** Two enantiomers share the eigenvalues of the
 > non-relativistic Hamiltonian and therefore share the same HashMol3D
-> identifier. If you need to distinguish enantiomers, combine HashMol3D
-> with an external stereochemistry tag or explicitly select the optional
-> RDKit S extension (§9). The invariance contract above describes the default
-> geometry-only namespace.
+> identifier. If you need to distinguish enantiomers, store an external
+> stereochemistry tag alongside the HashMol3D identifier; the identifier
+> itself carries no connectivity or stereochemistry (§9).
 
 ## 3. Inputs
 
@@ -98,7 +110,8 @@ The reference implementation takes:
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
 6. `length`: geometry-hash length in hex characters, `[1, 64]` (default 32; §7)
-7. `method`: `"frame"` (default) or `"canonical"`
+7. `method`: `"frame"` (default) or `"distance"` (`"canonical"` is a
+   deprecated alias)
 8. `node_budget`: canonical search budget (default 10,000; §4.4)
 
 All arguments after `coords` are keyword-only in the reference
@@ -121,11 +134,11 @@ hashed:
   a `descriptor_geometry` reconstruction (§6.1), therefore receives the same
   decision; a test on the raw coordinates would put a sharp boundary inside
   the cell that a reconstruction can cross.
-- For a `C` descriptor the decision is likewise exact and uses the hashed
+- For a `D` descriptor the decision is likewise exact and uses the hashed
   distances `q_ij` (grid cells). With weights `w_i = Z_i` and `W = Σ w_i`,
   atom `i` lies `√A_i / W` cells from the weighted centroid, where
   `A_i = W · Σ_j w_j q_ij² − Σ_{j<k} w_j w_k q_jk²`; the input is rejected if
-  any `A_i > W² · 2^70`. A stored `C` section can therefore be checked
+  any `A_i > W² · 2^70`. A stored `D` section can therefore be checked
   against the same rule (§6.1).
 - Before either, inputs with `precision · 2^35 · (1 + 2^-10) < R` are
   rejected outright. No input that either exact rule accepts can reach this
@@ -141,15 +154,15 @@ identifier. It also bounds every fine-grid frame integer (§4.5) below
 ## 4. Geometry signatures
 
 The default frame method is specified in §4.5. Sections §4.1–4.4 specify
-the optional canonical labelled-distance method and the final fallback used
+the optional labelled-distance method (`method="distance"`) and the final fallback used
 when a stable bounded frame cannot be constructed.
 
-For the canonical distance method, translation, rotation, and reflection
+For the distance method, translation, rotation, and reflection
 invariance come from using only pairwise distances. Permutation invariance
 comes from writing the element-labelled distance matrix in a **canonical
 atom order** that is a pure function of the geometry. Because the full
 labelled distance matrix determines the point set up to congruence, two
-geometries receive the same `C` signature if and only if they are congruent
+geometries receive the same `D` signature if and only if they are congruent
 on its rounded-distance grid — homometric configurations do not collide.
 
 ### 4.1 Scaled distance matrix
@@ -227,7 +240,7 @@ The default method normally takes O(N log N) time and O(N) memory:
    `λ1 ≤ λ2 ≤ λ3`.
 2. If `max_i ||v_i|| s < 0.5`, serialize every coordinate as zero. This
    is the intrinsic point-like representation.
-3. Otherwise require `λ3 > 0` (else select the canonical method, as in
+3. Otherwise require `λ3 > 0` (else select the distance method, as in
    step 7). Before rejecting a cloud with
    `R s < 10`, where `R = max_i ||v_i||`, test collinearity about the
    largest-moment eigenvector `u3`. Let `rho = max_i ||v_i - (v_i·u3)u3||`.
@@ -274,12 +287,12 @@ The default method normally takes O(N log N) time and O(N) memory:
        (rint(||p_ij||s), Z_j, rint(|v_j·e1|s)).
 
    If, for any tied first anchor, `max_j ||p_ij||s < 1`, or no atom has
-   `rint(||p_ij||s) > 0`, select the canonical method (step 7). Otherwise
+   `rint(||p_ij||s) > 0`, select the distance method (step 7). Otherwise
    evaluate every tied ordered pair, with second anchors restricted to
    `rint(||p_ij||s) > 0`. Normalize `p_ij` as `e2` and set `e3=e1×e2`.
 7. At most **10,000** tied candidate frames may be evaluated. Exceeding
    this normative budget, or finding a required transverse extent below
-   1 grid unit (steps 5–6), deterministically selects the canonical method
+   1 grid unit (steps 5–6), deterministically selects the distance method
    of §4.1–4.4 with a `UserWarning`.
 8. For every candidate basis and for the intrinsic line, project the **original centered coordinates**
    (anchors never perturb the geometry) and quantize them **once**, on the
@@ -322,12 +335,14 @@ information is available. Callers that know better should pass
 The descriptor is a UTF-8 string with the following pipe-separated
 components, in this fixed order:
 
-    V:<version>|P:<precision>|Z:<z_ordered>|C:<distances>     (canonical path)
+    V:<version>|P:<precision>|Z:<z_ordered>|D:<distances>     (distance method)
     V:<version>|P:<precision>|Z:<z_rows>|F:<coordinates>      (frame method, §4.5)
 
 Where:
 
-- `<version>` is a string, e.g. `10-FRAME-SHA256`.
+- `<version>` is the descriptor version `<major>.<minor>`, e.g. `11.0`
+  (versions 5–10 were written `<n>-FRAME-SHA256` and used `C` for the
+  distance section).
 - `<precision>` is in scientific notation, e.g. `1.0e-04`.
 - `<z_ordered>` is the list of atomic numbers in canonical atom order,
   comma-separated (this always coincides with the ascending-sorted
@@ -342,21 +357,30 @@ Where:
   by `;`; `<z_rows>` lists the atomic numbers in that row order.
 
 Charge and multiplicity are **not** part of the descriptor; they are
-written into the readable prefix of the identifier instead.
+written into the state tag of the identifier instead.
 
 This is the **stored descriptor** returned as `HashMol3DResult.descriptor`.
-The **hashed payload** is the stored descriptor with every `F` coordinate
-replaced by its hashed value (exact round-half-to-even division by `10^4`);
-`C` descriptors are their own hashed payload.
+The **hashed payload** is its `Z` field and geometry section only, with every
+`F` coordinate replaced by its hashed value (exact round-half-to-even
+division by `10^4`); `D` sections are hashed as stored:
+
+    Z:<z_rows>|F:<hashed coordinates>
+    Z:<z_ordered>|D:<distances>
+
+The `V` and `P` fields are not hashed: they appear in the identifier as
+`v<version>` and `p<decimals>`. (Versions 5–10 hashed the full
+`V|P|Z|<section>` string.)
 
 Example using the default frame method (water, `precision = 1e-4`):
 
-    V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0
+    V:11.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0
 
 Its hashed payload, whose SHA-256 digest truncated to the default 32 hex
-characters is the geometry hash `8ec3152acf35859ba58ced3e101c87e1`:
+characters is the geometry hash `a3528714040eea8068be04d9807fadfb`:
 
-    V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
+    Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
+
+The identifier is `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
 
 (The molecular-plane normal occupies the first axis. The two hydrogen rows
 precede oxygen after lexicographic sorting.)
@@ -365,11 +389,12 @@ precede oxygen after lexicographic sorting.)
 
 A stored descriptor determines its identifier without the source geometry:
 re-hashing it (normalize, then §7) reproduces the geometry hash exactly,
-for `F` and `C` descriptors and for stored descriptors of earlier versions
-(whose `F` rows are already on the precision grid). The reference
+for `F` and `D` descriptors and for stored descriptors of earlier versions
+(which hash their full `V|P|Z|<section>` string, and whose `F` rows before
+version 10 are already on the precision grid). The reference
 implementation provides this as `hash_descriptor(descriptor, length=...)`.
-The readable `<formula><state>-` prefix is not part of the descriptor and
-is stored alongside it.
+The rest of the identifier (`h3md`, version, precision, formula and state
+tag) is not hashed and is stored alongside it.
 
 A re-hashed descriptor must satisfy every rule its own version's generator
 enforced; anything else is rejected rather than hashed. The checks are:
@@ -377,7 +402,7 @@ enforced; anything else is rejected rather than hashed. The checks are:
 - a known version, with the sections it produced: `5-CANON-SHA256` and
   `6-FRAME-SHA256` with `F`, `C` or `W` (release 0.7.0 wrote only `C` and
   `W` under version 5; 0.8.0 added `F`), `7`–`10-FRAME-SHA256` with `F` or
-  `C`;
+  `C`, `11.0` with `F` or `D`;
 - the precision written exactly as that version rendered it: any positive
   finite value for version 5 (which snapped its grid to the nearest power of
   ten, but no coarser than 1 Å, and recorded the precision as given, e.g.
@@ -386,23 +411,22 @@ enforced; anything else is rejected rather than hashed. The checks are:
 - integers in canonical decimal form (no sign on zero, no `+`, no leading
   zeros) with absolute value below `2^62`;
 - `F` rows: one per atom, elements equal to `Z`, in canonical row order;
-- `C` sections: exactly `N(N−1)/2` non-negative distances;
-- an optional RDKit `S` extension (§9; base version 8 or later): validated
-  as its base descriptor plus a non-empty `S:` field;
+- `D` (or `C`) sections: exactly `N(N−1)/2` non-negative distances;
+- the RDKit `S` extension of versions 8–10 (§9): validated as its base
+  descriptor plus a non-empty `S:` field;
 - `W` sections (versions 5–6): `N ≥ 2` and one `Z,color:color-distance,...`
   row per atom, rows sorted, with elements equal to `Z` and, in each row, the
   sorted `(color, distance)` pairs of the other `N − 1` atoms.
 
-Version 10 additionally requires every `F` value to lie within its rounding
-margin (§4.5 step 9) and every descriptor to satisfy the exact resolution
-floor of §3, on its `F` rows or `C` distances. These are necessary
-conditions, not a proof of origin: they do not check that `C` distances are
+From version 10, every `F` value must also lie within its rounding margin
+(§4.5 step 9) and every descriptor must satisfy the exact resolution floor of
+§3, on its `F` rows or `D`/`C` distances. These are necessary conditions, not
+a proof of origin: they do not check that distances are
 realizable in three dimensions or that `W` rows come from one geometry.
 
-`descriptor_geometry` accepts only `F` descriptors of the current version
-(an `S` descriptor is reduced to its base descriptor); it raises
-`ValueError` for `C` descriptors, which have no coordinates, and for earlier
-versions, whose rows were stored on the hashing grid.
+`descriptor_geometry` accepts only `F` descriptors of the current version; it
+raises `ValueError` for `D` and `C` descriptors, which have no coordinates,
+and for earlier versions (including their `S` descriptors).
 
 The `F` rows are also a canonical-frame geometry, centered on the
 Z-weighted centroid, on the fine grid. Hashing them as coordinates at the
@@ -428,7 +452,7 @@ For the version-9 rows read back as coordinates the round-trip rate is
 54–56 %. Exactly symmetric inputs with tied anchor frames are the remaining
 exception: a scan of 7,010 exactly symmetric `F` cases (benzene, methane, SF₆,
 NH₃, C₅H₅, cubane, each at 301 scales and four precisions: 7,224 inputs,
-of which 214 NH₃ inputs at 0.1 Å select `C`) left 5 that
+of which 214 NH₃ inputs at 0.1 Å select the distance method) left 5 that
 could not be settled, because the lexicographic minimum over tied anchors
 selects whichever frame moves a value across a boundary. In that case
 `descriptor_geometry` warns and returns the stored rows; `hash_descriptor`
@@ -436,7 +460,7 @@ remains exact.
 
 ## 7. Hashing
 
-1. Encode the hashed payload (§6) as UTF-8 bytes.
+1. Encode the hashed payload (§6, `Z:...|<section>`) as UTF-8 bytes.
 2. Compute the SHA-256 digest.
 3. Take the first `length` hex characters of the hex digest.
 
@@ -455,8 +479,8 @@ any fixed value in `[1, 64]`.
 
 To guarantee identical identifiers across machines:
 
-- Use the same descriptor version tag.
-- Use the same precision.
+- Use the same descriptor version and precision, and compare complete
+  identifiers (which carry both), not bare geometry hashes.
 - Format atomic numbers, scaled distances, and `F` coordinates as decimal
   integers with no leading zeros, `+` sign, or signed zero; only negative
   `F` coordinates carry a leading `-`.
@@ -472,8 +496,9 @@ To guarantee identical identifiers across machines:
 - Use SHA-256 as defined in FIPS 180-4.
 - Render the formula in Hill order and the state tag exactly as in §1.
 
-Any change to the descriptor format or semantics requires a new
-version tag.
+Any change to the descriptor format or semantics requires a new descriptor
+version: a new major version if any geometry hash can change, otherwise a new
+minor version.
 
 Version 5 introduced the `V|P|Z|<section>` layout, with a `W`
 (Weisfeiler–Lehman multiset) section when the canonical search exhausted its
@@ -487,7 +512,7 @@ minimum extent for atom anchors. This changes some coarse-grid requests from
 are unchanged.
 Version 9 lowers the minimum transverse-anchor extent from 10 grid units to 1
 (§4.5 steps 5–7). Nearly linear molecules whose bend lies between half a cell
-and ten cells previously selected the canonical method; they now anchor their
+and ten cells previously selected the distance method; they now anchor their
 degenerate plane and produce `F` descriptors, which round 3N values instead of
 N(N−1)/2 and are correspondingly less sensitive to coordinate noise. The
 whole-cloud size guard (step 4), the gap threshold, the candidate budget, and
@@ -506,30 +531,33 @@ hashed rows are identical. Version 10 also rejects precisions below the
 float64 resolution floor (§3), decided exactly on the hashed values, and
 validates stored descriptors before re-hashing them (§6.1). As with every
 version, all digests change.
+Version 11 (`11.0`) introduces the `h3md-v<version>-p<decimals>-<formula>-
+<geometry hash>-<state tag>` identifier (§1). Its hashed payload is the `Z`
+field and the geometry section only (§6): the version and the precision move
+from the hash into the identifier. It renames the distance section from `C`
+to `D` (`method="distance"`; `"canonical"` remains a deprecated alias) and
+removes the RDKit S extension (§9). The geometry algorithm and every stored
+`F`/`D` body are unchanged from version 10 except for the `V` field and the
+section letter, but every geometry hash changes.
 
-## 9. Optional RDKit S extension
+## 9. Connectivity and the historical S extension
 
-The reference implementation offers an opt-in `S` tag containing RDKit canonical
-isomeric SMILES. Its version is `10-FRAME-SHA256-S1-RDKIT-<rdkitVersion>` and
-its field order is `V|P|Z|F|S` or `V|P|Z|C|S`. The exact canonicalization,
-serialization, input, and error rules are defined in [RDKit support](rdkit.md).
-Installing RDKit or selecting an RDKit reader does not enable S automatically.
-The base `10-FRAME-SHA256` descriptor and algorithm remain unchanged. The S
-digest covers the S descriptor with its `F` rows replaced by their hashed
-values (§6), `V:<S version>|P|Z|<hashed section>|S:<SMILES>`, so its `F` rows
-are rounded exactly as in the base hash.
+The identifier carries no connectivity, stereochemistry, isotope or SMILES
+information: the geometry hash covers only atomic numbers and geometry. RDKit
+input adapters ([RDKit input](rdkit.md)) only read structures.
 
-This extension can distinguish supported stereoisomers and isotopic labels.
-It also hashes connectivity and graph formal charges; the default parity and
-charge-independent suffix contracts do not apply to S results. Multiplicity
-remains outside the hash. Use consistent RDKit versions and input preparation
-within an S corpus. This is an optional library extension of the draft standard.
+Versions 8–10 offered an opt-in RDKit `S` extension that appended canonical
+isomeric SMILES to the hashed descriptor:
+`V:<base>-S1-RDKIT-<rdkitVersion>|P|Z|<F or C>|S:<SMILES>`, hashed with its
+`F` rows rounded as in the base hash. Version 11 removed it. Stored `S`
+descriptors still re-hash to their original digests (§6.1); new identifiers
+cannot be made with it.
 
 ## 10. Dependencies
 
 The default implementation uses only NumPy and the Python standard library.
 RDKit is an optional extra (the `rdkit` extra of the package) used only when
-the caller explicitly requests an RDKit adapter, SMILES generation, or S tagging.
+the caller explicitly requests an RDKit adapter or SMILES generation.
 
 ## 11. Reference API
 
@@ -543,11 +571,11 @@ result = hash_molecule(
     charge=0,
     multiplicity=None,  # inferred if None
     length=None,  # 32 hex (128-bit) if None
-    method="frame",  # default; use "canonical" for the distance method
+    method="frame",  # default; use "distance" for the distance method
     node_budget=10_000,  # canonical search budget (§4.4)
 )
-print(result.hash_str)  # H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
-print(result.geometry_hash)  # 8ec3152acf35859ba58ced3e101c87e1
+print(result.hash_str)  # h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1
+print(result.geometry_hash)  # a3528714040eea8068be04d9807fadfb
 ```
 
 Re-hashing a stored descriptor (§6.1):

@@ -151,7 +151,7 @@ class TestCanonicalSearchBudget:
 
         monkeypatch.setattr(core.hashlib, "sha256", unexpected_hash)
         with pytest.raises(SearchBudgetExceeded, match="Increase node_budget"):
-            hash_molecule(z, coords, precision=1.0, method="canonical")
+            hash_molecule(z, coords, precision=1.0, method="distance")
 
     def test_budget_failure_is_invariant(self, benzene):
         z, coords = benzene
@@ -159,17 +159,17 @@ class TestCanonicalSearchBudget:
         for t in range(10):
             zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
             with pytest.raises(SearchBudgetExceeded, match=r"node budget \(3\)"):
-                hash_molecule(zz, cc, method="canonical", node_budget=3)
+                hash_molecule(zz, cc, method="distance", node_budget=3)
 
     def test_partial_search_is_discarded_and_retry_completes(self, water):
         z, coords = water
         # Root + one leaf fits, but the other tied ordering is still required.
         with pytest.raises(SearchBudgetExceeded):
-            hash_molecule(z, coords, method="canonical", node_budget=2)
-        res = hash_molecule(z, coords, method="canonical", node_budget=3)
-        assert res == hash_molecule(z, coords, method="canonical")
-        assert res == hash_molecule(z, coords, method="canonical", node_budget=100_000)
-        assert "|C:" in res.descriptor
+            hash_molecule(z, coords, method="distance", node_budget=2)
+        res = hash_molecule(z, coords, method="distance", node_budget=3)
+        assert res == hash_molecule(z, coords, method="distance")
+        assert res == hash_molecule(z, coords, method="distance", node_budget=100_000)
+        assert "|D:" in res.descriptor
 
     def test_frame_fallback_obeys_node_budget(self):
         with pytest.warns(UserWarning, match="falling back"):
@@ -181,7 +181,7 @@ class TestCanonicalSearchBudget:
             res = hash_molecule(
                 [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, node_budget=3
             )
-        assert "|C:" in res.descriptor
+        assert "|D:" in res.descriptor
 
     @pytest.mark.parametrize("budget", [0, -1, True, np.bool_(True), 1.5, 3.0, "3", None])
     def test_invalid_budget(self, water, budget):
@@ -189,11 +189,11 @@ class TestCanonicalSearchBudget:
             hash_molecule(*water, node_budget=budget)
 
     def test_numpy_integer_budget(self, water):
-        assert hash_molecule(*water, method="canonical", node_budget=np.int64(3))
+        assert hash_molecule(*water, method="distance", node_budget=np.int64(3))
 
     def test_explicit_canonical_method_uses_canonical_path(self, water, benzene):
         for z, coords in (water, benzene):
-            assert "|C:" in hash_molecule(z, coords, method="canonical").descriptor
+            assert "|D:" in hash_molecule(z, coords, method="distance").descriptor
 
 
 class TestDefaultFramePath:

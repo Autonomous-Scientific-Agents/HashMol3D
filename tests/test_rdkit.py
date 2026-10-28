@@ -1,4 +1,4 @@
-"""Tests for explicitly selected RDKit input and S descriptors."""
+"""Tests for explicitly selected RDKit input and stored S descriptors."""
 
 import hashlib
 
@@ -6,10 +6,8 @@ import numpy as np
 import pytest
 
 from hashmol3d import (
-    DESCRIPTOR_VERSION,
     SearchBudgetExceeded,
     canonical_smiles,
-    core,
     descriptor_geometry,
     hash_descriptor,
     hash_file,
@@ -21,8 +19,16 @@ from hashmol3d import (
 from hashmol3d.cli import cli
 
 pytest.importorskip("rdkit")
-from rdkit import Chem, rdBase
+from rdkit import Chem
 from rdkit.Chem import AllChem
+
+V10_WATER = (
+    "V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|"
+    "F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
+)
+V10_S_WATER = (
+    V10_WATER.replace("V:10-FRAME-SHA256", "V:10-FRAME-SHA256-S1-RDKIT-2025.03.3", 1) + "|S:O"
+)
 
 
 def molecule(smiles="F[C@](Cl)(Br)I"):
@@ -37,7 +43,7 @@ def xyz_file(tmp_path, mol):
     return path
 
 
-@pytest.mark.parametrize("method", ["frame", "canonical"])
+@pytest.mark.parametrize("method", ["frame", "distance"])
 def test_default_descriptor_is_exactly_core_descriptor(method):
     mol = molecule()
     expected = hash_molecule(
@@ -49,36 +55,6 @@ def test_default_descriptor_is_exactly_core_descriptor(method):
     assert "|S:" not in expected.descriptor
 
 
-@pytest.mark.parametrize("method", ["frame", "canonical"])
-@pytest.mark.parametrize("length", [None, 1, 64])
-def test_s_serialization_namespace_digest_and_no_mutation(method, length):
-    mol = molecule()
-    mol.GetAtomWithIdx(0).SetAtomMapNum(101)
-    before = mol.ToBinary()
-    base = hash_rdkit(mol, method=method, length=length)
-    result = hash_rdkit(mol, include_smiles=True, method=method, length=length)
-    assert result.version == f"{DESCRIPTOR_VERSION}-S1-RDKIT-{rdBase.rdkitVersion}"
-    assert result.descriptor == (
-        "V:" + result.version + "|" + base.descriptor.split("|", 1)[1] + "|S:F[C@](Cl)(Br)I"
-    )
-    # The digest covers the hashed payload: F rows rounded back onto the
-    # precision grid, as for the base descriptor, followed by S.
-    payload = "V:" + result.version + "|" + core._hashed_payload(base.descriptor).split("|", 1)[1]
-    payload += "|S:F[C@](Cl)(Br)I"
-    assert result.geometry_hash == hashlib.sha256(payload.encode()).hexdigest()[: length or 32]
-    assert hash_descriptor(result.descriptor, length=length) == result.geometry_hash
-    assert str(result) == f"{base.formula}q0m1-{result.geometry_hash}"
-    assert mol.ToBinary() == before
-
-
-def test_s_descriptor_geometry_is_the_base_geometry():
-    mol = molecule()
-    base = hash_rdkit(mol)
-    result = hash_rdkit(mol, include_smiles=True)
-    z, coords = descriptor_geometry(result.descriptor)
-    assert hash_molecule(z, coords).hash_str == base.hash_str
-
-
 @pytest.mark.parametrize(
     "suffix, message",
     [
@@ -87,42 +63,44 @@ def test_s_descriptor_geometry_is_the_base_geometry():
     ],
 )
 def test_malformed_s_descriptors_are_rejected(suffix, message):
-    result = hash_rdkit(molecule(), include_smiles=True)
-    stored = result.descriptor.rsplit("|", 1)[0] + suffix
+    stored = V10_S_WATER.rsplit("|", 1)[0] + suffix
     with pytest.raises(ValueError, match=message):
         hash_descriptor(stored)
 
 
-def test_s_extension_requires_a_known_base_version():
-    with pytest.raises(ValueError, match="S extension starts with version 8"):
-        hash_descriptor("V:7-FRAME-SHA256-S1-RDKIT-2025.03.3|P:1.0e-04|Z:6|F:6:0,0,0|S:C")
+def test_stored_v10_s_descriptor_still_rehashes():
+    payload = (
+        "V:10-FRAME-SHA256-S1-RDKIT-2025.03.3|P:1.0e-04|Z:1,1,8|"
+        "F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0|S:O"
+    )
+    expected = hashlib.sha256(payload.encode()).hexdigest()
+    assert hash_descriptor(V10_S_WATER) == expected[:32]
+    assert hash_descriptor(V10_S_WATER, length=64) == expected
 
 
-@pytest.mark.parametrize("method", ["frame", "canonical"])
-def test_mirror_changes_only_opt_in_namespace(method):
-    mol = molecule()
-    mirror = Chem.Mol(mol)
-    conf = mirror.GetConformer()
-    points = conf.GetPositions()
-    points[:, 0] *= -1
-    for i, point in enumerate(points):
-        conf.SetAtomPosition(i, tuple(point))
-    assert hash_rdkit(mol, method=method) == hash_rdkit(mirror, method=method)
-    left = hash_rdkit(mol, include_smiles=True, method=method)
-    right = hash_rdkit(mirror, include_smiles=True, method=method)
-    assert left.geometry_hash != right.geometry_hash
-    assert left.descriptor.split("|S:")[1] == "F[C@](Cl)(Br)I"
-    assert right.descriptor.split("|S:")[1] == "F[C@@](Cl)(Br)I"
+def test_descriptor_geometry_rejects_historical_s_descriptor():
+    with pytest.raises(ValueError, match="cannot be re-hashed by this HashMol3D"):
+        descriptor_geometry(V10_S_WATER)
 
 
-def test_s_permutation_rotation_translation_invariance():
-    mol = molecule()
-    moved = Chem.RenumberAtoms(mol, list(reversed(range(mol.GetNumAtoms()))))
-    conf = moved.GetConformer()
-    rotation = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
-    for i, point in enumerate(conf.GetPositions() @ rotation + [3, -2, 7]):
-        conf.SetAtomPosition(i, tuple(point))
-    assert hash_rdkit(mol, include_smiles=True) == hash_rdkit(moved, include_smiles=True)
+@pytest.mark.parametrize("base", ["7-FRAME-SHA256", "11.0"])
+def test_s_extension_requires_a_base_version_from_8_to_10(base):
+    stored = V10_S_WATER.replace("V:10-FRAME-SHA256", "V:" + base, 1)
+    with pytest.raises(ValueError, match="the S extension exists for versions 8-10 only"):
+        hash_descriptor(stored)
+
+
+def test_include_smiles_keyword_is_gone(tmp_path):
+    with pytest.raises(TypeError):
+        hash_rdkit(molecule(), include_smiles=True)
+    mol = molecule("CO")
+    path = tmp_path / "methanol.sdf"
+    path.write_text(Chem.MolToMolBlock(mol) + "\n$$$$\n")
+    # MOL blocks store coordinates with four decimals.
+    assert hash_file(path, input_format="sdf") == hash_molecule(
+        [atom.GetAtomicNum() for atom in mol.GetAtoms()],
+        np.round(mol.GetConformer().GetPositions(), 4),
+    )
 
 
 @pytest.mark.parametrize(
@@ -139,17 +117,11 @@ def test_smiles_distinguishes_isomers_and_isotopes(left, right):
     assert canonical_smiles(Chem.MolFromSmiles(left)) != canonical_smiles(Chem.MolFromSmiles(right))
 
 
-def test_double_bond_stereo_from_coordinates():
-    trans = hash_rdkit(molecule("F/C=C/F"), include_smiles=True)
-    cis = hash_rdkit(molecule("F/C=C\\F"), include_smiles=True)
-    assert trans.descriptor.split("|S:")[1] != cis.descriptor.split("|S:")[1]
-
-
 @pytest.mark.parametrize("smiles", ["F/C=C/F", "F/C=C\\F"])
 @pytest.mark.parametrize("flag", ["unknown", "wavy"])
 def test_unknown_graph_stereo_does_not_override_3d_geometry(smiles, flag):
     mol = molecule(smiles)
-    expected = hash_rdkit(mol, include_smiles=True)
+    expected = hash_rdkit(mol)
     double = next(bond for bond in mol.GetBonds() if bond.GetBondType() == Chem.BondType.DOUBLE)
     if flag == "unknown":
         double.SetStereo(Chem.BondStereo.STEREOANY)
@@ -159,7 +131,7 @@ def test_unknown_graph_stereo_does_not_override_3d_geometry(smiles, flag):
     # Graph-only calls still honor the unknown assignment; only the 3D path clears it.
     assert canonical_smiles(mol) == "FC=CF"
     assert canonical_smiles(mol, conf_id=0) == smiles
-    assert hash_rdkit(mol, include_smiles=True) == expected
+    assert hash_rdkit(mol) == expected
     assert mol.ToBinary() == before
 
 
@@ -169,50 +141,43 @@ def test_smiles_canonicalization_ignores_maps_order_and_ordinary_explicit_h():
     assert canonical_smiles(Chem.AddHs(Chem.MolFromSmiles("OCC"))) == expected
 
 
-def test_isotope_only_affects_s_descriptor():
+def test_isotope_does_not_affect_geometry_result():
     mol = molecule("CO")
     isotope = Chem.Mol(mol)
     isotope.GetAtomWithIdx(0).SetIsotope(13)
     assert hash_rdkit(mol) == hash_rdkit(isotope)
-    assert hash_rdkit(mol, include_smiles=True) != hash_rdkit(isotope, include_smiles=True)
 
 
 def test_charge_and_multiplicity_policy():
     mol = molecule("[NH4+]")
-    assert hash_rdkit(mol).charge == 1
-    result = hash_rdkit(mol, include_smiles=True)
-    assert "[NH4+]" in result.descriptor
-    assert (
-        hash_rdkit(mol, include_smiles=True, multiplicity=3).geometry_hash == result.geometry_hash
-    )
-    assert hash_rdkit(mol, charge=0).charge == 0
-    with pytest.raises(ValueError, match="charge must match"):
-        hash_rdkit(mol, include_smiles=True, charge=0)
+    result = hash_rdkit(mol)
+    assert result.charge == 1
+    assert result.hash_str.endswith("-q1m1")
+    triplet = hash_rdkit(mol, multiplicity=3)
+    assert triplet.geometry_hash == result.geometry_hash
+    assert triplet.descriptor == result.descriptor
+    assert triplet.hash_str == result.hash_str[: -len("q1m1")] + "q1m3"
+    # An explicit charge overrides the graph charge; it changes only the state
+    # tag (the default multiplicity follows electron parity: neutral NH4 is m2).
+    neutral = hash_rdkit(mol, charge=0)
+    assert neutral.charge == 0
+    assert neutral.geometry_hash == result.geometry_hash
+    assert neutral.hash_str == result.hash_str[: -len("q1m1")] + "q0m2"
 
 
 def test_selected_conformer():
     mol = molecule()
-    mirror = Chem.Conformer(mol.GetConformer())
-    for i, point in enumerate(mirror.GetPositions() * [-1, 1, 1]):
-        mirror.SetAtomPosition(i, tuple(point))
-    mirror.SetId(7)
-    mol.AddConformer(mirror, assignId=False)
-    assert hash_rdkit(mol, conf_id=0, include_smiles=True) != hash_rdkit(
-        mol, conf_id=7, include_smiles=True
-    )
+    # The geometry hash is mirror-invariant, so use a non-congruent conformer.
+    stretched = Chem.Conformer(mol.GetConformer())
+    for i, point in enumerate(stretched.GetPositions() * 1.1):
+        stretched.SetAtomPosition(i, tuple(point))
+    stretched.SetId(7)
+    mol.AddConformer(stretched, assignId=False)
+    first = hash_rdkit(mol, conf_id=0)
+    assert first == hash_rdkit(mol)
+    assert first.geometry_hash != hash_rdkit(mol, conf_id=7).geometry_hash
     with pytest.raises(ValueError):
         hash_rdkit(mol, conf_id=99)
-
-
-def test_xyz_bond_perception_is_opt_in(tmp_path):
-    path = xyz_file(tmp_path, molecule())
-    base = hash_xyz(path)
-    result = hash_xyz(path, include_smiles=True)
-    assert "|S:F[C@](Cl)(Br)I" in result.descriptor
-    assert result.descriptor.split("|S:")[0].split("|", 1)[1] == base.descriptor.split("|", 1)[1]
-    assert hash_xyz(path) == base
-    charged = xyz_file(tmp_path, molecule("[NH4+]"))
-    assert "|S:[NH4+]" in hash_xyz(charged, include_smiles=True, charge=1).descriptor
 
 
 @pytest.mark.parametrize("fmt", ["mol", "sdf", "pdb"])
@@ -224,11 +189,7 @@ def test_file_readers_preserve_explicit_atoms_and_geometry(tmp_path, fmt):
     read = read_rdkit(path)
     assert read.GetNumAtoms() == mol.GetNumAtoms()
     assert hash_file(path, input_format=fmt) == hash_rdkit(read)
-    if fmt == "pdb":
-        assert cli([str(path), "--input-format", fmt]) == 0
-        return
-    assert "|S:CO" in hash_file(path, input_format=fmt, include_smiles=True).descriptor
-    assert cli([str(path), "--input-format", fmt, "--include-smiles"]) == 0
+    assert cli([str(path), "--input-format", fmt]) == 0
 
 
 def test_sdf_rejects_multiple_or_invalid_records(tmp_path):
@@ -256,9 +217,9 @@ def test_sdf_accepts_trailing_whitespace(tmp_path, trailing):
     path = tmp_path / "single.sdf"
     block = Chem.MolToMolBlock(molecule("O")) + "\n$$$$\n"
     path.write_text(block)
-    expected = hash_file(path, input_format="sdf", include_smiles=True)
+    expected = hash_file(path, input_format="sdf")
     path.write_text(block + trailing)
-    assert hash_file(path, input_format="sdf", include_smiles=True) == expected
+    assert hash_file(path, input_format="sdf") == expected
 
 
 @pytest.mark.parametrize("force_v3000", [False, True])
@@ -306,7 +267,7 @@ def test_sdf_properties_can_contain_mol_end_text(tmp_path):
     assert mol.GetNumAtoms() == 3
     assert mol.GetProp("notes") == "M  END\nnot a second molecule"
     assert mol.GetProp("name") == "water"
-    assert hash_file(path, input_format="sdf", include_smiles=True).descriptor.endswith("|S:O")
+    assert hash_file(path, input_format="sdf").formula == "H2O"
 
 
 def test_sdf_rejects_molecule_after_a_complete_data_item(tmp_path):
@@ -321,44 +282,36 @@ def test_sdf_rejects_molecule_after_a_complete_data_item(tmp_path):
         read_rdkit(path)
 
 
-@pytest.mark.parametrize("include_smiles", [False, True])
 @pytest.mark.parametrize("smiles", ["CCO", "[NH4+]"])
-def test_hydrogens_without_coordinates_require_explicit_opt_in(
-    tmp_path, capsys, include_smiles, smiles
-):
+def test_hydrogens_without_coordinates_require_explicit_opt_in(tmp_path, capsys, smiles):
     mol = Chem.RemoveHs(molecule(smiles))
     before = mol.ToBinary()
     with pytest.raises(ValueError, match="allow_implicit_hydrogens=True"):
-        hash_rdkit(mol, include_smiles=include_smiles)
-    allowed = hash_rdkit(mol, include_smiles=include_smiles, allow_implicit_hydrogens=True)
+        hash_rdkit(mol)
+    allowed = hash_rdkit(mol, allow_implicit_hydrogens=True)
     assert allowed.formula == ("C2O" if smiles == "CCO" else "N")
-    if include_smiles:
-        assert allowed.descriptor.endswith("|S:" + smiles)
+    assert allowed.charge == (0 if smiles == "CCO" else 1)
     assert mol.ToBinary() == before
     path = tmp_path / "implicit.sdf"
     path.write_text(Chem.MolToMolBlock(mol) + "\n$$$$\n")
     with pytest.raises(ValueError, match="implicit hydrogens"):
-        hash_file(path, input_format="sdf", include_smiles=include_smiles)
-    assert (
-        hash_file(
-            path, input_format="sdf", include_smiles=include_smiles, allow_implicit_hydrogens=True
-        ).formula
-        == allowed.formula
+        hash_file(path, input_format="sdf")
+    assert hash_file(path, input_format="sdf", allow_implicit_hydrogens=True) == hash_rdkit(
+        read_rdkit(path), allow_implicit_hydrogens=True
     )
-    args = [str(path), "--input-format", "sdf"] + (["--include-smiles"] if include_smiles else [])
+    args = [str(path), "--input-format", "sdf"]
     assert cli(args) == 1
     output = capsys.readouterr()
     assert not output.out
     assert "--allow-implicit-hydrogens" in output.err
     assert cli([*args, "--allow-implicit-hydrogens"]) == 0
     # Explicitly generating full coordinates is another supported route.
-    assert hash_file(
-        path, input_format="sdf", generate_coordinates=True, include_smiles=include_smiles
-    ).formula == ("C2H6O" if smiles == "CCO" else "H4N")
+    assert hash_file(path, input_format="sdf", generate_coordinates=True).formula == (
+        "C2H6O" if smiles == "CCO" else "H4N"
+    )
 
 
-@pytest.mark.parametrize("include_smiles", [False, True])
-def test_unsanitized_explicit_h_molecule_initializes_only_its_copy(include_smiles):
+def test_unsanitized_explicit_h_molecule_initializes_only_its_copy():
     params = Chem.SmilesParserParams()
     params.sanitize = False
     params.removeHs = False
@@ -369,29 +322,24 @@ def test_unsanitized_explicit_h_molecule_initializes_only_its_copy(include_smile
     before = unsanitized.ToBinary()
     sanitized = Chem.Mol(unsanitized)
     Chem.SanitizeMol(sanitized)
-    assert hash_rdkit(unsanitized, include_smiles=include_smiles) == hash_rdkit(
-        sanitized, include_smiles=include_smiles
-    )
+    assert hash_rdkit(unsanitized) == hash_rdkit(sanitized)
     assert unsanitized.NeedsUpdatePropertyCache()
     assert unsanitized.ToBinary() == before
 
 
-@pytest.mark.parametrize("include_smiles", [False, True])
-def test_unsanitized_implicit_h_molecule_uses_the_normal_hydrogen_policy(include_smiles):
+def test_unsanitized_implicit_h_molecule_uses_the_normal_hydrogen_policy():
     mol = Chem.MolFromSmiles("CCO", sanitize=False)
     mol.AddConformer(Chem.RemoveHs(molecule("CCO")).GetConformer())
     before = mol.ToBinary()
     with pytest.raises(ValueError, match="allow_implicit_hydrogens=True"):
-        hash_rdkit(mol, include_smiles=include_smiles)
-    result = hash_rdkit(mol, include_smiles=include_smiles, allow_implicit_hydrogens=True)
+        hash_rdkit(mol)
+    result = hash_rdkit(mol, allow_implicit_hydrogens=True)
     assert result.formula == "C2O"
-    if include_smiles:
-        assert result.descriptor.endswith("|S:CCO")
     assert mol.ToBinary() == before
 
 
 @pytest.mark.parametrize("with_conect", [False, True])
-def test_pdb_s_is_refused_even_with_hydrogen_override(tmp_path, capsys, with_conect):
+def test_pdb_coordinate_generation_is_refused(tmp_path, capsys, with_conect):
     block = Chem.MolToPDBBlock(molecule("c1ccccc1"))
     if not with_conect:
         block = (
@@ -401,22 +349,13 @@ def test_pdb_s_is_refused_even_with_hydrogen_override(tmp_path, capsys, with_con
     path.write_text(block)
     # Geometry is still usable regardless of guessed bond orders.
     assert hash_file(path, input_format="pdb").formula == "C6H6"
-    with pytest.raises(ValueError, match="PDB input is not supported for S tagging"):
-        hash_file(
-            path,
-            input_format="pdb",
-            include_smiles=True,
-            allow_implicit_hydrogens=True,
-        )
+    assert hash_file(path, input_format="pdb", allow_implicit_hydrogens=True).formula == "C6H6"
     with pytest.raises(ValueError, match="generate_coordinates is not supported for PDB"):
         hash_file(path, input_format="pdb", generate_coordinates=True)
-    assert (
-        cli([str(path), "--input-format", "pdb", "--include-smiles", "--allow-implicit-hydrogens"])
-        == 1
-    )
+    assert cli([str(path), "--input-format", "pdb", "--generate-coordinates"]) == 1
     output = capsys.readouterr()
     assert not output.out
-    assert "use SDF or hash_rdkit" in output.err
+    assert "generate_coordinates is not supported for PDB" in output.err
 
 
 @pytest.mark.parametrize(
@@ -452,12 +391,9 @@ def test_coordinate_generation_requires_explicit_opt_in(tmp_path, fmt, text):
     path.write_text(text + "\n")
     with pytest.raises(ValueError, match="no coordinates"):
         hash_file(path, input_format=fmt)
-    result = hash_file(path, input_format=fmt, generate_coordinates=True, include_smiles=True)
+    result = hash_file(path, input_format=fmt, generate_coordinates=True)
     assert result.formula == "CH4O"
-    assert "|S:CO" in result.descriptor
-    assert result == hash_file(
-        path, input_format=fmt, generate_coordinates=True, include_smiles=True
-    )
+    assert result == hash_file(path, input_format=fmt, generate_coordinates=True)
     assert cli([str(path), "--input-format", fmt, "--generate-coordinates"]) == 0
 
 
@@ -475,11 +411,11 @@ def test_2d_and_invalid_graphs_are_rejected():
             hash_rdkit(invalid)
 
 
-def test_errors_are_clean_and_never_drop_requested_s(tmp_path, capsys):
+def test_errors_are_clean(tmp_path, capsys):
     path = tmp_path / "invalid.smi"
     for text in ("invalid!", "CCO\nCC", "", "F[C@](Cl)(Br)I |o1:1|"):
         path.write_text(text)
-        assert cli([str(path), "--input-format", "smi", "--include-smiles"]) == 1
+        assert cli([str(path), "--input-format", "smi", "--generate-coordinates"]) == 1
         output = capsys.readouterr()
         assert not output.out
         assert "hashmol3d:" in output.err
@@ -488,7 +424,7 @@ def test_errors_are_clean_and_never_drop_requested_s(tmp_path, capsys):
     assert cli([str(path), "--generate-coordinates"]) == 1
     path.write_text("3\nwater\nO 0 0 0\nH .7572 .586 0\nH -.7572 .586 0\n")
     with pytest.raises(SearchBudgetExceeded):
-        hash_xyz(path, include_smiles=True, method="canonical", node_budget=1)
+        hash_xyz(path, method="distance", node_budget=1)
 
 
 def test_mol2_reader(tmp_path):
@@ -501,24 +437,8 @@ def test_mol2_reader(tmp_path):
     )
     assert read_rdkit(path).GetNumAtoms() == 3
     assert hash_file(path, input_format="mol2").hash_str == (
-        "H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1"
+        "h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1"
     )
-    assert hash_file(path, input_format="mol2", include_smiles=True).descriptor.endswith("|S:O")
-
-
-def test_bond_perception_failure_is_fatal_only_for_s(tmp_path, capsys):
-    path = tmp_path / "bad_chemistry.xyz"
-    path.write_text("2\nseparated carbon and hydrogen\nC 0 0 0\nH 10 0 0\n")
-    assert hash_xyz(path).formula == "CH"
-    assert cli([str(path), "--include-smiles"]) == 1
-    output = capsys.readouterr()
-    assert not output.out
-    assert "hashmol3d:" in output.err
-    assert "bond perception failed for XYZ input at charge 0" in output.err
-    assert "multiplicity does not control bond perception" in output.err
-    with pytest.raises(ValueError, match="bond perception failed") as error:
-        hash_xyz(path, include_smiles=True, multiplicity=2)
-    assert error.value.__cause__ is not None
 
 
 def test_embedding_failure_is_fatal(tmp_path, monkeypatch):
