@@ -3,11 +3,12 @@ HashMol3D core: a deterministic identifier for 3D molecular conformers.
 
 The identifier has the form::
 
-    <Hill formula><state tag>-<geometry hash>
+    hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example, ``H2Oq0m1-8ec3152a...`` for neutral singlet water.
+For example, ``hm3d_v11_p4_H2O_q0m1_<32 hex>`` for neutral singlet water at
+the default 1e-4 Å grid.
 
-The trailing hexadecimal hash is invariant under the operations that
+The hexadecimal geometry hash is invariant under the operations that
 leave the non-relativistic molecular Hamiltonian's eigenvalues unchanged:
 
   * rigid translation of the coordinates
@@ -19,16 +20,19 @@ By default the hash is built from element-labelled coordinates in a
 deterministic canonical frame. Principal axes handle ordinary geometries;
 intrinsic point/line representations and canonical atom anchors resolve
 degenerate eigenspaces without random perturbations. The full canonical
-labelled distance matrix remains available with ``method="canonical"``.
-The normal ``F`` and ``C`` paths are complete representations at their
-quantization grids; unlike a plain multiset of pairwise distances, homometric
-pairs do not collide. Exhausting the canonical search budget raises
-``SearchBudgetExceeded`` without creating a descriptor or hash.
+labelled distance matrix remains available with ``method="distance"``
+(the ``D`` section, called ``C`` before version 11). The normal ``F`` and
+``D`` paths are complete representations at their quantization grids; unlike
+a plain multiset of pairwise distances, homometric pairs do not collide.
+Exhausting the canonical search budget raises ``SearchBudgetExceeded``
+without creating a descriptor or hash.
 
-The descriptor depends on atomic numbers, geometry quantized at a user
-specified precision, and the descriptor version. Total charge and spin
-multiplicity are encoded in the readable prefix, not inside the hash, so
-changing charge or multiplicity only changes the prefix.
+The geometry hash is the SHA-256 digest of
+``P:<precision>|Z:<atomic numbers>|F:<rows>`` (or ``|D:<distances>``). The
+descriptor version is not hashed; its major number is written in the readable
+identifier, next to the precision, and total charge and spin multiplicity in
+its state tag, so changing charge or multiplicity
+only changes that tag.
 
 Re-hashing is idempotent. ``F`` descriptors store canonical-frame rows on a
 grid ``10**4`` times finer than the precision and hash them rounded back to
@@ -68,9 +72,25 @@ __all__ = [
 ]
 
 
-# The descriptor version is part of the hashed payload. Bump it whenever
-# the descriptor format changes in a way that would alter hashes.
-DESCRIPTOR_VERSION = "10-FRAME-SHA256"
+# The descriptor version, ``<major>.<minor>``, written in full in stored
+# descriptors (``V:11.0``). From version 11 it is not hashed: its major
+# number appears in the readable identifier (``hm3d_v11_...``), and the
+# geometry hash covers the P and Z fields and the geometry section. Bump the
+# major version whenever any geometry hash can change, and the minor version
+# for compatible changes (for example stricter validation) that leave every
+# hash, and so every identifier, unchanged.
+DESCRIPTOR_VERSION = "11.0"
+_VERSION_NUMBER = int(DESCRIPTOR_VERSION.split(".")[0])
+
+# Prefix of every readable identifier. Fields are joined by "_", which no
+# field contains, so identifiers are file-name safe and split unambiguously.
+_IDENTIFIER_PREFIX = "hm3d"
+
+# First descriptor version whose hashed payload omits the version:
+# ``P:...|Z:...|<section>``. Earlier versions hashed ``V:...|P:...|Z:...|<section>``.
+# The precision stays hashed, so a bare geometry hash identifies a geometry
+# on one grid, and an edited ``P`` field no longer re-hashes to the digest.
+_UNVERSIONED_PAYLOAD_SINCE = 11
 
 # Extra decimal digits carried by ``F`` rows beyond the hashing grid. The
 # descriptor stores canonical-frame coordinates on the fine grid
@@ -103,11 +123,13 @@ _FINE_ROWS_SINCE = 10
 # (earlier versions hashed different bodies); release 0.7.0 wrote C and W
 # sections under it and 0.8.0 added F. Versions 5 and 6 fell back to the W
 # (Weisfeiler-Lehman multiset) section when the canonical search exhausted
-# its budget; version 7 made exhaustion an error.
+# its budget; version 7 made exhaustion an error. Version 11 renamed the
+# distance section from C to D.
 _DESCRIPTOR_SECTIONS = {
     "5-CANON-SHA256": "FCW",
     "6-FRAME-SHA256": "FCW",
     **{f"{v}-FRAME-SHA256": "FC" for v in range(7, 11)},
+    "11.0": "FD",
 }
 
 # First descriptor version that requires a power-of-ten precision <= 1 Å.
@@ -451,7 +473,7 @@ def _distances_within_floor(atomic_nums: np.ndarray, qmat: np.ndarray) -> bool:
     from the weighted centroid is ``A_i / W**2``, where
     ``A_i = W * sum_j w_j q_ij**2 - sum_{j<k} w_j w_k q_jk**2``. The test
     ``A_i <= W**2 * _RESOLUTION_CELLS**2`` uses only the hashed distances, so
-    it is the same for every geometry with the same ``C`` section, and a
+    it is the same for every geometry with the same ``D`` section, and a
     stored descriptor can be checked against it exactly. A floating-point
     estimate settles all atoms except those near the limit, which are
     recomputed with Python integers.
@@ -510,6 +532,21 @@ def _hill_formula(atomic_nums: np.ndarray) -> str:
     ordered.extend(rest)
 
     return "".join(sym if n == 1 else f"{sym}{n}" for sym, n in ordered)
+
+
+def _identifier(decimals: int, formula: str, digest: str, charge: int, mult: int) -> str:
+    """``hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>``.
+
+    The precision appears as its number of decimals (``p4`` for 1e-4 Å); it
+    is also hashed, so the field is a readable label that the geometry hash
+    confirms. Only the major version is
+    written: a minor version never changes a hash, so it must not change the
+    identifier either.
+    """
+    return (
+        f"{_IDENTIFIER_PREFIX}_v{_VERSION_NUMBER}_p{decimals}_{formula}_"
+        f"{_state_tag(charge, mult)}_{digest}"
+    )
 
 
 def _state_tag(charge: int, multiplicity: int) -> str:
@@ -577,7 +614,7 @@ def _canonical_signature(
 ) -> tuple[str, tuple[int, ...], str]:
     """Canonical geometry signature: ``(section_tag, z_ordered, body)``.
 
-    Canonical path (tag ``"C"``): finds an atom ordering that is a pure
+    Distance path (tag ``"D"``): finds an atom ordering that is a pure
     function of the geometry -- iterated WL refinement, then an
     individualization-refinement search whose leaves are discrete
     orderings, keeping the lexicographically smallest distance matrix --
@@ -591,7 +628,7 @@ def _canonical_signature(
     n = atomic_nums.shape[0]
     z = atomic_nums.astype(np.int64)
     if n == 1:
-        return "C", (int(z[0]),), ""
+        return "D", (int(z[0]),), ""
 
     # Dense ranks of Z (initial colors) and of the scaled distances.
     _, inv = np.unique(z, return_inverse=True)
@@ -657,7 +694,7 @@ def _canonical_signature(
     assert best_order is not None
     qc = qmat[np.ix_(best_order, best_order)][iu, ju]
     body = ",".join(map(str, qc.tolist()))
-    return "C", tuple(int(v) for v in z[best_order]), body
+    return "D", tuple(int(v) for v in z[best_order]), body
 
 
 def _lex_less(a: np.ndarray, b: np.ndarray) -> bool:
@@ -995,7 +1032,7 @@ def _format_descriptor(
 
     Charge and multiplicity are *not* included: they are part of the
     readable prefix of the final identifier, not of the hashed payload.
-    ``F`` bodies hold canonical-frame coordinates and ``C`` bodies distances,
+    ``F`` bodies hold canonical-frame coordinates and ``D`` bodies distances,
     as exact integers on a grid whose scale is fixed by the ``P:`` field.
     """
     prec_str = f"{precision:.1e}"
@@ -1008,6 +1045,18 @@ def _format_descriptor(
             tag + ":" + body,
         ]
     )
+
+
+def _geometry_payload(
+    precision: float, z_ordered: tuple[int, ...], tag: str, hashed_body: str
+) -> str:
+    """The hashed payload of a current-version descriptor, ``P:...|Z:...|<section>``.
+
+    The version is not hashed; its major number is part of the readable
+    identifier (see :func:`hash_molecule`).
+    """
+    z_part = ",".join(str(v) for v in z_ordered)
+    return f"P:{precision:.1e}|Z:{z_part}|{tag}:{hashed_body}"
 
 
 _CANONICAL_INT = re.compile(r"0|-?[1-9][0-9]*")
@@ -1087,10 +1136,12 @@ def _check_wl_rows(body: str, z: tuple[int, ...]) -> None:
             raise _invalid("W row colors do not match the other atoms")
 
 
-# The optional RDKit S extension (rdkit_support, since version 8) appends
-# "|S:<canonical isomeric SMILES>" and suffixes the base version.
+# The RDKit S extension of versions 8-10 appended "|S:<canonical isomeric
+# SMILES>" and suffixed the base version. Version 11 hashes geometry only and
+# has no S extension; stored S descriptors still re-hash.
 _S_VERSION = re.compile(r"(.+)-S1-RDKIT-[A-Za-z0-9._~%-]+")
 _S_SINCE = 8
+_S_UNTIL = 10
 
 
 def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
@@ -1112,10 +1163,10 @@ def _parse_descriptor(descriptor: str) -> _ParsedDescriptor:
     if fields[4] == "S:":
         raise _invalid("the S section is empty")
     base = _parse_base_descriptor("|".join(("V:" + match.group(1), *fields[1:4])))
-    if base.number < _S_SINCE:
+    if not _S_SINCE <= base.number <= _S_UNTIL:
         raise ValueError(
             f"unsupported descriptor version {fields[0][2:]!r}: the S extension "
-            f"starts with version {_S_SINCE}"
+            f"exists for versions {_S_SINCE}-{_S_UNTIL} only"
         )
     return replace(base, fields=fields, extension=fields[4])
 
@@ -1129,8 +1180,8 @@ def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
     numbers (range and ascending order), row elements against ``Z``, the
     canonical row order, the distance count, integer formatting and int64
     bounds. For version 10 it also checks the fine-row rounding margin and
-    the exact resolution floor of the ``F`` rows or ``C`` distances. These
-    are necessary conditions: they do not check that ``C`` distances are
+    the exact resolution floor of the ``F`` rows or ``C``/``D`` distances.
+    These are necessary conditions: they do not check that distances are
     realizable in three dimensions or that ``W`` rows come from one
     geometry.
 
@@ -1145,17 +1196,21 @@ def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
         or not fields[0].startswith("V:")
         or not fields[1].startswith("P:")
         or not fields[2].startswith("Z:")
-        or fields[3][:2] not in ("F:", "C:", "W:")
+        or fields[3][:2] not in ("F:", "D:", "C:", "W:")
     ):
         raise ValueError(
-            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' (or a C or W section)"
+            "not a HashMol3D descriptor: expected 'V:...|P:...|Z:...|F:...' "
+            "(or a D, C or W section)"
         )
     version = fields[0][2:]
-    match = re.fullmatch(r"([1-9][0-9]*)-[A-Z0-9]+(?:-[A-Z0-9]+)*", version)
+    # Versions 5-10 are written "<n>-FRAME-SHA256" (or -CANON-); from 11 on
+    # "<major>.<minor>".
+    match = re.fullmatch(r"([1-9][0-9]*)(?:\.(0|[1-9][0-9]*)|(?:-[A-Z0-9]+)+)", version)
     if match is None:
         raise ValueError(f"unrecognized descriptor version {version!r}")
     number = int(match.group(1))
-    if number > int(DESCRIPTOR_VERSION.split("-", 1)[0]):
+    minor = int(match.group(2) or 0)
+    if (number, minor) > tuple(int(v) for v in DESCRIPTOR_VERSION.split(".")):
         raise ValueError(
             f"descriptor version {version!r} is newer than this HashMol3D ({DESCRIPTOR_VERSION})"
         )
@@ -1199,7 +1254,7 @@ def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
 
     body = fields[3][2:]
     fine = number >= _FINE_ROWS_SINCE
-    if tag == "C":
+    if tag in ("C", "D"):
         n = len(z)
         values = body.split(",") if body else []
         if len(values) != n * (n - 1) // 2:
@@ -1284,21 +1339,27 @@ def _hashed_payload(descriptor: str) -> str:
     For descriptor version 10 and later, ``F`` rows carry canonical-frame
     coordinates on a grid ``10**4`` times finer than the ``P:`` precision.
     Normalization rounds each of those integers half-to-even back onto the
-    precision grid, in exact integer arithmetic, and leaves every other field
-    unchanged. ``C`` descriptors and descriptors from earlier versions are
-    already in hashed form and are returned unchanged. The payload shares the
-    stored form's version tag, so it is kept internal: normalizing it again
-    would round the coarse values a second time.
+    precision grid, in exact integer arithmetic; distance sections and
+    earlier versions' rows are already in hashed form. From version 11 the
+    payload is ``P:...|Z:...|<section>``, without the version; earlier
+    versions hash the full
+    ``V|P|Z|<section>`` string (plus ``|S:...`` for the RDKit S extension
+    of versions 8-10). The payload is kept internal: it is not a stored
+    descriptor, and normalizing a version 10 payload again would round the
+    coarse values a second time.
 
     Raises:
         ValueError: if ``descriptor`` is not a valid stored descriptor
             (:func:`_parse_descriptor`).
     """
     parsed = _parse_descriptor(descriptor)
-    if parsed.coarse is None:
-        return descriptor
-    rows = ";".join(f"{r[0]}:{c[0]},{c[1]},{c[2]}" for r, c in zip(parsed.rows, parsed.coarse))
-    return "|".join((*parsed.fields[:3], "F:" + rows, *parsed.fields[4:]))
+    section = parsed.fields[3]
+    if parsed.coarse is not None:
+        rows = zip(parsed.rows, parsed.coarse)
+        section = "F:" + ";".join(f"{r[0]}:{c[0]},{c[1]},{c[2]}" for r, c in rows)
+    if parsed.number >= _UNVERSIONED_PAYLOAD_SINCE:
+        return "|".join((*parsed.fields[1:3], section))
+    return "|".join((*parsed.fields[:3], section, *parsed.fields[4:]))
 
 
 def _check_length(length) -> int:
@@ -1320,9 +1381,9 @@ def hash_descriptor(descriptor: str, *, length: int | None = None) -> str:
 
     ``hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
     r.geometry_hash`` holds exactly for every :class:`HashMol3DResult` ``r``,
-    for ``F`` and ``C`` descriptors alike. This is the exact idempotent
-    re-hash; the readable ``<formula><state>-`` prefix is not part of the
-    descriptor and must be kept alongside it.
+    for ``F`` and ``D`` descriptors alike. This is the exact idempotent
+    re-hash; the rest of the readable identifier (version, precision,
+    formula, state tag) is not hashed and must be kept alongside it.
 
     Args:
         descriptor: a descriptor string as returned in
@@ -1335,7 +1396,7 @@ def hash_descriptor(descriptor: str, *, length: int | None = None) -> str:
             version (any supported version, with or without the RDKit S
             extension); corrupted or hand-edited descriptors are rejected
             rather than hashed. The checks are necessary conditions: they do
-            not test that ``C`` distances are realizable in three dimensions.
+            not test that distances are realizable in three dimensions.
     """
     length = _check_length(length)
     payload = _hashed_payload(descriptor)
@@ -1408,7 +1469,7 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
     geometry.
 
     Raises:
-        ValueError: for a ``C`` descriptor, whose canonical labelled distance
+        ValueError: for a ``D`` (or ``C``) descriptor, whose canonical labelled distance
             matrix has no coordinates; for a descriptor of another version;
             or for a malformed descriptor.
 
@@ -1422,9 +1483,10 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
         # The geometry is the base descriptor's; SMILES adds no coordinates.
         descriptor = "|".join(("V:" + parsed.base_version, *parsed.fields[1:4]))
         parsed = _parse_descriptor(descriptor)
-    if parsed.tag == "C":
+    if parsed.tag in ("C", "D"):
         raise ValueError(
-            "C descriptors store a canonical distance matrix, not coordinates; "
+            "distance (D, formerly C) descriptors store a canonical distance matrix, "
+            "not coordinates; "
             "keep the source coordinates or use hash_descriptor() to re-hash"
         )
     if parsed.fields[0] != "V:" + DESCRIPTOR_VERSION:
@@ -1432,7 +1494,7 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
             f"descriptor version {parsed.fields[0][2:]!r} cannot be re-hashed by this "
             f"HashMol3D ({DESCRIPTOR_VERSION}); use hash_descriptor() instead"
         )
-    decimals, precision = parsed.decimals, parsed.precision
+    decimals = parsed.decimals
     rows = np.array(parsed.rows, dtype=np.int64)
     z, stored = rows[:, 0], rows[:, 1:]
     target = _hashed_payload(descriptor)
@@ -1448,9 +1510,7 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
         signature = _frame_signature(z, coords, decimals)
         if signature is not None:
             tag, z_ordered, body, hashed_body, within_floor = signature
-            rehashed = _format_descriptor(
-                DESCRIPTOR_VERSION, precision, z_ordered, tag, hashed_body
-            )
+            rehashed = _geometry_payload(parsed.precision, z_ordered, tag, hashed_body)
             # The same hashed rows imply the same resolution-floor decision
             # in hash_molecule(); check it anyway, as hash_molecule() does.
             if rehashed == target and within_floor:
@@ -1487,9 +1547,10 @@ def hash_molecule(
 ) -> HashMol3DResult:
     """Compute the HashMol3D identifier for a 3D molecular geometry.
 
-    The identifier has the form ``<Hill formula><state tag>-<geom hash>``,
-    e.g. ``H2Oq0m1-8ec3152a...``. Charge and multiplicity appear in the
-    readable prefix; only the geometry contributes to the hash.
+    The identifier has the form
+    ``hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>``,
+    e.g. ``hm3d_v11_p4_H2O_q0m1_<32 hex>``. Only the precision, the atomic
+    numbers and the quantized geometry contribute to the hash.
 
     Args:
         atomic_nums: integer array-like of atomic numbers, shape ``(N,)``.
@@ -1508,9 +1569,10 @@ def hash_molecule(
             depends on how many distinct geometries share a namespace, not on
             molecule size; use :func:`hash_length_for` to size the hash to a
             target corpus and probability.
-        method: ``"frame"`` (default) or ``"canonical"``. The canonical
-            method hashes the labeled distance matrix in a canonical atom
-            order (complete, but O(N^2) memory). The frame method
+        method: ``"frame"`` (default) or ``"distance"`` (``"canonical"`` is a
+            deprecated alias). The distance method hashes the labeled
+            distance matrix in a canonical atom order (complete, but O(N^2)
+            memory). The frame method
             hashes coordinates in the principal-axes frame of the Z-weighted
             gyration tensor -- normally O(N log N) time and O(N) memory,
             suited to proteins and other large systems. Degenerate principal
@@ -1518,8 +1580,8 @@ def hash_molecule(
             canonical atom anchors. Clouds too small to anchor (radius below
             ten grid units with degenerate moments), ill-conditioned anchors
             and candidate-budget overflows emit :class:`UserWarning` and use
-            the canonical
-            method instead (detectable via the ``C:`` section in
+            the distance
+            method instead (detectable via the ``D:`` section in
             ``result.descriptor`` instead of ``F:``).
             Identifiers from different methods are **not comparable**; pick
             one method per corpus.
@@ -1554,8 +1616,15 @@ def hash_molecule(
 
     length = _check_length(length)
 
-    if method not in ("canonical", "frame"):
-        raise ValueError(f"method must be 'canonical' or 'frame', got {method!r}")
+    if method == "canonical":
+        warnings.warn(
+            "method='canonical' is deprecated; use method='distance'",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        method = "distance"
+    if method not in ("distance", "frame"):
+        raise ValueError(f"method must be 'frame' or 'distance', got {method!r}")
 
     if (
         isinstance(node_budget, (bool, np.bool_))
@@ -1586,7 +1655,7 @@ def hash_molecule(
             warnings.warn(
                 "no numerically stable canonical frame was found within the "
                 f"{_FRAME_CANDIDATE_BUDGET}-candidate budget; falling back "
-                "to method='canonical'. A C descriptor is returned only if "
+                "to method='distance'. A D descriptor is returned only if "
                 "the canonical search completes within node_budget.",
                 UserWarning,
                 stacklevel=2,
@@ -1603,13 +1672,11 @@ def hash_molecule(
             raise _resolution_error(effective_precision, extent)
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
     # Equal to _hashed_payload(descriptor), built without re-parsing it.
-    payload = _format_descriptor(
-        DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, hashed_body
-    )
+    payload = _geometry_payload(effective_precision, z_ordered, tag, hashed_body)
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
 
     formula = _hill_formula(atomic_nums)
-    identifier = f"{formula}{_state_tag(charge, used_mult)}-{digest}"
+    identifier = _identifier(decimals, formula, digest, charge, used_mult)
 
     return HashMol3DResult(
         hash_str=identifier,

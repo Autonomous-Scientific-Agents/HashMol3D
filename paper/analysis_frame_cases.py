@@ -36,7 +36,7 @@ def diagnose(case, precision, threshold):
         signature = core._frame_signature(z, coords, round(-np.log10(precision)))
     finally:
         core._FRAME_GAP_MIN = original
-    tag = "C" if signature is None else signature[0]
+    tag = "D" if signature is None else signature[0]
     return {
         "qm9_id": case["qm9_id"],
         "formula": case["formula"],

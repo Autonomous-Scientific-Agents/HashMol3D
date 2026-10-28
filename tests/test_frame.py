@@ -78,7 +78,7 @@ class TestFrameMethod:
         z, coords = chiral_chfclbr
         res = hash_molecule(z, coords, method="frame")
         assert "|F:" in res.descriptor
-        assert "|C:" not in res.descriptor
+        assert "|D:" not in res.descriptor
 
     def test_invariance_including_reflection(self, chiral_chfclbr):
         z, coords = chiral_chfclbr
@@ -114,9 +114,9 @@ class TestFrameMethod:
     def test_not_comparable_with_canonical(self, chiral_chfclbr):
         z, coords = chiral_chfclbr
         f = hash_molecule(z, coords, method="frame")
-        c = hash_molecule(z, coords, method="canonical")
+        c = hash_molecule(z, coords, method="distance")
         assert f.geometry_hash != c.geometry_hash
-        assert "|F:" in f.descriptor and "|C:" in c.descriptor
+        assert "|F:" in f.descriptor and "|D:" in c.descriptor
 
     def test_invalid_method_rejected(self, water):
         z, coords = water
@@ -267,7 +267,7 @@ class TestNearLinearAnchors:
         z, coords = _near_linear_chain(8, 0.75, 1e-4, seed=5)
         with pytest.warns(UserWarning, match="stable canonical frame"):
             res = hash_molecule(z, coords, precision=1e-4)
-        assert "|C:" in res.descriptor
+        assert "|D:" in res.descriptor
 
     def test_bend_below_half_cell_is_an_intrinsic_line(self):
         z, coords = _near_linear_chain(8, 0.3, 1e-4, seed=5)
@@ -285,7 +285,7 @@ class TestNearLinearAnchors:
         coords = np.array([[-1.0, 0.0, 0.0], [0.0, 0.3, 0.0], [1.0, 0.0, 0.0]])
         with pytest.warns(UserWarning, match="stable canonical frame"):
             res = hash_molecule(z, coords, precision=1.0)
-        assert "|C:" in res.descriptor
+        assert "|D:" in res.descriptor
 
 
 class TestQM9NearLines:
@@ -327,7 +327,7 @@ class TestQM9NearLines:
 
     @pytest.mark.parametrize(
         "case_id, precision, expected",
-        [("gdb_2", 0.1, "C"), ("gdb_3", 0.1, "F"), ("gdb_3", 1.0, "F")],
+        [("gdb_2", 0.1, "D"), ("gdb_3", 0.1, "F"), ("gdb_3", 1.0, "F")],
     )
     def test_tiny_molecule_decisions(self, case_id, precision, expected):
         case = self._case(case_id)
@@ -343,7 +343,7 @@ class TestFrameFallback:
         coords = np.array([[-1.0, 0.0, 0.0], [0.0, 0.01, 0.0], [1.0, 0.0, 0.0]])
         with pytest.warns(UserWarning, match="stable canonical frame"):
             res = hash_molecule(z, coords, precision=1.0, method="frame")
-        canonical = hash_molecule(z, coords, precision=1.0, method="canonical")
+        canonical = hash_molecule(z, coords, precision=1.0, method="distance")
         assert res.descriptor == canonical.descriptor
 
     def test_candidate_budget_fallback_is_permutation_invariant(self, benzene, monkeypatch):
@@ -351,7 +351,7 @@ class TestFrameFallback:
         z, coords = benzene
         with pytest.warns(UserWarning, match="3-candidate budget"):
             res = hash_molecule(z, coords, method="frame")
-        assert "|C:" in res.descriptor
+        assert "|D:" in res.descriptor
         rng = np.random.default_rng(19)
         for t in range(10):
             zz, cc = _scramble(z, coords, rng, reflect=(t % 2 == 1))
@@ -363,4 +363,4 @@ class TestFrameFallback:
         z, coords = benzene
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            hash_molecule(z, coords, method="canonical")
+            hash_molecule(z, coords, method="distance")

@@ -15,8 +15,9 @@ hashmol3d --help
 behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
-The identifier has the form `<formula><state>-<hash>`, e.g.
-`H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`. See the
+The identifier has the form
+`hm3d_v<major version>_p<decimals>_<formula>_<state>_<geometry hash>`, e.g.
+`hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
@@ -27,10 +28,9 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 | `-c` | `--charge`       | infer  | Total formal charge: 0 for XYZ; graph charge for RDKit formats |
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
 | `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |
-|      | `--method`       | frame  | Descriptor method: `frame` or `canonical` |
+|      | `--method`       | frame  | Descriptor method: `frame` or `distance` (`canonical` is a deprecated alias of `distance`) |
 |      | `--node-budget`  | 10000 | Maximum canonical search states, also after frame fallback |
 |      | `--input-format` | xyz | `xyz`, `mol`, `sdf`, `mol2`, `pdb`, `smi`/`smiles`, or `inchi` |
-|      | `--include-smiles` | off | Add canonical isomeric SMILES as S in a separate hash namespace |
 |      | `--generate-coordinates` | off | Generate a new 3D conformer with explicit H atoms (not XYZ or PDB) |
 |      | `--allow-implicit-hydrogens` | off | Accept hydrogens without coordinates and hash only atoms present (non-XYZ) |
 | `-v` | `--verbose`      |        | Print a labelled block (identifier, formula, geometry hash, descriptor, version, precision, charge, multiplicity) instead of the bare identifier |
@@ -41,7 +41,7 @@ Hash a geometry with default settings:
 
 ```bash
 hashmol3d ethanol.xyz
-# C2H6Oq0m1-...
+# hm3d_v11_p4_C2H6O_q0m1_...
 ```
 
 Use a coarser precision and a shorter, 20-hex-character hash:
@@ -50,10 +50,10 @@ Use a coarser precision and a shorter, 20-hex-character hash:
 hashmol3d -p 1e-3 -l 20 ethanol.xyz
 ```
 
-Request the O(N²) canonical labelled-distance descriptor explicitly:
+Request the O(N²) labelled-distance descriptor (distance method) explicitly:
 
 ```bash
-hashmol3d --method canonical ethanol.xyz
+hashmol3d --method distance ethanol.xyz
 ```
 
 Hash a cation with explicit multiplicity, verbosely:
@@ -63,10 +63,10 @@ hashmol3d -c 1 -m 2 -v ethanol.xyz
 ```
 
 Find all stored states of the same geometry by suffix-matching the
-`geometry_hash` portion (after the `-`):
+`geometry_hash`, the last field:
 
 ```bash
-grep -E -- "-8ec3152acf35859ba58ced3e101c87e1" identifiers.txt
+grep -E -- "_8e9eedf5032cf387541d637f56c682dc$" identifiers.txt
 ```
 
 ## Exit codes
@@ -89,27 +89,21 @@ printed to stderr.
 
 Install the `rdkit` extra (`pip install -e '.[rdkit]'` from a source checkout)
 for the other formats. Select the format
-explicitly; file extensions never switch the CLI backend automatically. Reading
-an RDKit format does not enable S. Inputs must contain a single molecule;
-SMILES/InChI and 2D structures require explicit coordinate generation:
+explicitly; file extensions never switch the CLI backend automatically. The
+identifier depends only on the atoms and coordinates read, whatever the
+format. Inputs must contain a single molecule; SMILES/InChI and 2D structures
+require explicit coordinate generation:
 
 ```bash
 hashmol3d molecule.sdf --input-format sdf
-hashmol3d molecule.sdf --input-format sdf --include-smiles -v
-hashmol3d molecule.xyz --include-smiles -v
-hashmol3d molecule.smi --input-format smi --generate-coordinates --include-smiles
+hashmol3d molecule.smi --input-format smi --generate-coordinates
 ```
 
 RDKit input other than PDB with implicit H atoms or atom-level H counts without coordinates is
 rejected by default. Provide complete coordinates, explicitly generate them,
 or use `--allow-implicit-hydrogens` to accept an incomplete geometry/formula.
-PDB geometry-only input hashes exactly the atoms in the file, without checking
-implicit H counts derived from guessed bond orders. PDB file input cannot be
-combined with `--include-smiles`; use SDF or a
-chemically prepared RDKit Mol for chemistry-sensitive hashing.
-
-S changes the descriptor version and digest, including sensitivity to supported
-stereochemistry, isotopes, and graph formal charges. It is not interchangeable
-with the default descriptor. Missing RDKit, invalid chemistry, and embedding
-failure exit with code 1; S is never silently dropped. See the
-[RDKit guide](rdkit.md) for input policies and limitations.
+PDB input hashes exactly the atoms in the file, without checking implicit H
+counts derived from guessed bond orders, and cannot be combined with
+`--generate-coordinates`. Missing RDKit, invalid input, and embedding failure
+exit with code 1. See the [RDKit guide](rdkit.md) for input policies and
+limitations.

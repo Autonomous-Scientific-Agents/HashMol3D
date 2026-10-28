@@ -157,7 +157,8 @@ pairs has the same candidate-linear cost and can reach the budget. Exact
 large symmetric shells are therefore the main performance failure mode.
 Near conditioning thresholds and coordinate rounding boundaries remain the
 main numerical failure modes; the distance fallback is retained for them.
-Frame and distance bodies use distinct `F:` and `C:` tags.
+Frame and distance bodies use distinct `F:` and `D:` tags (`C:` before
+version 11).
 
 ## Why the default descriptor does not encode chirality
 
@@ -166,8 +167,9 @@ with the spatial-inversion operator, so enantiomers share its
 eigenvalue spectrum. Following the stated goal, the hash should not
 change under reflection, and so the default HashMol3D descriptor does not
 distinguish enantiomers. Users who need stereochemistry can record a separate
-tag alongside the identifier or opt into the [RDKit S extension](rdkit.md),
-which uses a distinct version namespace and leaves the default core unchanged.
+tag alongside the identifier. (Versions 8–10 also offered an opt-in RDKit S
+extension that hashed canonical SMILES; version 11 removed it so that the
+geometry hash covers geometry only.)
 
 This sidesteps a class of bugs that geometric chirality detectors are
 prone to: degenerate principal axes (symmetric and spherical tops), the
@@ -191,14 +193,14 @@ usually not.
 There is a residual rounding-boundary risk: a distance of exactly
 `x.xxxx5` may round to two different values depending on numerical
 noise. Choose `precision` generously larger than the geometric noise
-floor of your pipeline. The canonical distance method keeps this damage
+floor of your pipeline. The distance method keeps this damage
 local — only distances sitting near a bin edge are at risk. A frame rotates
 all coordinates together, so its noise is global; the eigenvalue-gap and
 anchor-conditioning thresholds bound that risk, but callers needing maximum
-rounding robustness can still request `method="canonical"`.
+rounding robustness can still request `method="distance"`.
 
 ## Dependencies
 
 The default implementation uses only NumPy and the Python standard library,
 keeping installation simple in HPC environments. The RDKit extra is loaded
-only for explicitly requested input adapters, SMILES generation, or S tagging.
+only for explicitly requested input adapters or SMILES generation.

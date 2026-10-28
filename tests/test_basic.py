@@ -1,5 +1,7 @@
 """Smoke tests for the public API."""
 
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -13,13 +15,12 @@ def test_returns_result(water):
     assert res.formula == "H2O"
     assert res.charge == 0
     assert res.multiplicity == 1
-    assert res.hash_str.startswith("H2Oq0m1-")
-    assert res.hash_str.endswith(res.geometry_hash)
+    assert res.hash_str == f"hm3d_v11_p4_H2O_q0m1_{res.geometry_hash}"
     assert str(res) == res.hash_str
 
 
 def test_documented_water_identifier(water):
-    """Pin the identifier quoted throughout the docs for descriptor version 10.
+    """Pin the identifier quoted throughout the docs for descriptor version 11.
 
     README.md, docs/specification.md, docs/api_reference.md and
     docs/cli_usage.md all quote this value; a descriptor change that is not
@@ -27,12 +28,14 @@ def test_documented_water_identifier(water):
     """
     z, coords = water
     res = hash_molecule(z, coords)
-    assert res.version == "10-FRAME-SHA256"
+    assert res.version == "11.0"
     assert res.descriptor == (
-        "V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|"
-        "F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
+        "V:11.0|P:1.0e-04|Z:1,1,8|F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
     )
-    assert res.hash_str == "H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1"
+    # The hash covers the P and Z fields and the hashed F rows, not V.
+    payload = "P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
+    assert res.geometry_hash == hashlib.sha256(payload.encode()).hexdigest()[:32]
+    assert res.hash_str == "hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc"
 
 
 def test_descriptor_contains_geometry_fields(water):
@@ -94,4 +97,34 @@ def test_single_atom_is_valid():
     coords = np.array([[0.0, 0.0, 0.0]])
     res = hash_molecule(z, coords)
     assert res.formula == "C"
-    assert res.hash_str.startswith("Cq0m1-")
+    assert res.hash_str.startswith("hm3d_v11_p4_C_q0m1_")
+
+
+def test_identifier_layout(water):
+    """hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>."""
+    z, coords = water
+    for precision, decimals in ((1.0, 0), (1e-2, 2), (1e-4, 4)):
+        res = hash_molecule(z, coords, precision=precision, charge=-1, multiplicity=2)
+        prefix, version, grid, formula, state, digest = res.hash_str.split("_")
+        assert (prefix, version, grid, formula) == ("hm3d", "v11", f"p{decimals}", "H2O")
+        assert digest == res.geometry_hash
+        assert state == "q-1m2"
+
+
+def test_precision_is_hashed(water):
+    # The same integers on different grids are different geometries: water
+    # at 1e-4 Å and the same atoms scaled tenfold at 1e-3 Å store identical
+    # rows, and the hashed precision keeps their geometry hashes apart.
+    z, coords = water
+    fine = hash_molecule(z, coords, precision=1e-4)
+    coarse = hash_molecule(z, 10 * coords, precision=1e-3)
+    assert fine.descriptor.split("|")[2:] == coarse.descriptor.split("|")[2:]
+    assert fine.geometry_hash != coarse.geometry_hash
+
+
+def test_canonical_method_is_a_deprecated_alias(water):
+    z, coords = water
+    with pytest.warns(DeprecationWarning, match="method='distance'"):
+        old = hash_molecule(z, coords, method="canonical")
+    assert old == hash_molecule(z, coords, method="distance")
+    assert "|D:" in old.descriptor

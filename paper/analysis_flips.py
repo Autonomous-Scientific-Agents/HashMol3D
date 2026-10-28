@@ -63,8 +63,10 @@ import matplotlib.pyplot as plt
 rng = np.random.default_rng(20250822)
 DEFAULT_EPS = 1e-4
 METHOD = os.environ.get("HM3D_METHOD", "frame")
-if METHOD not in {"frame", "canonical"}:
-    raise ValueError("HM3D_METHOD must be 'frame' or 'canonical'")
+if METHOD == "canonical":  # former name of the distance method
+    METHOD = "distance"
+if METHOD not in {"frame", "distance"}:
+    raise ValueError("HM3D_METHOD must be 'frame' or 'distance'")
 OUTPUT_SUFFIX = os.environ.get("HM3D_OUTPUT_SUFFIX", "")
 
 

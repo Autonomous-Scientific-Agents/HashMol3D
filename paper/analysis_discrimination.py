@@ -146,7 +146,7 @@ def main():
         uniq = {}
         for e in EPS:
             hs = {
-                hash_molecule(Z, X, precision=e, length=64, method="canonical").geometry_hash
+                hash_molecule(Z, X, precision=e, length=64, method="distance").geometry_hash
                 for X in rep_conf
             }
             uniq[e] = len(hs)

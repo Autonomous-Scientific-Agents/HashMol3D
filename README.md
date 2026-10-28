@@ -9,16 +9,24 @@ software and methods and proposes that standard; the
 
 It produces a **readable** identifier of the form
 
-    <Hill formula><state tag>-<geometry hash>
+    hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-e.g. `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1` for neutral singlet water. The trailing
-geometry hash is **rotation-, translation-, permutation-, and
-parity-invariant** (matching the invariances of the eigenvalues of the
-non-relativistic molecular Hamiltonian), and depends on:
+e.g. `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc` for neutral singlet water on the
+default 10⁻⁴ Å grid (`p4`). The geometry hash is **rotation-, translation-,
+permutation-, and parity-invariant** (matching the invariances of the
+eigenvalues of the non-relativistic molecular Hamiltonian), and depends only
+on:
 
 - atomic numbers
-- coordinates quantized at a user-specified precision in a canonical frame
-- a descriptor version tag
+- the precision of the quantization grid
+- coordinates quantized in a canonical frame (or, with the distance method,
+  canonical interatomic distances)
+
+The descriptor version is not hashed; its major number is the `v11` field of
+the identifier, so identifiers made with different versions never compare
+equal. The precision is both hashed and shown as the `p4` field. Fields are joined by `_`, and every character is
+a letter, a digit, `_` or `-` (in a negative charge), so identifiers are safe
+as file names.
 
 The default method projects the original coordinates into a deterministic
 canonical frame, sorts the element-labelled coordinate rows, and hashes that
@@ -26,15 +34,15 @@ complete representation. Ordinary geometries use the principal axes of the
 Z-weighted gyration tensor. Point-like, linear, symmetric-top, and spherical-
 top geometries use intrinsic coordinates or canonical atom anchors, so exact
 symmetry does not require a random perturbation. The canonical labelled
-distance-matrix method remains available as `method="canonical"`.
+distance-matrix method remains available as `method="distance"`.
 
-Charge and spin multiplicity live in the readable prefix, **not** in
-the hash, so two states of the same geometry share the same hex tail
-and can be grouped by suffix matching:
+Charge and spin multiplicity live in the state tag, **not** in the
+hash, so two states of the same geometry share the same geometry hash and can
+be grouped by it:
 
 ```text
-H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1     # neutral singlet water
-H2Oq1m2-8ec3152acf35859ba58ced3e101c87e1     # water cation, same geometry → same hex tail
+hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc     # neutral singlet water
+hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc     # water cation, same geometry → same hash
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -62,11 +70,11 @@ hash_molecule(z, coords, length=hash_length_for(10**9))
 
 (recommended hex length; the default of 32 covers up to ~8·10¹⁴ items at `p=1e-9`.)
 
-The default format deliberately does **not** distinguish enantiomers, and
-isotopes share the same atomic number and therefore the same identifier at
-fixed coordinates and electronic state. The optional RDKit `S` extension adds
-canonical isomeric SMILES in a separate descriptor namespace. The default
-library depends only on NumPy; installing RDKit does not change any defaults.
+The identifier deliberately does **not** distinguish enantiomers, and isotopes
+share the same atomic number and therefore the same identifier at fixed
+coordinates and electronic state. It carries no connectivity information. The
+library depends only on NumPy; the optional RDKit support only reads more file
+formats and does not change any identifier.
 
 ## Canonical frame method
 
@@ -91,7 +99,7 @@ rather than falling back. A bend below half a grid unit is an intrinsic line.
 Canonically tied anchors are all evaluated up to a 10,000-candidate budget.
 Clouds below ten grid units of radius with degenerate moments, and over-budget
 cases, emit `UserWarning` and use the complete distance method.
-The path is visible in `result.descriptor` (`F:` versus `C:`). Canonical
+The path is visible in `result.descriptor` (`F:` versus `D:`). Canonical
 search must finish within `node_budget` (default 10,000 visited states),
 including after frame fallback. If it exhausts that budget, Python raises
 `SearchBudgetExceeded`; the CLI prints an error to stderr and exits with code
@@ -108,10 +116,11 @@ hashmol3d --node-budget 100000 molecule.xyz
 A larger canonical node budget permits more work but does not change a
 successfully completed descriptor. No weaker summary is substituted.
 
-For an explicitly distance-based descriptor, use:
+For an explicitly distance-based descriptor, use the distance method (`D:`
+section; `method="canonical"` is a deprecated alias):
 
 ```python
-hash_molecule(z, coords, method="canonical")
+hash_molecule(z, coords, method="distance")
 ```
 
 Hashes from different descriptor paths are not comparable; use the same
@@ -126,13 +135,14 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.14.0 uses descriptor `10-FRAME-SHA256`, which makes re-hashing
-idempotent (see [Re-hashing a stored descriptor](#re-hashing-a-stored-descriptor)).
-Version 9 lowered the minimum transverse-anchor extent to one grid unit so
-that nearly linear molecules anchor their frame instead of using the distance
-fallback. Because the version field is hashed, all digests change from earlier
-versions; recompute identifiers consistently when migrating a corpus. The
-paper's corpus statistics describe version 8 and are labelled accordingly.
+Version 0.15.0 uses descriptor version `11.0`. It introduces the `hm3d_`
+identifier, stops hashing the version (it is in the identifier), and renames
+the distance section from `C` to `D`. Version 10 made re-hashing idempotent
+(see [Re-hashing a stored descriptor](#re-hashing-a-stored-descriptor)), and
+version 9 let nearly linear molecules anchor their frame instead of using the
+distance fallback. Every geometry hash changes from earlier versions;
+recompute identifiers consistently when migrating a corpus. The paper's corpus
+statistics describe version 8 and are labelled accordingly.
 
 ## Re-hashing a stored descriptor
 
@@ -145,7 +155,7 @@ from hashmol3d import descriptor_geometry, hash_descriptor, hash_molecule
 
 res = hash_molecule(z, coords)
 
-# Exact, for F and C descriptors: no geometry is recomputed.
+# Exact, for F and D descriptors: no geometry is recomputed.
 assert hash_descriptor(res.descriptor) == res.geometry_hash
 
 # F descriptors also carry a canonical-frame geometry that hashes back to
@@ -163,84 +173,76 @@ fraction of a grid cell. On all of QM9 at 10⁻², 10⁻³ and 10⁻⁴ Å every
 trip reproduced the identifier (version-9 rows read back as coordinates did so
 for 54–56 %). Exactly symmetric inputs with tied anchor frames can occasionally
 not be settled; `descriptor_geometry` then warns, and `hash_descriptor` remains
-exact. `C` descriptors hold distances, not coordinates; keep their source
-geometry if coordinates are needed.
+exact. `D` descriptors hold distances, not coordinates; keep their source
+geometry if coordinates are needed. Stored descriptors of versions 5–10
+(including their `C` and RDKit `S` forms) still re-hash to their original
+digests.
 
 ## Descriptor tags
 
-The geometry hash is computed from a UTF-8 descriptor with fields in this order:
+The stored descriptor (`result.descriptor`) is a UTF-8 string with fields in
+this order:
 
 ```text
 V:<version>|P:<precision>|Z:<atomic numbers>|F:<coordinate rows>
-V:<version>|P:<precision>|Z:<atomic numbers>|C:<distance matrix upper triangle>
+V:<version>|P:<precision>|Z:<atomic numbers>|D:<distance matrix upper triangle>
 ```
 
 - `V` identifies the descriptor format and canonicalization rules (currently
-  `10-FRAME-SHA256`).
+  `11.0`).
 - `P` records the quantization grid spacing in angstroms, such as `1.0e-04`.
 - `Z` lists atomic numbers in the order used by the selected representation.
 - `F` stores the sorted element-labelled canonical-frame rows on a grid 10⁴
   times finer than `P`.
-- `C` stores the quantized distance matrix upper triangle in canonical atom order.
+- `D` stores the quantized distance matrix upper triangle in canonical atom
+  order (the distance method; called `C` before version 11).
 
-All these fields enter the hash, with `F` values rounded back to the `P` grid. The readable `q` and `m` tags instead record
-charge and spin multiplicity outside the geometry hash.
-
-The opt-in `S` extension appends `|S:<canonical isomeric SMILES>` and uses
-`V:10-FRAME-SHA256-S1-RDKIT-<RDKit version>`. It retains the same `P`, `Z`,
-and `F`/`C` fields. Its digest also depends on molecular connectivity,
-stereochemistry, isotopes, and formal charges encoded in SMILES, so it has
-different invariances from the default geometry-only hash. See
-[RDKit support](docs/rdkit.md) for the exact rules and limitations.
+`P`, `Z` and the geometry section enter the hash, with `F` values rounded back
+to the `P` grid: the geometry hash is the SHA-256 digest of
+`P:<precision>|Z:<atomic numbers>|F:<hashed rows>` (or `|D:<distances>`). `V`
+is not hashed; it appears in the identifier as `v11` (the major version), next
+to `p<decimals>`, and the `q`/`m` state tag records charge and spin
+multiplicity.
 
 ## Optional RDKit support
 
-Version 0.12.0 added the optional RDKit API and S extension without changing
-the default descriptor; the S version is built on the current default
-(`10-FRAME-SHA256` in 0.14.0).
+RDKit lets HashMol3D read more file formats. It never changes the identifier:
+every input is hashed from its atomic numbers and 3D coordinates alone.
+Version 11 removed the earlier opt-in `S` extension, which put canonical
+SMILES into the hash; stored `S` descriptors still re-hash with
+`hash_descriptor`.
 
 ```bash
 pip install -e '.[rdkit]'  # from a source checkout; see Install
 
-# Read an existing 3D structure; still use the default geometry descriptor.
+# Read an existing 3D structure.
 hashmol3d molecule.sdf --input-format sdf
 
-# Explicitly add canonical isomeric SMILES to the hashed descriptor.
-hashmol3d molecule.sdf --input-format sdf --include-smiles -v
-hashmol3d molecule.xyz --include-smiles -v
-
 # A SMILES file has no geometry: explicitly generate a new conformer.
-hashmol3d molecule.smi --input-format smi --generate-coordinates --include-smiles
+hashmol3d molecule.smi --input-format smi --generate-coordinates
 ```
 
 ```python
-from hashmol3d import canonical_smiles, hash_rdkit, hash_xyz
+from hashmol3d import canonical_smiles, hash_rdkit
 
 # mol can come from any RDKit reader; hashing requires a 3D conformer.
-result = hash_rdkit(mol)  # no S tag
-stereo_result = hash_rdkit(mol, include_smiles=True)
-smiles = canonical_smiles(mol)  # graph stereo; does not require coordinates
-stereo_xyz = hash_xyz("molecule.xyz", include_smiles=True)
+result = hash_rdkit(mol)
+smiles = canonical_smiles(mol)  # a separate utility; not part of the identifier
 ```
 
-S tagging uses stereochemistry from the selected 3D coordinates. XYZ tagging
-also infers connectivity and bond orders; it requires complete atom lists,
-including hydrogens, and the correct charge. Chemistry failures produce errors.
-MOL, SDF, MOL2, PDB, SMILES, and InChI file adapters are available. PDB file
-input supports geometry-only hashing; S tagging requires a format with verified
-bond orders or a chemically prepared RDKit Mol. PDB geometry-only input hashes
-exactly the atoms in the file, without trusting guessed implicit-H counts;
-coordinate generation is refused because guessed bond orders can add incorrect
-hydrogens. Other RDKit inputs with hydrogens without coordinates are rejected
+MOL, SDF, MOL2, PDB, SMILES, and InChI file adapters are available. PDB input
+hashes exactly the atoms in the file, without trusting guessed implicit-H
+counts; coordinate generation is refused for PDB because guessed bond orders
+can add incorrect hydrogens. Other RDKit inputs with hydrogens without coordinates are rejected
 unless explicitly allowed with `allow_implicit_hydrogens=True`
 (CLI: `--allow-implicit-hydrogens`); that override hashes only the atoms present.
 Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
-[RDKit guide](docs/rdkit.md) before mixing sources or building an S-tag corpus.
+[RDKit guide](docs/rdkit.md) before mixing sources.
 
 ## Install
 
 HashMol3D needs Python ≥ 3.8 and NumPy; RDKit (2023.9.6 or newer) is an
-optional extra. Install 0.14.0 from source: the release on PyPI is older
+optional extra. Install 0.15.0 from source: the release on PyPI is older
 (0.9.x), uses an earlier descriptor version and therefore different
 identifiers, and lacks `hash_descriptor`, `descriptor_geometry` and the RDKit
 adapters.
@@ -271,11 +273,11 @@ uv pip install -e '.[rdkit]'  # Or: pip install -e '.[rdkit]'
 
 ```bash
 $ hashmol3d water.xyz
-H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
+hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 
-# Cation with explicit multiplicity — only the prefix changes.
+# Cation with explicit multiplicity — only the state tag changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-H2Oq1m2-8ec3152acf35859ba58ced3e101c87e1
+hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
 
 # A coarser precision and a shorter, 20-hex-character hash.
 $ hashmol3d -p 1e-3 -l 20 benzene.xyz
@@ -285,7 +287,7 @@ $ hashmol3d -p 1e-3 -l 20 benzene.xyz
 $ hashmol3d -v water.xyz
 
 # Request the labelled distance-matrix method explicitly.
-$ hashmol3d --method canonical water.xyz
+$ hashmol3d --method distance water.xyz
 
 # Show the package version.
 $ hashmol3d --version
@@ -311,9 +313,9 @@ coords = np.array(
     ]
 )
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)  # H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
+print(res.hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 print(res.formula)  # H2O
-print(res.geometry_hash)  # 8ec3152acf35859ba58ced3e101c87e1
+print(res.geometry_hash)  # 8e9eedf5032cf387541d637f56c682dc
 print(res.charge, res.multiplicity)  # 0 1
 ```
 
@@ -333,9 +335,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)  # H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
+print(hash_xyz("water.xyz").hash_str)  # hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# H2Oq1m2-8ec3152acf35859ba58ced3e101c87e1
+# hm3d_v11_p4_H2O_q1m2_8e9eedf5032cf387541d637f56c682dc
 ```
 
 See [`docs/`](docs/) for the full

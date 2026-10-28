@@ -131,24 +131,43 @@ _W_METHANE = "1,0:0-178,0-178,0-178,1-109;1,0:0-178,0-178,0-178,1-109;1,0:0-178,
 
 
 class TestHashDescriptor:
-    @pytest.mark.parametrize("method", ["frame", "canonical"])
+    @pytest.mark.parametrize("method", ["frame", "distance"])
     @pytest.mark.parametrize("length", [None, 8, 64])
     def test_rehash_of_stored_descriptor_is_exact(self, water, benzene, method, length):
         for z, coords in (water, benzene):
             res = hash_molecule(z, coords, method=method, length=length)
             assert hash_descriptor(res.descriptor, length=length) == res.geometry_hash
-            assert res.hash_str.endswith("-" + hash_descriptor(res.descriptor, length=length))
+            digest = hash_descriptor(res.descriptor, length=length)
+            assert res.hash_str.split("_")[5] == digest
 
     def test_version_9_descriptor_rehashes_to_its_own_digest(self):
         # The pre-v10 water descriptor and identifier quoted by version 0.13.0.
         v9 = "V:9-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
         assert hash_descriptor(v9) == "2525b97db42fc1c282844ba9478d561f"
 
-    def test_hashed_values_equal_the_version_9_rows(self, water):
+    def test_version_10_descriptor_rehashes_to_its_own_digest(self):
+        # The water descriptor and identifier quoted by version 0.14.0.
+        v10 = (
+            "V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|"
+            "F:1:0,-46880000,-75720000;1:0,-46880000,75720000;8:0,11720000,0"
+        )
+        assert hash_descriptor(v10) == "8ec3152acf35859ba58ced3e101c87e1"
+
+    def test_payload_is_precision_z_field_and_hashed_rows(self, water):
+        # Version 11 does not hash the version, which is in the readable
+        # identifier; the precision stays hashed. The hashed rows equal
+        # version 9's.
         res = hash_molecule(*water)
         assert core._hashed_payload(res.descriptor) == (
-            "V:10-FRAME-SHA256|P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
+            "P:1.0e-04|Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
         )
+        distance = hash_molecule(*water, method="distance")
+        assert core._hashed_payload(distance.descriptor) == ("P:1.0e-04|Z:1,1,8|D:15144,9575,9575")
+
+    def test_edited_precision_does_not_rehash(self, water):
+        res = hash_molecule(*water)
+        edited = res.descriptor.replace("|P:1.0e-04|", "|P:1.0e-03|")
+        assert hash_descriptor(edited) != res.geometry_hash
 
     @pytest.mark.parametrize(
         "descriptor, digest",
@@ -181,7 +200,14 @@ class TestHashDescriptor:
             ("not a descriptor", "not a HashMol3D descriptor"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|X:6:0,0,0", "not a HashMol3D descriptor"),
             ("V:x-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "unrecognized descriptor version"),
-            ("V:11-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
+            ("V:12.0|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
+            ("V:11.1|P:1.0e-04|Z:6|F:6:0,0,0", "newer than this HashMol3D"),
+            ("V:11.00|P:1.0e-04|Z:6|F:6:0,0,0", "unrecognized descriptor version"),
+            ("V:11-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0,0", "unsupported descriptor version"),
+            ("V:11.0|P:1.0e-04|Z:6,6|C:12345", "has no 'C' section"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|D:12345", "has no 'D' section"),
+            ("V:11.0|P:1.0e-04|Z:6,6|D:68719476737", "resolution floor"),
+            ("V:11.0|P:1.0e-04|Z:6|F:6:5000,0,0", "rounding boundary"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:0,0", "malformed F row"),
             ("V:10-FRAME-SHA256|P:invalid|Z:6|C:invalid", "precision 'invalid'"),
             ("V:10-FRAME-SHA256|P:1e-4|Z:6|F:6:0,0,0", "not written as 1.0e-04"),
@@ -336,7 +362,7 @@ class TestGeometryRoundTrip:
         )
 
     def test_canonical_descriptor_has_no_geometry(self, water):
-        res = hash_molecule(*water, method="canonical")
+        res = hash_molecule(*water, method="distance")
         with pytest.raises(ValueError, match="distance matrix"):
             descriptor_geometry(res.descriptor)
 
@@ -404,10 +430,10 @@ class TestResolutionFloorBoundary:
             qmat = core._scaled_distances(coords, 4)
             _, z_ordered, body = core._canonical_signature(z, qmat)
             descriptor = core._format_descriptor(
-                core.DESCRIPTOR_VERSION, 1e-4, z_ordered, "C", body
+                core.DESCRIPTOR_VERSION, 1e-4, z_ordered, "D", body
             )
             try:
-                res = hash_molecule(z, coords, precision=1e-4, method="canonical")
+                res = hash_molecule(z, coords, precision=1e-4, method="distance")
             except ValueError:
                 with pytest.raises(ValueError, match="resolution floor"):
                     hash_descriptor(descriptor)

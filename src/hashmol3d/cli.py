@@ -32,11 +32,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Input format (default: xyz); other formats require hashmol3d[rdkit]",
     )
     parser.add_argument(
-        "--include-smiles",
-        action="store_true",
-        help="Opt into the RDKit canonical isomeric SMILES S tag (changes hash namespace)",
-    )
-    parser.add_argument(
         "--allow-implicit-hydrogens",
         action="store_true",
         help="Explicitly allow H counts without coordinates; hash only atoms present (non-XYZ)",
@@ -78,9 +73,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--method",
-        choices=("frame", "canonical"),
+        choices=("frame", "distance", "canonical"),
         default="frame",
-        help="Geometry descriptor method (default: frame)",
+        help="Geometry descriptor method (default: frame; 'canonical' is a deprecated "
+        "alias of 'distance')",
     )
     parser.add_argument(
         "--node-budget",
@@ -92,7 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Also print the canonical descriptor and metadata",
+        help="Print a labelled block with the descriptor and metadata",
     )
     return parser
 
@@ -111,7 +107,6 @@ def cli(argv: Sequence[str] | None = None) -> int:
         result = hash_file(
             args.file,
             input_format=args.input_format,
-            include_smiles=args.include_smiles,
             generate_coordinates=args.generate_coordinates,
             allow_implicit_hydrogens=args.allow_implicit_hydrogens,
             precision=args.precision,

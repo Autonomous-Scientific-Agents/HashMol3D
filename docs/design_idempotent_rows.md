@@ -5,6 +5,10 @@ Status: implemented as descriptor version 10 (`10-FRAME-SHA256`, package
 implemented as proposed, with additions measured on all of QM9 that are
 described in §4. Nothing here applies to version 8, whose hashed form and
 digests are frozen by the manuscript. Sections 1–3 are the original proposal.
+Version 11 kept this design unchanged but renamed the distance section from
+`C` to `D` and dropped `V` and `P` from the hashed payload (they moved into
+the `hm3d_v<major>_p<decimals>_…` identifier); `C` below means the version
+10 distance section.
 
 Measurements below come from exploratory runs on random element-labeled
 clouds and on a QM9 sample (about 5,000 molecules taken every 27th entry),

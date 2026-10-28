@@ -21,17 +21,17 @@ sys.meta_path.insert(0, BlockRDKit())
 import hashmol3d
 from hashmol3d.cli import cli
 result = hashmol3d.hash_xyz(sys.argv[1])
-assert result.hash_str == 'H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1'
+assert result.hash_str == 'hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc'
 assert result == hashmol3d.hash_file(sys.argv[1])
 assert cli([sys.argv[1]]) == 0
 assert 'rdkit' not in sys.modules
 try:
-    hashmol3d.hash_xyz(sys.argv[1], include_smiles=True)
+    hashmol3d.hash_file(sys.argv[1], input_format='mol')
 except ImportError as error:
     assert "hashmol3d[rdkit]" in str(error)
 else:
     raise AssertionError('RDKit request must fail')
-assert cli([sys.argv[1], '--include-smiles']) == 1
+assert cli([sys.argv[1], '--input-format', 'mol']) == 1
 """
     completed = subprocess.run(
         [sys.executable, "-c", script, str(xyz)],

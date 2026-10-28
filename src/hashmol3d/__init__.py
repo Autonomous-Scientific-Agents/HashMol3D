@@ -16,15 +16,13 @@ from .rdkit_support import canonical_smiles, hash_file, hash_rdkit, read_rdkit
 from .version import __version__
 
 
-def hash_xyz(path, *, include_smiles=False, **kwargs) -> HashMol3DResult:
+def hash_xyz(path, **kwargs) -> HashMol3DResult:
     """Read an XYZ file and hash its geometry.
 
     Convenience wrapper for ``hash_file(path, input_format="xyz")``; the
-    remaining keyword arguments are forwarded to :func:`hash_molecule`.
-    ``include_smiles=True`` opts into RDKit bond perception and the
-    separately versioned S-tag descriptor.
+    keyword arguments are forwarded to :func:`hash_molecule`.
     """
-    return hash_file(path, input_format="xyz", include_smiles=include_smiles, **kwargs)
+    return hash_file(path, input_format="xyz", **kwargs)
 
 
 __all__ = [
