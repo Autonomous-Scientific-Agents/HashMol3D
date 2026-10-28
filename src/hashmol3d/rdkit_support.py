@@ -132,11 +132,13 @@ def _validate_mol_record(data: bytes, *, sdf: bool = False) -> None:
             )
 
 
-def _validate_pdb_record(data: str) -> None:
+def _validate_pdb_record(data: str) -> int:
     """Reject what RDKit would silently drop from a PDB record.
 
     That is content after the first END record, and every alternate location
-    (altLoc, column 17) but the first one.
+    (altLoc, column 17) but the first one. Returns the number of atom records
+    in the first model, which the parsed molecule must keep: RDKit also drops
+    atoms with a single altLoc label such as ``B``.
     """
     lines = data.splitlines()
     end = next((i for i, line in enumerate(lines) if line[:6].rstrip() == "END"), None)
@@ -155,6 +157,13 @@ def _validate_pdb_record(data: str) -> None:
             f"({', '.join(sorted(altlocs))}); RDKit keeps only the first, so "
             "keep one location per atom"
         )
+    atoms = 0
+    for line in lines[:end]:
+        record = line[:6].rstrip()
+        if record == "ENDMDL":
+            break
+        atoms += record in ("ATOM", "HETATM")
+    return atoms
 
 
 def read_rdkit(path, *, input_format: str | None = None):
@@ -197,8 +206,14 @@ def read_rdkit(path, *, input_format: str | None = None):
                     raise ValueError("MOL2 input must contain exactly one molecule")
                 mol = Chem.MolFromMol2Block(data, removeHs=False)
             elif fmt == "pdb":
-                _validate_pdb_record(data)
+                expected_atoms = _validate_pdb_record(data)
                 mol = Chem.MolFromPDBBlock(data, removeHs=False)
+                if mol is not None and mol.GetNumAtoms() != expected_atoms:
+                    raise ValueError(
+                        f"RDKit kept {mol.GetNumAtoms()} of the {expected_atoms} PDB "
+                        "atom records (it drops alternate locations other than the "
+                        "first, such as B); relabel or remove them so every atom is kept"
+                    )
                 # PDB coordinates are always 3D; RDKit flags an all-zero z
                 # column as 2D, which would reject legitimate planar molecules.
                 if mol is not None:

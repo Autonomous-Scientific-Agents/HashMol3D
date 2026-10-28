@@ -31,9 +31,11 @@ line; a SMILES name after whitespace is allowed. CXSMILES text is rejected.
 SDF must contain exactly one `$$$$`-terminated record, including when later
 records are invalid; trailing whitespace after its terminator is accepted.
 MOL, MOL2 and PDB likewise reject additional molecule blocks; a PDB file
-ends at its first `END` record. A PDB file with more than one alternate
-location (altLoc, column 17) is rejected, because RDKit keeps only the first
-and would silently drop the other atoms. An SDF record cannot
+ends at its first `END` record. A PDB file is rejected if RDKit would drop
+any of its atom records: RDKit keeps only the first alternate location
+(altLoc, column 17), and also drops atoms whose only label is a later one
+such as `B`. The parsed molecule must keep every `ATOM`/`HETATM` record of
+the first model. An SDF record cannot
 hide a second MOL block before its terminator: text after `M  END` must be
 ordinary SD property data introduced by a `>` header. Property values may
 contain literal `M  END` text. A plain MOL block permits only trailing whitespace.

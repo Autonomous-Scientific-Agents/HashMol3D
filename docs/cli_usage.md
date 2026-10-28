@@ -109,7 +109,7 @@ rejected by default. Provide complete coordinates, explicitly generate them,
 or use `--allow-implicit-hydrogens` to accept an incomplete geometry/formula.
 PDB input hashes exactly the atoms in the file, without checking implicit H
 counts derived from guessed bond orders, and cannot be combined with
-`--generate-coordinates`. A PDB file with more than one alternate location
-(altLoc) is rejected, because RDKit would keep only the first. Missing RDKit, invalid input, and embedding failure
+`--generate-coordinates`. A PDB file is rejected if RDKit would drop any of
+its atom records, such as alternate locations (altLoc) other than the first. Missing RDKit, invalid input, and embedding failure
 exit with code 1. See the [RDKit guide](rdkit.md) for input policies and
 limitations.

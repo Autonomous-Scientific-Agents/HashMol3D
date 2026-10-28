@@ -490,9 +490,30 @@ def test_pdb_alternate_locations_are_rejected(tmp_path):
     path.write_text("\n".join(lines) + "\nEND\n")
     with pytest.raises(ValueError, match=r"alternate locations \(A, B\)"):
         read_rdkit(path)
-    # A single altLoc label drops nothing.
+    # A single altLoc label A drops nothing.
     path.write_text("\n".join(lines[:1] + lines[2:]) + "\nEND\n")
     assert read_rdkit(path).GetNumAtoms() == 3
+
+
+@pytest.mark.parametrize("label", ["B", "C"])
+def test_pdb_atoms_rdkit_would_drop_are_rejected(tmp_path, label, capsys):
+    # RDKit drops an atom labelled B or C even when no other location exists.
+    water = Chem.MolFromXYZBlock("3\n\nO 0 0 0.1\nH .757 .586 0\nH -.757 .586 0\n")
+    lines = Chem.MolToPDBBlock(water).splitlines()
+    lines = [
+        line[:16] + label + line[17:]
+        if line.startswith("HETATM") and line[76:78].strip() == "O"
+        else line
+        for line in lines
+    ]
+    path = tmp_path / "relabelled.pdb"
+    path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(ValueError, match="RDKit kept 2 of the 3 PDB atom records"):
+        read_rdkit(path)
+    with pytest.raises(ValueError, match="RDKit kept 2 of the 3"):
+        hash_file(path, input_format="pdb")
+    assert cli([str(path), "--input-format", "pdb"]) == 1
+    assert "RDKit kept 2 of the 3" in capsys.readouterr().err
 
 
 def test_multi_model_pdb_error_gives_a_working_route(tmp_path):
