@@ -42,7 +42,8 @@ All optional arguments are **keyword-only**.
 
 **Parameters:**
 
-- `atomic_nums`: integer array-like of atomic numbers, shape `(N,)`
+- `atomic_nums`: integer array-like of atomic numbers, shape `(N,)`; other
+  shapes, including a scalar, are rejected
 - `coords`: float array-like of Cartesian coordinates in Å, shape `(N, 3)`
 - `precision`: geometry-grid precision in Å (default `1e-4`); must be a power
   of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...), and no finer than
@@ -61,8 +62,10 @@ All optional arguments are **keyword-only**.
   memory. Degenerate eigenspaces use intrinsic point/line coordinates or
   canonical atom anchors. `"distance"` selects the O(N²) labelled
   distance-matrix descriptor (`D:` section); `"canonical"` is a deprecated
-  alias that emits `DeprecationWarning`. A frame that is ill-conditioned or
-  exceeds its 10,000-candidate budget warns and uses the distance method.
+  alias that emits `DeprecationWarning`. A cloud below ten grid units with
+  degenerate moments that is not a line, an ill-conditioned anchor, or more
+  tied anchors than the 10,000-candidate budget warns, naming the reason, and
+  uses the distance method.
 
 - `node_budget`: positive integer maximum number of canonical search states
   (default 10,000), including after frame fallback. Exhaustion raises the public
@@ -71,11 +74,13 @@ All optional arguments are **keyword-only**.
 
 **Raises:**
 
-- `ValueError` for invalid input: an empty molecule, mismatched or
-  non-`(N, 3)` shapes, non-finite coordinates, atomic numbers outside
-  `[1, 118]`, a precision that is not a power of ten ≤ 1 Å or is below the
-  resolution floor, an invalid `length` or `method`, `node_budget < 1`, or
-  `multiplicity < 1`.
+- `ValueError` for invalid input: an empty molecule, `atomic_nums` not of
+  shape `(N,)`, mismatched or non-`(N, 3)` coordinate shapes, non-finite
+  coordinates or coordinates so large their distances overflow float64,
+  atomic numbers outside `[1, 118]`, a precision that is not a real power of
+  ten ≤ 1 Å or is below the resolution floor, an invalid `length` or
+  `method`, `node_budget < 1`, `multiplicity < 1`, or a charge above the
+  total nuclear charge.
 - `hashmol3d.SearchBudgetExceeded` (a `RuntimeError` subclass) when the
   canonical search exhausts `node_budget`.
 
@@ -184,8 +189,11 @@ print(result.geometry_hash)  # ...
 ## `read_xyz(path)`
 
 Parse a standard XYZ file and return `(atomic_nums, coords)` as NumPy
-arrays. Validates the atom count declared in the header and raises
-`ValueError` on malformed input. Reading stops after the declared number of
+arrays. The file is read as UTF-8 whatever the locale; a byte-order mark is
+skipped and undecodable bytes in the free-form comment line are ignored.
+Atoms are element symbols or atomic numbers (`6` or `6.0`). Validates the
+atom count declared in the header (ASCII digits) and raises `ValueError` on
+malformed input. Reading stops after the declared number of
 atoms, so a multi-frame trajectory yields its first frame; any non-blank
 content after that point emits a `UserWarning`, since an under-declared count
 would otherwise silently hash a truncated molecule.
@@ -201,9 +209,11 @@ atomic_nums, coords = read_xyz("molecule.xyz")
 Return the minimum geometry-hash length (hex chars) that keeps the
 birthday-collision probability below `target_prob` for a namespace of
 `n_items` distinct geometries, using `P ~ n² / 2^{b+1}` with `b = 4·length`
-bits. `n_items <= 1` returns 1. The result is clamped to `[1, 64]`; when the
+bits. `n_items` must be an integer (or integer-valued float); `n_items <= 1`
+returns 1. The result is clamped to `[1, 64]`; when the
 approximation asks for more than 64, a `UserWarning` is emitted and 64 is
-returned. Raises `ValueError` if `target_prob` is not in `(0, 1)`.
+returned. Raises `ValueError` if `n_items` is not an integer or `target_prob`
+is not a real number in `(0, 1)`.
 
 ```python
 from hashmol3d import hash_length_for, hash_molecule
@@ -226,7 +236,7 @@ are the geometry-only `hash_molecule` results described above.
   It is not hashed; a new major version accompanies any change that can alter
   a geometry hash.
 - `DEFAULT_LENGTH`: default geometry-hash length in hex characters (`32`).
-- `__version__`: the package version (`"0.16.0"`).
+- `__version__`: the package version (`"0.16.1"`).
 
 ## Deprecated
 

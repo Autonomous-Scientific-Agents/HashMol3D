@@ -1,4 +1,4 @@
-# HashMol3D Specification v0.16.0
+# HashMol3D Specification v0.16.1
 
 **Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
@@ -71,6 +71,15 @@ See the manuscript's finite-grid and stability analysis for the empirical
 rate, and §3 for the resolution floor below which float64 roundoff alone
 changes identifiers.
 
+The floor allows for roundoff relative to the extent `R`, not to the
+distance from the origin. Coordinates far from the origin carry roundoff
+proportional to their own magnitude, which centering does not remove. Near
+the floor, a frame identifier can therefore change under an exact
+translation: a 0.6 Å molecule placed about 1.7×10⁷ Å from the origin changes
+its identifier in most translations at 10⁻¹⁰ Å, and in none closer than
+about 10⁶ Å. Hash geometries near the origin when the precision is near
+the floor.
+
 The geometry hash is also **not** invariant under:
 
 - changes in any atomic number Z (isotopes share Z and therefore hash alike)
@@ -130,7 +139,10 @@ motions change the identifier at `precision/R ≈ 10⁻¹¹`, most of them near
 10⁻¹³·⁵ on random 30-atom clouds of 1–500 Å); distance identifiers hold
 to about 10⁻¹²·⁵. Inputs finer than about `2^-35·R` are therefore rejected
 for both methods, and the error names the power of ten
-`10^ceil(log10(2^-35·R))`. The decision itself is made exactly, on what is
+`10^ceil(log10(2^-35·R))`, at least ten times the rejected precision (the
+exact rule below can reject a precision this estimate allows), or says that
+no precision up to 1 Å resolves the geometry. Coordinates whose distances
+or frame moment sums overflow float64 are rejected. The decision itself is made exactly, on what is
 hashed:
 
 - For an `F` descriptor the decision is exact and uses the hashed rows: the
@@ -181,8 +193,9 @@ units:
     q_ij     = rint(d_ij * 10^decimals)         # round-half-to-even
 
 `q` is a symmetric non-negative integer matrix with zero diagonal. All
-subsequent steps operate on exact integers. (If any scaled distance
-reaches 2^62 the input is rejected; choose a coarser precision.)
+subsequent steps operate on exact integers. (The resolution floor of §3
+keeps every scaled distance far below 2^62, the int64 headroom limit; the
+implementation keeps a check against it as a guard.)
 
 ### 4.2 Color refinement (Weisfeiler-Leman)
 
@@ -265,8 +278,8 @@ The default method normally takes O(N log N) time and O(N) memory:
    ascending eigenvalue order, regardless of `R s`: no atom anchor is
    needed.
    Otherwise, clouds with `R s < 10` use §4.1–4.4 with a warning. This
-   whole-cloud size guard prevents a short finite bend from entering the
-   half-grid intrinsic-line rule below. The factor 10 is a fixed policy,
+   whole-cloud size guard keeps clouds below ten grid units from being
+   atom-anchored; short lines were already recognized in step 3. The factor 10 is a fixed policy,
    not an input-noise estimate or a mathematical requirement for a
    principal-axis frame.
 5. If exactly one gap is below 0.05, preserve the isolated eigenvector
@@ -336,6 +349,9 @@ If `multiplicity` is not supplied:
 
     electrons   = sum(Z_i) - charge
     multiplicity = 1 if electrons is even else 2
+
+A charge above `sum(Z_i)`, which leaves a negative electron count, is
+rejected whether or not `multiplicity` is supplied.
 
 This singlet/doublet default is appropriate when no other spin
 information is available. Callers that know better should pass
@@ -547,7 +563,7 @@ QM9 molecules (371 of 133,885 at 10⁻⁴ Å) relative to version 9; all other
 hashed rows are identical. Version 10 also rejects precisions below the
 float64 resolution floor (§3), decided exactly on the hashed values, and
 validates stored descriptors before re-hashing them (§6.1). As with every
-version, all digests change.
+version up to 11, all digests change.
 Version 11 (`11.0`) introduces the
 `hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>` identifier
 (§1). Its hashed payload omits the `V` field (§6): the version moves from the

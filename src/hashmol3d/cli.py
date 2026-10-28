@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import warnings
 from typing import Sequence
 
 from .core import SearchBudgetExceeded
@@ -109,24 +110,29 @@ def cli(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         method = "distance"
-    try:
-        result = hash_file(
-            args.file,
-            input_format=args.input_format,
-            generate_coordinates=args.generate_coordinates,
-            allow_implicit_hydrogens=args.allow_implicit_hydrogens,
-            precision=args.precision,
-            charge=args.charge,
-            multiplicity=args.multiplicity,
-            length=args.length,
-            method=method,
-            node_budget=args.node_budget,
-        )
-    except FileNotFoundError as err:
-        print(f"hashmol3d: {err}", file=sys.stderr)
-        return 1
-    except (ValueError, OSError, ImportError, RuntimeError, SearchBudgetExceeded) as err:
-        print(f"hashmol3d: {err}", file=sys.stderr)
+    # Report library warnings in the CLI's own format, without the Python
+    # source line that the default formatter appends.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("default")
+        try:
+            result = hash_file(
+                args.file,
+                input_format=args.input_format,
+                generate_coordinates=args.generate_coordinates,
+                allow_implicit_hydrogens=args.allow_implicit_hydrogens,
+                precision=args.precision,
+                charge=args.charge,
+                multiplicity=args.multiplicity,
+                length=args.length,
+                method=method,
+                node_budget=args.node_budget,
+            )
+        except (ValueError, OSError, ImportError, RuntimeError, SearchBudgetExceeded) as err:
+            result, error = None, err
+    for warning in caught:
+        print(f"hashmol3d: warning: {warning.message}", file=sys.stderr)
+    if result is None:
+        print(f"hashmol3d: {error}", file=sys.stderr)
         return 1
 
     if args.verbose:

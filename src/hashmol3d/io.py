@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 
 import numpy as np
@@ -9,6 +10,13 @@ import numpy as np
 from .periodic_table import get_atomic_num
 
 __all__ = ["read_xyz"]
+
+# ASCII digits only: ``int()`` would also accept ``"1_0"`` and digits such as
+# ``"²"`` that ``str.isdigit`` reports.
+_COUNT = re.compile(r"\+?[0-9]+")
+# An atomic number, optionally written as an integer-valued float (``6.0``),
+# as ``hash_molecule`` accepts it.
+_ATOMIC_NUMBER = re.compile(r"[+-]?[0-9]+(?:\.0*)?")
 
 
 def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
@@ -35,18 +43,20 @@ def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
         ValueError: if the file is malformed (bad atom count, too few atom
             lines, unknown element symbol, non-numeric coords).
     """
-    with open(path) as f:
+    # The comment line is free-form, so the file is decoded as UTF-8 whatever
+    # the locale, a byte-order mark is skipped, and undecodable bytes are
+    # replaced rather than failing; atom lines with such bytes still fail as
+    # unknown symbols.
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         lines = f.readlines()
 
     if len(lines) < 2:
         raise ValueError("XYZ file is too short (need at least 2 header lines)")
 
-    try:
-        n_declared = int(lines[0].strip())
-    except ValueError as err:
-        raise ValueError(
-            f"first line of an XYZ file must be the atom count; got {lines[0].strip()!r}"
-        ) from err
+    count = lines[0].strip()
+    if not _COUNT.fullmatch(count):
+        raise ValueError(f"first line of an XYZ file must be the atom count; got {count!r}")
+    n_declared = int(count)
     if n_declared <= 0:
         raise ValueError(f"XYZ atom count must be positive, got {n_declared}")
 
@@ -62,8 +72,8 @@ def read_xyz(path: str) -> tuple[np.ndarray, np.ndarray]:
             raise ValueError(f"malformed XYZ atom line: {line!r}")
 
         sym = parts[0]
-        if sym.lstrip("-").isdigit():
-            z = int(sym)
+        if _ATOMIC_NUMBER.fullmatch(sym):
+            z = int(float(sym))
             if z <= 0 or z > 118:
                 raise ValueError(f"atomic number out of range: {z}")
         else:

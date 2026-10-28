@@ -88,8 +88,11 @@ hash_molecule(z, coords)  # method="frame" is the default
 
 When principal moments are degenerate, the method preserves any isolated
 axis and canonically anchors only the ambiguous subspace. Linear and point-
-like systems are represented in their intrinsic dimension. Exact lines, up to
-float64 roundoff, do not need transverse anchors even on coarse grids.
+like systems are represented in their intrinsic dimension. Lines need no
+transverse anchor even on coarse grids: a cloud with an isolated long axis
+and every transverse residual below half a grid cell is an intrinsic line,
+whatever its size (version 12; versions 7-11 required collinearity to
+float64 roundoff for clouds below ten grid units).
 Well-separated principal moments also need no atom anchors: the frame is
 accepted even when the centered radius is below ten grid units. Only
 unresolved eigenspaces need an atom anchor, and any transverse displacement
@@ -97,8 +100,9 @@ of at least one grid unit qualifies (version 9; versions 6-8 required ten),
 so nearly linear molecules with a resolved bend anchor their degenerate plane
 rather than falling back. A bend below half a grid unit is an intrinsic line.
 Canonically tied anchors are all evaluated up to a 10,000-candidate budget.
-Clouds below ten grid units of radius with degenerate moments, and over-budget
-cases, emit `UserWarning` and use the complete distance method.
+Clouds below ten grid units of radius with degenerate moments that are not
+lines, ill-conditioned anchors and over-budget cases emit `UserWarning`, which
+names the reason, and use the complete distance method.
 The path is visible in `result.descriptor` (`F:` versus `D:`). Canonical
 search must finish within `node_budget` (default 10,000 visited states),
 including after frame fallback. If it exhausts that budget, Python raises
@@ -135,7 +139,9 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.16.0 uses descriptor version `12.0`. It fixes two invariance bugs:
+Version 0.16.1 keeps descriptor version `12.0` and every identifier; it
+tightens input validation and error messages. Version 0.16.0 introduced
+descriptor version `12.0`. It fixes two invariance bugs:
 short linear molecules far from the origin, and a single atom away from the
 origin at very fine precision, could get a position-dependent identifier.
 Short nearly linear molecules now use the same half-cell line rule as larger
@@ -248,7 +254,7 @@ Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
 ## Install
 
 HashMol3D needs Python ≥ 3.8 and NumPy; RDKit (2023.9.6 or newer) is an
-optional extra. Install 0.16.0 from source: the release on PyPI is older
+optional extra. Install 0.16.1 from source: the release on PyPI is older
 (0.9.x), uses an earlier descriptor version and therefore different
 identifiers, and lacks `hash_descriptor`, `descriptor_geometry` and the RDKit
 adapters.
@@ -276,6 +282,9 @@ uv pip install -e '.[rdkit]'  # Or: pip install -e '.[rdkit]'
 ```
 
 ## Usage (CLI)
+
+The input files are in [docs/examples](docs/examples/); run these commands
+from that directory.
 
 ```bash
 $ hashmol3d water.xyz

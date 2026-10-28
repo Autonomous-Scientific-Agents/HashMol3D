@@ -472,3 +472,48 @@ def test_canonical_alias_warning_points_at_the_caller(tmp_path, call):
     # Attributed to this file, so Python's default filters show it.
     assert [w.filename for w in record] == [__file__]
     assert result == hash_rdkit(mol, method="distance")
+
+
+def test_pdb_alternate_locations_are_rejected(tmp_path):
+    atoms = [
+        ("O", "A", 0.0, 0.0, 0.0),
+        ("O", "B", 0.0, 0.0, 0.1),
+        ("H1", " ", 0.757, 0.586, 0.0),
+        ("H2", " ", -0.757, 0.586, 0.0),
+    ]
+    lines = [
+        f"HETATM{i:5d} {name:<4}{alt}HOH A   1    {x:8.3f}{y:8.3f}{z:8.3f}  0.50  0.00"
+        f"          {name[0]:>2}"
+        for i, (name, alt, x, y, z) in enumerate(atoms, 1)
+    ]
+    path = tmp_path / "altloc.pdb"
+    path.write_text("\n".join(lines) + "\nEND\n")
+    with pytest.raises(ValueError, match=r"alternate locations \(A, B\)"):
+        read_rdkit(path)
+    # A single altLoc label drops nothing.
+    path.write_text("\n".join(lines[:1] + lines[2:]) + "\nEND\n")
+    assert read_rdkit(path).GetNumAtoms() == 3
+
+
+def test_multi_model_pdb_error_gives_a_working_route(tmp_path):
+    water = Chem.MolFromXYZBlock("3\n\nO 0 0 0.1\nH .757 .586 0\nH -.757 .586 0\n")
+    block = Chem.MolToPDBBlock(water).replace("END\n", "")
+    path = tmp_path / "models.pdb"
+    path.write_text(f"MODEL        1\n{block}ENDMDL\nMODEL        2\n{block}ENDMDL\nEND\n")
+    with pytest.raises(ValueError, match="split the file, or read it with RDKit"):
+        read_rdkit(path)
+
+
+def test_hash_file_rejects_a_missing_input_format(tmp_path):
+    with pytest.raises(ValueError, match="does not infer it from the file extension"):
+        hash_file(xyz_file(tmp_path, molecule("O")), input_format=None)
+
+
+def test_numpy_conf_id_is_accepted():
+    mol = molecule("CCO")
+    AllChem.EmbedMultipleConfs(mol, 2, randomSeed=1)
+    expected = hash_rdkit(mol, conf_id=1)
+    assert hash_rdkit(mol, conf_id=np.int64(1)) == expected
+    assert canonical_smiles(mol, conf_id=np.int64(1)) == canonical_smiles(mol, conf_id=1)
+    with pytest.raises(ValueError, match="conf_id must be an integer"):
+        hash_rdkit(mol, conf_id=1.5)

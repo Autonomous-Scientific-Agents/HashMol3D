@@ -1,3 +1,3 @@
 """Version information for HashMol3D."""
 
-__version__ = "0.16.0"
+__version__ = "0.16.1"

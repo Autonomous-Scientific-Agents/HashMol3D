@@ -51,7 +51,7 @@ artifacts. ``HM3D_PRECISION`` selects an accepted power-of-ten grid. Nondefault
 precisions receive an automatic filename suffix unless ``HM3D_OUTPUT_SUFFIX``
 is set explicitly. ``HM3D_AUDIT_BRANCHES=0`` skips the duplicate diagnostic
 eigendecomposition, and ``HM3D_SKIP_FIGURE=1`` suppresses per-run plots; these
-options do not change descriptor construction or the emitted F/C tags.
+options do not change descriptor construction or the emitted F/D tags.
 
 Dataset sources (download once into $HM3D_DATA, default /tmp/datasets):
   * QM9 (gdb9.sdf): https://doi.org/10.6084/m9.figshare.978904  (Ramakrishnan
@@ -160,7 +160,7 @@ print(f"branch audit: {AUDIT_BRANCHES}")
 def _frame_branch(Z, coords):
     """Classify the deterministic frame branch of the descriptor.
 
-    This mirrors the branch predicates in ``hashmol3d.core._frame_signature``;
+    This mirrors the branch predicates in ``hashmol3d.core._frame_search``;
     it is diagnostic only and does not participate in descriptor generation.
     The emitted descriptor tag remains the authority on whether a frame was
     accepted or the distance fallback occurred.
@@ -171,6 +171,8 @@ def _frame_branch(Z, coords):
     x = np.asarray(coords, dtype=float)
     w = z.astype(float)
     scale = 1.0 / PRECISION
+    if (x == x[0]).all():
+        return "point"
 
     def ksum(a):
         return float(np.sum(np.sort(a)))
@@ -188,15 +190,16 @@ def _frame_branch(Z, coords):
         return "point"
     if not lam[2] > 0.0:
         return "distance-fallback"
-    if max_radius_grid < 10.0:
-        axis = vec[:, 2]
-        projected = c - np.outer(c @ axis, axis)
-        residual = float(np.linalg.norm(projected, axis=1).max())
-        if residual <= 64.0 * np.finfo(np.float64).eps * float(radii.max()):
-            return "line"
 
     gap0 = float((lam[1] - lam[0]) / lam[2])
     gap1 = float((lam[2] - lam[1]) / lam[2])
+    # Short clouds: a line needs an isolated longitudinal axis and every
+    # transverse residual below half a grid cell (version 12).
+    if max_radius_grid < 10.0 and gap0 < 0.05 <= gap1:
+        axis = vec[:, 2]
+        projected = c - np.outer(c @ axis, axis)
+        if float(np.linalg.norm(projected, axis=1).max()) * scale < 0.5:
+            return "line"
     if min(gap0, gap1) >= 0.05:
         return "principal"
     if max_radius_grid < 10.0:
@@ -210,12 +213,12 @@ def _frame_branch(Z, coords):
         max_projected_grid = float(np.linalg.norm(projected, axis=1).max()) * scale
         if unique_slot == 2 and max_projected_grid < 0.5:
             return "line"
-        if max_projected_grid < 10.0:
+        if max_projected_grid < 1.0:
             return "distance-fallback"
         return "one-axis-anchor"
 
     # In the fully near-degenerate branch, a usable second atom must lie at
-    # least ten grid units away from the first atom-derived axis.  The exact
+    # least one grid unit away from the first atom-derived axis.  The exact
     # candidate-budget outcome is confirmed below from the emitted tag.
     q_radii = np.rint(radii * scale).astype(np.int64)
     first_keys = [(int(q_radii[i]), int(z[i])) for i in range(len(z))]
@@ -226,7 +229,7 @@ def _frame_branch(Z, coords):
     for i in anchors:
         first_axis = c[i] / radii[i]
         projected = c - np.outer(c @ first_axis, first_axis)
-        if float(np.linalg.norm(projected, axis=1).max()) * scale < 10.0:
+        if float(np.linalg.norm(projected, axis=1).max()) * scale < 1.0:
             return "distance-fallback"
     return "two-atom-anchor"
 

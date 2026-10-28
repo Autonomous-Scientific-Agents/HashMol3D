@@ -31,12 +31,17 @@ line; a SMILES name after whitespace is allowed. CXSMILES text is rejected.
 SDF must contain exactly one `$$$$`-terminated record, including when later
 records are invalid; trailing whitespace after its terminator is accepted.
 MOL, MOL2 and PDB likewise reject additional molecule blocks; a PDB file
-ends at its first `END` record. An SDF record cannot
+ends at its first `END` record. A PDB file with more than one alternate
+location (altLoc, column 17) is rejected, because RDKit keeps only the first
+and would silently drop the other atoms. An SDF record cannot
 hide a second MOL block before its terminator: text after `M  END` must be
 ordinary SD property data introduced by a `>` header. Property values may
 contain literal `M  END` text. A plain MOL block permits only trailing whitespace.
-Multiple conformers in a file are rejected. To process a collection, iterate
-an RDKit supplier explicitly:
+Multiple conformers in a file, such as PDB `MODEL` records, are rejected:
+split the file, or read it with RDKit and pass each `conf_id` to `hash_rdkit`
+(for PDB, with `allow_implicit_hydrogens=True` and a 3D flag on planar
+conformers, as `read_rdkit` sets). To process a collection, iterate an RDKit
+supplier explicitly:
 
 ```python
 from rdkit import Chem
@@ -69,7 +74,8 @@ actually present, and can be overridden. Other keywords are passed to
 `hash_file(path, *, input_format="xyz", generate_coordinates=False,
 allow_implicit_hydrogens=False, **kwargs)` deliberately defaults to the native
 XYZ parser, without extension-based dispatch. As in `hash_rdkit`,
-`charge=None` selects the default charge. Choose other formats explicitly.
+`charge=None` selects the default charge. Choose other formats explicitly:
+`input_format=None` is rejected rather than inferred from the extension.
 PDB hashing uses exactly the atoms in the file, without the implicit-H guard:
 guessed single bonds can imply extra hydrogens even in complete unsaturated
 geometries. Missing atoms cannot be inferred reliably from PDB chemistry, so

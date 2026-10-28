@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-from .core import HashMol3DResult, _resolve_method, hash_molecule
+from .core import HashMol3DResult, _as_exact_int, _resolve_method, hash_molecule
 from .io import read_xyz
 
 __all__ = ["canonical_smiles", "hash_file", "hash_rdkit", "read_rdkit"]
@@ -49,7 +49,7 @@ def canonical_smiles(mol, *, conf_id: int | None = None) -> str:
         atom.SetAtomMapNum(0)
     Chem.SanitizeMol(mol)
     if conf_id is not None:
-        conf = mol.GetConformer(conf_id)
+        conf = mol.GetConformer(_as_exact_int(conf_id, "conf_id"))
         if not conf.Is3D():
             raise ValueError("canonical_smiles requires a 3D conformer")
         # Unknown/wavy bond flags survive replaceExistingTags=True and can
@@ -91,7 +91,7 @@ def hash_rdkit(
         raise ValueError(
             "RDKit input has no coordinates; provide or explicitly generate 3D geometry"
         )
-    conf = mol.GetConformer(conf_id)
+    conf = mol.GetConformer(_as_exact_int(conf_id, "conf_id"))
     if not conf.Is3D():
         raise ValueError(
             "RDKit input has a 2D conformer; provide or explicitly generate 3D geometry"
@@ -133,12 +133,27 @@ def _validate_mol_record(data: bytes, *, sdf: bool = False) -> None:
 
 
 def _validate_pdb_record(data: str) -> None:
-    """Reject content after the first END record, which RDKit ignores."""
+    """Reject what RDKit would silently drop from a PDB record.
+
+    That is content after the first END record, and every alternate location
+    (altLoc, column 17) but the first one.
+    """
     lines = data.splitlines()
     end = next((i for i, line in enumerate(lines) if line[:6].rstrip() == "END"), None)
     if end is not None and any(line.strip() for line in lines[end + 1 :]):
         raise ValueError(
             "PDB input must contain exactly one molecule; unexpected content after END"
+        )
+    altlocs = {
+        line[16]
+        for line in lines[:end]
+        if line[:6] in ("ATOM  ", "HETATM") and len(line) > 16 and line[16] != " "
+    }
+    if len(altlocs) > 1:
+        raise ValueError(
+            "PDB input has alternate locations "
+            f"({', '.join(sorted(altlocs))}); RDKit keeps only the first, so "
+            "keep one location per atom"
         )
 
 
@@ -209,7 +224,10 @@ def read_rdkit(path, *, input_format: str | None = None):
     if mol is None or mol.GetNumAtoms() == 0:
         raise ValueError(f"RDKit could not parse a molecule from {path}")
     if mol.GetNumConformers() > 1:
-        raise ValueError("input has multiple conformers; use hash_rdkit with an explicit conf_id")
+        raise ValueError(
+            "input has multiple conformers (such as PDB MODEL records); split the "
+            "file, or read it with RDKit and call hash_rdkit with an explicit conf_id"
+        )
     return mol
 
 
@@ -242,6 +260,11 @@ def hash_file(
     if kwargs.get("charge", 0) is None:
         # As in hash_rdkit, None selects the default charge.
         del kwargs["charge"]
+    if not isinstance(input_format, str):
+        raise ValueError(
+            "input_format must be a format name such as 'xyz' or 'sdf'; hash_file "
+            f"does not infer it from the file extension, got {input_format!r}"
+        )
     fmt = input_format.lower()
     if fmt == "pdb" and generate_coordinates:
         raise ValueError(

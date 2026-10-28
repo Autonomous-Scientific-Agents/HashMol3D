@@ -198,8 +198,9 @@ _FRAME_GAP_MIN = 0.05
 
 # Whole-cloud size guard: a cloud whose centered radius is below ten grid
 # units and whose principal moments are not separated has too little resolved
-# structure to anchor, and uses the exact distance fallback. Exact point-like
-# and linear geometries are handled separately before this guard applies.
+# structure to anchor, and uses the exact distance fallback. Point-like
+# geometries and lines (every transverse residual below half a grid cell) are
+# handled separately before this guard applies.
 _FRAME_MIN_RADIUS_GRID = 10.0
 
 # Minimum extent, in grid units, of the transverse displacement that resolves
@@ -240,8 +241,12 @@ def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
     Returns:
         Recommended hash length in hex characters, in ``[1, 64]``.
     """
-    n = int(n_items)
-    if not (0.0 < target_prob < 1.0):
+    n = _as_exact_int(n_items, "n_items")
+    if (
+        isinstance(target_prob, (bool, np.bool_))
+        or not isinstance(target_prob, numbers.Real)
+        or not (0.0 < target_prob < 1.0)
+    ):
         raise ValueError(f"target_prob must be in (0, 1), got {target_prob!r}")
     if n <= 1:
         return 1
@@ -306,7 +311,10 @@ def _precision_to_decimals(precision: float) -> tuple[int, float]:
     """
     if isinstance(precision, (bool, np.bool_)):
         raise ValueError(f"precision must be a real number, not bool; got {precision!r}")
-    precision = float(precision)
+    try:
+        precision = float(precision)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"precision must be a real number, got {precision!r}") from err
     if not math.isfinite(precision) or precision <= 0:
         raise ValueError(f"precision must be a positive finite number, got {precision!r}")
     # ``decimals < 0`` catches powers of ten greater than 1 Å (e.g. 10.0,
@@ -371,6 +379,8 @@ def _validate_atomic_nums(atomic_nums) -> np.ndarray:
     failure is reported with a pointer to the symbol-lookup helpers.
     """
     arr = np.asarray(atomic_nums)
+    if arr.ndim != 1:
+        raise ValueError(f"atomic_nums must have shape (N,); got {arr.shape}")
     if arr.dtype == bool:
         raise ValueError("atomic numbers must be integers, not booleans")
     if np.issubdtype(arr.dtype, np.complexfloating):
@@ -440,19 +450,29 @@ def _extent(atomic_nums: np.ndarray, coords: np.ndarray) -> float:
     if _coincident(coords):
         # The weighted centroid need not round-trip to the shared position.
         return 0.0
+    # Normalized weights keep the centroid finite for any finite coordinates.
     w = atomic_nums.astype(float)
-    return float(np.linalg.norm(coords - (w @ coords) / w.sum(), axis=1).max())
+    with np.errstate(over="ignore", invalid="ignore"):  # the caller rejects inf
+        return float(np.linalg.norm(coords - (w / w.sum()) @ coords, axis=1).max())
 
 
 def _resolution_error(precision: float, extent: float) -> ValueError:
     """The error for a grid finer than float64 resolves at this extent."""
-    coarsest_ok = 10.0 ** math.ceil(math.log10(extent * _MIN_RELATIVE_PRECISION))
-    return ValueError(
+    problem = (
         f"precision {precision:.0e} Å is finer than float64 can resolve for a "
         f"geometry of extent {extent:.3g} Å: identifiers would not be "
-        "reproducible under rotation or relabeling. Use precision >= "
-        f"{coarsest_ok:.0e} Å for this geometry."
+        "reproducible under rotation or relabeling."
     )
+    # The exact rule on the hashed values can reject a precision that the
+    # extent alone would allow, so suggest at least the next coarser grid.
+    coarsest_ok = precision * 10.0
+    if math.isfinite(extent):
+        coarsest_ok = max(
+            coarsest_ok, 10.0 ** math.ceil(math.log10(extent * _MIN_RELATIVE_PRECISION))
+        )
+    if not coarsest_ok <= 1.0 * (1 + 1e-9):
+        return ValueError(f"{problem} No supported precision (at most 1 Å) resolves it.")
+    return ValueError(f"{problem} Use precision >= {coarsest_ok:.0e} Å for this geometry.")
 
 
 def _cells_within_floor(coarse: np.ndarray) -> bool:
@@ -511,13 +531,21 @@ def _distances_within_floor(atomic_nums: np.ndarray, qmat: np.ndarray) -> bool:
 
 
 def _infer_multiplicity(atomic_nums: np.ndarray, charge: int, multiplicity: int | None) -> int:
-    """Use the caller-supplied multiplicity, or infer one from electron count."""
+    """Use the caller-supplied multiplicity, or infer one from electron count.
+
+    A charge above the total nuclear charge leaves a negative electron count,
+    which no multiplicity describes.
+    """
+    electrons = int(np.sum(atomic_nums)) - int(charge)
+    if electrons < 0:
+        raise ValueError(
+            f"charge {charge} exceeds the total nuclear charge {electrons + int(charge)}"
+        )
     if multiplicity is not None:
         m = _as_exact_int(multiplicity, "multiplicity")
         if m < 1:
             raise ValueError(f"multiplicity must be >= 1, got {m}")
         return m
-    electrons = int(np.sum(atomic_nums)) - int(charge)
     return 1 if electrons % 2 == 0 else 2
 
 
@@ -811,10 +839,28 @@ def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str, bool]
     return "F", z_ordered, body, hashed, _cells_within_floor(coarse)
 
 
+class _NoStableFrame(Exception):
+    """The frame method found no stable frame; the message says why."""
+
+
 def _frame_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
 ) -> tuple[str, tuple[int, ...], str, str, bool] | None:
     """Canonical frame signature, or ``None`` for the distance fallback.
+
+    See :func:`_frame_search`, which raises :class:`_NoStableFrame` with the
+    reason instead of returning ``None``.
+    """
+    try:
+        return _frame_search(atomic_nums, coords, decimals)
+    except _NoStableFrame:
+        return None
+
+
+def _frame_search(
+    atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
+) -> tuple[str, tuple[int, ...], str, str, bool]:
+    """Canonical frame signature, or :class:`_NoStableFrame` for the fallback.
 
     Coordinates are expressed in the eigenbasis of the Z-weighted gyration
     tensor (axes ordered by ascending eigenvalue), quantized on the fine
@@ -831,17 +877,18 @@ def _frame_signature(
     exactly one eigenspace is isolated, that axis is retained and a centered
     atom vector canonically anchors the degenerate plane. If all moments are
     degenerate, a canonical ordered pair of non-collinear atom vectors
-    supplies the frame. Exact point-like and linear inputs are represented in
-    their intrinsic zero- or one-dimensional coordinates instead of inventing
-    meaningless axes.
+    supplies the frame. Point-like inputs, and lines whose every transverse
+    residual is below half a grid cell, are represented in their intrinsic
+    zero- or one-dimensional coordinates instead of inventing meaningless
+    axes.
 
     Anchor keys use only rotation-, reflection-, and permutation-invariant
     integers on the precision grid. Every tied candidate is evaluated and the
-    lexicographically smallest hashed row list wins. ``None`` is returned for
-    a cloud with degenerate moments whose radius is
-    below ``_FRAME_MIN_RADIUS_GRID``, for ill-conditioned anchors, and for a
-    candidate-budget overflow; the caller then uses the complete canonical
-    distance descriptor. Otherwise the result is that of :func:`_frame_body`.
+    lexicographically smallest hashed row list wins. :class:`_NoStableFrame`
+    is raised for a cloud with degenerate moments, no isolated line axis and a
+    radius below ``_FRAME_MIN_RADIUS_GRID``, for ill-conditioned anchors, and
+    for a candidate-budget overflow; the caller then uses the complete
+    canonical distance descriptor. Otherwise the result is that of :func:`_frame_body`.
     """
     n = atomic_nums.shape[0]
     z = atomic_nums.astype(np.int64)
@@ -861,12 +908,15 @@ def _frame_signature(
         # Permutation-invariant summation: sort addends first.
         return float(np.sum(np.sort(a)))
 
-    centroid = np.array([ksum(w * coords[:, k]) for k in range(3)]) / ksum(w)
-    c = coords - centroid
-    t = np.empty((3, 3))
-    for a in range(3):
-        for b in range(a, 3):
-            t[a, b] = t[b, a] = ksum(w * c[:, a] * c[:, b])
+    with np.errstate(over="ignore", invalid="ignore"):  # rejected below
+        centroid = np.array([ksum(w * coords[:, k]) for k in range(3)]) / ksum(w)
+        c = coords - centroid
+        t = np.empty((3, 3))
+        for a in range(3):
+            for b in range(a, 3):
+                t[a, b] = t[b, a] = ksum(w * c[:, a] * c[:, b])
+    if not (np.isfinite(centroid).all() and np.isfinite(t).all()):
+        raise ValueError("coords are too large: the frame's moment sums overflow float64")
     lam, vec = np.linalg.eigh(t)
     radii = np.linalg.norm(c, axis=1)
     max_radius_grid = float(radii.max()) * scale
@@ -896,7 +946,7 @@ def _frame_signature(
         return _sorted_signed_rows(z, q, ((1, 1, 1), (1, 1, -1)))
 
     if not lam[2] > 0.0:
-        return None
+        raise _NoStableFrame("the principal moments vanish")
 
     gap0 = float((lam[1] - lam[0]) / lam[2])
     gap1 = float((lam[2] - lam[1]) / lam[2])
@@ -924,7 +974,11 @@ def _frame_signature(
     # unresolved eigenspaces require an atom anchor, and only clouds with at
     # least ten grid units of radius are anchored at all.
     if max_radius_grid < _FRAME_MIN_RADIUS_GRID:
-        return None
+        raise _NoStableFrame(
+            "the principal moments are degenerate and the cloud is not a line, "
+            f"but its radius is below {_FRAME_MIN_RADIUS_GRID:g} grid cells, too "
+            "small to anchor"
+        )
 
     def quantized(values: np.ndarray) -> np.ndarray:
         scaled = values * scale
@@ -938,16 +992,24 @@ def _frame_signature(
     best: np.ndarray | None = None
     candidates = 0
 
-    def consider(basis: np.ndarray) -> bool:
-        """Evaluate one basis; return false when the budget is exhausted."""
+    def over_budget() -> _NoStableFrame:
+        return _NoStableFrame(
+            f"the tied anchors exceed the {_FRAME_CANDIDATE_BUDGET}-candidate budget"
+        )
+
+    def too_close() -> _NoStableFrame:
+        return _NoStableFrame(
+            f"no anchor atom is at least {_FRAME_ANCHOR_MIN_GRID:g} grid cell from "
+            "the resolved axis"
+        )
+
+    def consider(basis: np.ndarray) -> None:
+        """Evaluate one basis. Callers check the budget before calling."""
         nonlocal best, candidates
         candidates += 1
-        if candidates > _FRAME_CANDIDATE_BUDGET:
-            return False
         cand = _rows_in_basis(z, c, basis, fine_scale)
         if best is None or _rows_less(cand, best):
             best = cand
-        return True
 
     # One isolated eigenvalue leaves only a two-dimensional plane to anchor.
     # Preserve eigenvalue-axis ordering so this branch approaches the regular
@@ -966,7 +1028,7 @@ def _frame_signature(
         if unique_slot == 2 and max_projected_grid < 0.5:
             return _frame_body(line_rows(axis))
         if max_projected_grid < _FRAME_ANCHOR_MIN_GRID:
-            return None
+            raise too_close()
 
         q_projected = quantized(projected_norm)
         q_axial = quantized(np.abs(axial))
@@ -974,7 +1036,7 @@ def _frame_signature(
         winning_key = max(keys)
         anchors = [i for i, key in enumerate(keys) if key == winning_key]
         if len(anchors) > _FRAME_CANDIDATE_BUDGET:
-            return None
+            raise over_budget()
 
         for i in anchors:
             plane_axis = projected[i] / projected_norm[i]
@@ -983,8 +1045,7 @@ def _frame_signature(
                 basis = np.column_stack([axis, plane_axis, cross_axis])
             else:
                 basis = np.column_stack([plane_axis, cross_axis, axis])
-            if not consider(basis):
-                return None
+            consider(basis)
         assert best is not None
         return _frame_body(best)
 
@@ -995,7 +1056,7 @@ def _frame_signature(
     winning_first_key = max(first_keys)
     first_anchors = [i for i, key in enumerate(first_keys) if key == winning_first_key]
     if len(first_anchors) > _FRAME_CANDIDATE_BUDGET:
-        return None
+        raise over_budget()
 
     for i in first_anchors:
         first_axis = c[i] / radii[i]
@@ -1006,7 +1067,7 @@ def _frame_signature(
         if max_projected_grid < _FRAME_ANCHOR_MIN_GRID:
             # This can occur only for a marginally non-point cloud; a true
             # line would have an isolated largest eigenvalue above.
-            return None
+            raise too_close()
         q_projected = quantized(projected_norm)
         q_along = quantized(np.abs(along))
         second_keys = [
@@ -1015,7 +1076,7 @@ def _frame_signature(
             if j != i and q_projected[j] > 0
         ]
         if not second_keys:
-            return None
+            raise _NoStableFrame("no atom resolves a second anchor axis")
         winning_second_key = max(second_keys)
         second_anchors = [
             j
@@ -1025,13 +1086,12 @@ def _frame_signature(
             and (int(q_projected[j]), int(z[j]), int(q_along[j])) == winning_second_key
         ]
         if candidates + len(second_anchors) > _FRAME_CANDIDATE_BUDGET:
-            return None
+            raise over_budget()
         for j in second_anchors:
             second_axis = projected[j] / projected_norm[j]
             third_axis = np.cross(first_axis, second_axis)
             basis = np.column_stack([first_axis, second_axis, third_axis])
-            if not consider(basis):
-                return None
+            consider(basis)
 
     assert best is not None
     return _frame_body(best)
@@ -1612,7 +1672,7 @@ def hash_molecule(
             suited to proteins and other large systems. Degenerate principal
             moments are resolved by intrinsic point/line descriptors or by
             canonical atom anchors. Clouds too small to anchor (radius below
-            ten grid units with degenerate moments), ill-conditioned anchors
+            ten grid units with degenerate moments, not a line), ill-conditioned anchors
             and candidate-budget overflows emit :class:`UserWarning` and use
             the distance
             method instead (detectable via the ``D:`` section in
@@ -1627,9 +1687,10 @@ def hash_molecule(
         SearchBudgetExceeded: if canonical search cannot finish within the
             node budget. No descriptor, hash, or result is created; increase
             ``node_budget`` and retry.
-        ValueError: if input or an option is invalid, or if ``precision``
-            is finer than float64 resolves for this geometry (below
-            ``2**-35`` times its largest distance from the centroid).
+        ValueError: if input or an option is invalid (including a charge
+            above the total nuclear charge), or if ``precision`` is finer than
+            float64 resolves for this geometry (below ``2**-35`` times its
+            largest distance from the centroid).
 
     Returns:
         :class:`HashMol3DResult`.
@@ -1673,16 +1734,18 @@ def hash_molecule(
     # F rows or the D distances), so that every geometry with the same
     # hashed values -- and the stored descriptor itself -- is treated alike.
     extent = _extent(atomic_nums, coords)
+    if not math.isfinite(extent):
+        raise ValueError("coords are too large: their distances overflow float64")
     if effective_precision * _RESOLUTION_CELLS * (1 + _RESOLUTION_SCREEN_SLACK) < extent:
         raise _resolution_error(effective_precision, extent)
 
     signature = None
     if method == "frame":
-        signature = _frame_signature(atomic_nums, coords, decimals)
-        if signature is None:
+        try:
+            signature = _frame_search(atomic_nums, coords, decimals)
+        except _NoStableFrame as reason:
             warnings.warn(
-                "no numerically stable canonical frame was found within the "
-                f"{_FRAME_CANDIDATE_BUDGET}-candidate budget; falling back "
+                f"no numerically stable canonical frame: {reason}; falling back "
                 "to method='distance'. A D descriptor is returned only if "
                 "the canonical search completes within node_budget.",
                 UserWarning,
