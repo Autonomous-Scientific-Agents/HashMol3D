@@ -66,7 +66,7 @@ class TestPrecisionToDecimals:
 
     @pytest.mark.parametrize("method", ["frame", "canonical"])
     def test_rejects_precision_below_float64_resolution(self, water, method):
-        # Water extends ~0.66 Å from its centroid: 1e-10 Å is resolvable,
+        # Water extends ~0.89 Å from its centroid: 1e-10 Å is resolvable,
         # 1e-11 Å is below 2**-35 of the extent.
         z, coords = water
         hash_molecule(z, coords, precision=1e-10, method=method)

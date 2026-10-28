@@ -164,17 +164,16 @@ Does not give:
 
 ## 3. Open questions
 
-1. Is a canonical fine geometry needed at all, or is "store the descriptor
-   string" sufficient for the corpus format? The proposal only pays off if a
-   downstream consumer must receive coordinates and cannot receive the
-   descriptor.
-2. Version 9 timing: every digest changes. The manuscript's corpus results,
-   the published water example, and the reviewer-facing numbers are all
-   version 8; this should not open before the paper is out.
-3. Whether p + 4 is the right constant, or whether the extra-digit count
-   should be a spec constant independent of p (four extra digits keeps the
-   fine grid at 10⁻⁸ Å for the default, well above the ≈ 10⁻¹² Å floor where
-   float64 roundoff begins to flip identifiers).
+1. *Resolved by implementation.* Is a canonical fine geometry needed at
+   all, or is "store the descriptor string" sufficient for the corpus
+   format? Both are now available: `hash_descriptor` re-hashes the string and
+   `descriptor_geometry` returns the fine geometry.
+2. *Resolved.* Timing of the digest change: it shipped as version 10 in
+   0.14.0 (version 9 was used for the near-linear anchor change). The
+   manuscript's corpus results remain version 8 and are labelled as such.
+3. *Resolved.* The extra-digit count is the spec constant 4, independent of
+   p. The float64 limit is relative, `2^-35·R` (§4), and is enforced
+   directly.
 4. Whether `C` descriptors should carry an analogous fine distance matrix for
    symmetry with `F`. It would not provide coordinates, so the benefit is
    unclear.
@@ -218,7 +217,8 @@ repository (open question 5 still applies).
   rows read back as coordinates reproduce the identifier for 54.4–55.8 %.
 * **Known limit: exact symmetry with tied anchors.** Of 7,010 exactly
   symmetric `F` cases (benzene, methane, SF₆, NH₃, C₅H₅, cubane, each at 301
-  scales and precisions 10⁻¹–10⁻⁴ Å) 5 could not be settled: the lexicographic minimum over tied anchor
+  scales and precisions 10⁻¹–10⁻⁴ Å; the other 214 of the 7,224 inputs, NH₃
+  at 0.1 Å, select `C`) 5 could not be settled: the lexicographic minimum over tied anchor
   frames picks whichever frame moves a value across a boundary, and settling
   one frame does not constrain the others. `descriptor_geometry` then warns;
   `hash_descriptor` is exact regardless.

@@ -10,7 +10,8 @@ hashmol3d --version
 hashmol3d --help
 ```
 
-`FILE` is the path to a standard XYZ geometry file. The default
+`FILE` is the path to a molecular input file (XYZ by default; see
+`--input-format`). The default
 behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
@@ -32,7 +33,7 @@ The identifier has the form `<formula><state>-<hash>`, e.g.
 |      | `--include-smiles` | off | Add canonical isomeric SMILES as S in a separate hash namespace |
 |      | `--generate-coordinates` | off | Generate a new 3D conformer with explicit H atoms (not XYZ or PDB) |
 |      | `--allow-implicit-hydrogens` | off | Accept hydrogens without coordinates and hash only atoms present (non-XYZ) |
-| `-v` | `--verbose`      |        | Also print the descriptor, formula, geometry hash, and metadata |
+| `-v` | `--verbose`      |        | Print a labelled block (identifier, formula, geometry hash, descriptor, version, precision, charge, multiplicity) instead of the bare identifier |
 
 ## Examples
 
@@ -43,10 +44,10 @@ hashmol3d ethanol.xyz
 # C2H6Oq0m1-...
 ```
 
-Use a coarser precision and a longer fixed identifier:
+Use a coarser precision and a shorter, 20-hex-character hash:
 
 ```bash
-hashmol3d -p 1e-3 -l 32 ethanol.xyz
+hashmol3d -p 1e-3 -l 20 ethanol.xyz
 ```
 
 Request the O(N²) canonical labelled-distance descriptor explicitly:
@@ -75,6 +76,8 @@ grep -E -- "-8ec3152acf35859ba58ced3e101c87e1" identifiers.txt
   (a message is written to stderr; no Python traceback is shown). On exhaustion
   no identifier is printed; increase `--node-budget` and retry, for example
   `hashmol3d --node-budget 100000 molecule.xyz`.
+- `2` — command-line usage error, such as a missing `FILE` or an unknown
+  option value (reported by argparse).
 
 ## Supported formats
 
@@ -84,7 +87,8 @@ lines follow the declared atoms (a multi-frame trajectory, or a header that
 under-counts the atoms), only the first frame is hashed and a warning is
 printed to stderr.
 
-Install `pip install 'hashmol3d[rdkit]'` for the other formats. Select the format
+Install the `rdkit` extra (`pip install -e '.[rdkit]'` from a source checkout)
+for the other formats. Select the format
 explicitly; file extensions never switch the CLI backend automatically. Reading
 an RDKit format does not enable S. Inputs must contain a single molecule;
 SMILES/InChI and 2D structures require explicit coordinate generation:

@@ -8,9 +8,10 @@ A HashMol3D identifier has the form:
 
 For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
 
-- **Hill formula**: carbon first if present, then hydrogen, then the
-  remaining elements alphabetically. A count of 1 is omitted
-  (`H2O`, `C6H6`, `CHBrClF`).
+- **Hill formula**: when carbon is present, carbon first, then hydrogen,
+  then the remaining elements alphabetically; without carbon, all elements
+  alphabetically. A count of 1 is omitted (`H2O`, `C6H6`, `CHBrClF`,
+  `BrH`).
 - **State tag**: `q<charge>m<mult>`. Zero and positive charges have no
   sign (`q0`, `q1`); only negative charges carry a leading `-`
   (`q-1`, `q-2`).
@@ -56,27 +57,28 @@ All optional arguments are **keyword-only**.
   `hashmol3d.SearchBudgetExceeded` exception without creating a descriptor,
   hash, or result. Increase this budget and retry; completed hashes are unchanged.
 
-### `hash_length_for(n_items, target_prob=1e-9) -> int`
+**Raises:**
 
-Return the minimum geometry-hash length (hex chars) that keeps the
-birthday-collision probability below `target_prob` for a namespace of
-`n_items` distinct geometries, using `P ~ n² / 2^{b+1}` with `b = 4·length`
-bits. The result is clamped to `[1, 64]`.
+- `ValueError` for invalid input: an empty molecule, mismatched or
+  non-`(N, 3)` shapes, non-finite coordinates, atomic numbers outside
+  `[1, 118]`, a precision that is not a power of ten ≤ 1 Å or is below the
+  resolution floor, an invalid `length` or `method`, `node_budget < 1`, or
+  `multiplicity < 1`.
+- `hashmol3d.SearchBudgetExceeded` (a `RuntimeError` subclass) when the
+  canonical search exhausts `node_budget`.
 
-```python
-from hashmol3d import hash_length_for, hash_molecule
+**Warns:** `UserWarning` when `method="frame"` finds no stable frame and falls
+back to the canonical method.
 
-L = hash_length_for(10**9)  # 23 hex chars (1e9 items, p=1e-9)
-res = hash_molecule(z, coords, length=L)
-```
-
-**Returns:** `HashMol3DResult` with fields:
+**Returns:** a `HashMol3DResult`, a frozen dataclass (importable from
+`hashmol3d`) with fields:
 
 - `hash_str`: full HashMol3D identifier (formula + state + `-` + hash)
 - `formula`: Hill-order molecular formula
 - `geometry_hash`: hex-only geometry portion (useful for grouping
   molecules that differ only in charge/multiplicity)
-- `version`: descriptor version string (constant for a given release)
+- `version`: descriptor version string: `DESCRIPTOR_VERSION` for
+  geometry-only results; RDKit S results append `-S1-RDKIT-<rdkitVersion>`
 - `precision`: geometry-grid precision used (Å)
 - `charge`: charge used
 - `multiplicity`: multiplicity used
@@ -115,7 +117,7 @@ of versions 5–6), the precision field as that version wrote it (any
 positive value for version 5, a power of ten ≤ 1 Å from version 6), atomic
 numbers in range and ascending, `F`/`W` row elements matching `Z` in
 canonical order, the right number of `C` distances, canonical integers
-within int64, and for version 10 the rounding margin and the exact
+with absolute value below 2⁶², and for version 10 the rounding margin and the exact
 resolution floor ([specification §6.1](specification.md#61-idempotent-re-hashing)).
 Corrupted or hand-edited descriptors therefore fail instead of hashing. The
 checks are necessary conditions: they do not test whether `C` distances are
@@ -183,6 +185,22 @@ from hashmol3d import read_xyz
 atomic_nums, coords = read_xyz("molecule.xyz")
 ```
 
+## `hash_length_for(n_items, target_prob=1e-9) -> int`
+
+Return the minimum geometry-hash length (hex chars) that keeps the
+birthday-collision probability below `target_prob` for a namespace of
+`n_items` distinct geometries, using `P ~ n² / 2^{b+1}` with `b = 4·length`
+bits. `n_items <= 1` returns 1. The result is clamped to `[1, 64]`; when the
+approximation asks for more than 64, a `UserWarning` is emitted and 64 is
+returned. Raises `ValueError` if `target_prob` is not in `(0, 1)`.
+
+```python
+from hashmol3d import hash_length_for, hash_molecule
+
+L = hash_length_for(10**9)  # 23 hex chars (1e9 items, p=1e-9)
+res = hash_molecule(z, coords, length=L)
+```
+
 ## Optional RDKit APIs
 
 For optional `hash_rdkit`, `hash_file`, `read_rdkit`, and `canonical_smiles`
@@ -194,11 +212,16 @@ their `geometry_hash` field hashes geometry plus SMILES.
 ## Constants
 
 - `DESCRIPTOR_VERSION`: the descriptor-format version baked into every
-  geometry hash. Bumping this value invalidates previously computed hashes.
+  geometry hash (`"10-FRAME-SHA256"`). Bumping this value invalidates
+  previously computed hashes.
+- `DEFAULT_LENGTH`: default geometry-hash length in hex characters (`32`).
+- `__version__`: the package version (`"0.14.0"`).
 
 ## Deprecated
 
-- `generate_hashmol3d(...)`: thin alias for `hash_molecule` that emits a
-  `DeprecationWarning`. The old `hash_length=` keyword still works (it
+- `generate_hashmol3d(atomic_nums, coords, precision=1e-4, charge=0,
+  multiplicity=None, hash_length=32)`: deprecated since 0.4.0; a wrapper for
+  `hash_molecule` that emits a `DeprecationWarning` and does not expose
+  `method` or `node_budget`. The old `hash_length=` keyword still works (it
   maps to `length=`). Note that since 0.5.0 the returned `hash_str` is
   the full readable identifier, not just the hex digest.

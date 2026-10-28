@@ -1,7 +1,9 @@
 # Optional RDKit input and S tags
 
-Install with `pip install 'hashmol3d[rdkit]'`. The extra requires RDKit
-2023.9.6 or newer; pip selects a release compatible with your Python version.
+Install the `rdkit` extra from a source checkout with
+`pip install -e '.[rdkit]'`. The extra requires RDKit 2023.9.6 or newer; pip
+selects a release compatible with your Python version. RDKit 2023.9.x needs
+NumPy < 2.
 Importing HashMol3D does not import RDKit. `hash_molecule`, the default
 `hash_xyz`, and the default CLI retain their existing NumPy-only behavior,
 descriptor version, and hashes whether RDKit is installed or absent.
@@ -119,7 +121,8 @@ V:10-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|C:<distances>|
    requested truncation. From version 10 the payload rounds the stored fine
    `F` rows back onto the precision grid exactly as for the base descriptor
    ([specification §6](specification.md)); `C` sections and earlier versions
-   are hashed as stored. `hash_descriptor(result.descriptor)` reproduces the
+   are hashed as stored. `hash_descriptor(result.descriptor, length=len(result.geometry_hash))`
+   reproduces the
    digest, and `descriptor_geometry` returns the base geometry. The existing
    `HashMol3DResult` fields and readable prefix layout are reused.
 

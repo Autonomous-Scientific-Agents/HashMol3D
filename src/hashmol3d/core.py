@@ -5,7 +5,7 @@ The identifier has the form::
 
     <Hill formula><state tag>-<geometry hash>
 
-For example, ``H2Oq0m1-a1b28135...`` for neutral singlet water.
+For example, ``H2Oq0m1-8ec3152a...`` for neutral singlet water.
 
 The trailing hexadecimal hash is invariant under the operations that
 leave the non-relativistic molecular Hamiltonian's eigenvalues unchanged:
@@ -33,8 +33,9 @@ changing charge or multiplicity only changes the prefix.
 Re-hashing is idempotent. ``F`` descriptors store canonical-frame rows on a
 grid ``10**4`` times finer than the precision and hash them rounded back to
 it, so ``hash_descriptor(result.descriptor)`` reproduces the geometry hash
-exactly, and ``descriptor_geometry(result.descriptor)`` gives coordinates that
-``hash_molecule`` maps back to the same identifier.
+exactly, and for ``F`` descriptors ``descriptor_geometry(result.descriptor)``
+gives coordinates that ``hash_molecule`` maps back to the same geometry hash
+(with a warning in rare, exactly symmetric cases where it cannot).
 
 The implementation has no RDKit dependency; it uses only NumPy and the
 Python standard library.
@@ -773,10 +774,12 @@ def _frame_signature(
     """Canonical frame signature, or ``None`` for the distance fallback.
 
     Coordinates are expressed in the eigenbasis of the Z-weighted gyration
-    tensor (axes ordered by ascending eigenvalue), quantized to the
-    precision grid, and serialized as sorted ``(Z, x, y, z)`` rows. Axis
-    *sign* conventions are not needed: all eight sign combinations are
-    evaluated and the lexicographically smallest row list wins, which makes
+    tensor (axes ordered by ascending eigenvalue), quantized on the fine
+    grid (``10**_FINE_DIGITS`` times finer than the precision) and rounded
+    back onto the precision grid for hashing, and serialized as sorted
+    ``(Z, x, y, z)`` rows. Axis *sign* conventions are not needed: all eight
+    sign combinations are evaluated and the lexicographically smallest
+    hashed row list wins (fine digits break exact ties), which makes
     the signature reflection-invariant by construction. Tensor sums are
     computed over sorted addends so the result is exactly independent of
     the input atom order.
@@ -791,9 +794,11 @@ def _frame_signature(
 
     Anchor keys use only rotation-, reflection-, and permutation-invariant
     integers on the precision grid. Every tied candidate is evaluated and the
-    lexicographically smallest row list wins. ``None`` is reserved for
-    ill-conditioned anchors or a candidate-budget overflow; the caller then
-    uses the complete canonical distance descriptor.
+    lexicographically smallest hashed row list wins. ``None`` is returned for
+    coincident atoms, for a cloud with degenerate moments whose radius is
+    below ``_FRAME_MIN_RADIUS_GRID``, for ill-conditioned anchors, and for a
+    candidate-budget overflow; the caller then uses the complete canonical
+    distance descriptor. Otherwise the result is that of :func:`_frame_body`.
     """
     n = atomic_nums.shape[0]
     z = atomic_nums.astype(np.int64)
@@ -985,12 +990,13 @@ def _format_descriptor(
     tag: str,
     body: str,
 ) -> str:
-    """Render the canonical descriptor string that is fed to SHA-256.
+    """Render a descriptor string: the stored form or, given a hashed
+    ``body``, the payload fed to SHA-256.
 
     Charge and multiplicity are *not* included: they are part of the
     readable prefix of the final identifier, not of the hashed payload.
-    Distances appear as exact integers on the precision grid (their scale
-    is fixed by the ``P:`` field).
+    ``F`` bodies hold canonical-frame coordinates and ``C`` bodies distances,
+    as exact integers on a grid whose scale is fixed by the ``P:`` field.
     """
     prec_str = f"{precision:.1e}"
     z_part = ",".join(str(v) for v in z_ordered)
@@ -1033,7 +1039,7 @@ def _parse_int(text: str, what: str, *, signed: bool) -> int:
         raise _invalid(f"{what} {text!r} is not a canonical decimal integer")
     value = int(text)
     if abs(value) >= _MAX_SCALED:
-        raise _invalid(f"{what} {text!r} is outside the int64 range of the format")
+        raise _invalid(f"{what} {text!r} is outside the format's range (|v| < 2**62)")
     return value
 
 
@@ -1129,7 +1135,7 @@ def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
     geometry.
 
     Raises:
-        ValueError: for anything else.
+        ValueError: if any of these checks fails.
     """
     if not isinstance(descriptor, str):
         raise ValueError(f"descriptor must be a string, got {type(descriptor).__name__}")
@@ -1200,10 +1206,7 @@ def _parse_base_descriptor(descriptor: str) -> _ParsedDescriptor:
             raise _invalid(f"{len(values)} distances for {n} atoms; expected {n * (n - 1) // 2}")
         distances = [_parse_int(t, "distance", signed=False) for t in values]
         if fine and n > 1:
-            # A distance above twice the floor is past it whatever the
-            # weights; this also keeps the exact test below small.
-            if max(distances) > 2 * _RESOLUTION_CELLS:
-                raise _invalid("distances exceed the resolution floor of the precision grid")
+            # The same exact rule as hash_molecule() applies to its distances.
             qmat = np.zeros((n, n), dtype=np.int64)
             qmat[np.triu_indices(n, k=1)] = distances
             qmat += qmat.T
@@ -1328,9 +1331,11 @@ def hash_descriptor(descriptor: str, *, length: int | None = None) -> str:
             :data:`DEFAULT_LENGTH`).
 
     Raises:
-        ValueError: unless ``descriptor`` is one :func:`hash_molecule` could
-            have produced (any supported version); corrupted or hand-edited
-            descriptors are rejected rather than hashed.
+        ValueError: unless ``descriptor`` follows the rules of its own
+            version (any supported version, with or without the RDKit S
+            extension); corrupted or hand-edited descriptors are rejected
+            rather than hashed. The checks are necessary conditions: they do
+            not test that ``C`` distances are realizable in three dimensions.
     """
     length = _check_length(length)
     payload = _hashed_payload(descriptor)
@@ -1396,9 +1401,11 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
     before being returned; in the rare case that the recomputed frame moves a
     value across a rounding boundary of the precision grid, the values are
     deterministically settled (by a small fraction of a grid cell; at most
-    about 5 % on QM9) until they re-hash correctly. The result is a pure function of the
-    descriptor. :func:`hash_descriptor` re-hashes the descriptor itself and
-    needs no geometry.
+    about 5 % on QM9) until they re-hash correctly. The result is a pure
+    function of the descriptor. For an RDKit S descriptor it is the geometry
+    of the base descriptor, which hashes to the base geometry hash.
+    :func:`hash_descriptor` re-hashes the descriptor itself and needs no
+    geometry.
 
     Raises:
         ValueError: for a ``C`` descriptor, whose canonical labelled distance
@@ -1481,7 +1488,7 @@ def hash_molecule(
     """Compute the HashMol3D identifier for a 3D molecular geometry.
 
     The identifier has the form ``<Hill formula><state tag>-<geom hash>``,
-    e.g. ``H2Oq0m1-a1b28135...``. Charge and multiplicity appear in the
+    e.g. ``H2Oq0m1-8ec3152a...``. Charge and multiplicity appear in the
     readable prefix; only the geometry contributes to the hash.
 
     Args:
@@ -1508,8 +1515,10 @@ def hash_molecule(
             gyration tensor -- normally O(N log N) time and O(N) memory,
             suited to proteins and other large systems. Degenerate principal
             moments are resolved by intrinsic point/line descriptors or by
-            canonical atom anchors. Ill-conditioned anchors and candidate-
-            budget overflows emit :class:`UserWarning` and use the canonical
+            canonical atom anchors. Clouds too small to anchor (radius below
+            ten grid units with degenerate moments), ill-conditioned anchors
+            and candidate-budget overflows emit :class:`UserWarning` and use
+            the canonical
             method instead (detectable via the ``C:`` section in
             ``result.descriptor`` instead of ``F:``).
             Identifiers from different methods are **not comparable**; pick
@@ -1622,7 +1631,10 @@ def generate_hashmol3d(
     multiplicity: int | None = None,
     hash_length: int = 32,
 ) -> HashMol3DResult:
-    """Deprecated alias for :func:`hash_molecule`.
+    """Deprecated wrapper for :func:`hash_molecule`.
+
+    It does not expose ``method`` or ``node_budget``, which take their
+    defaults.
 
     .. deprecated:: 0.4.0
         Use :func:`hash_molecule` instead. The ``hash_length`` keyword is
