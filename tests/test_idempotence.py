@@ -212,7 +212,7 @@ class TestHashDescriptor:
                 "V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|F:6:0,0,10000;6:0,0,-10000",
                 "not in canonical order",
             ),
-            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:4611686018427387904,0,0", "int64 range"),
+            ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:4611686018427387904,0,0", "format.s range"),
             # 2**35 + 1 grid cells from the centroid: past the resolution floor.
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6|F:6:343597383690000,0,0", "resolution floor"),
             ("V:10-FRAME-SHA256|P:1.0e-04|Z:6,6|C:", "0 distances for 2 atoms"),

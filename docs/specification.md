@@ -16,9 +16,10 @@ A HashMol3D identifier is a single ASCII string with three parts:
 
 For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
 
-- **Hill formula** — carbon first if present, then hydrogen, then the
-  remaining elements alphabetically by symbol. A count of 1 is omitted.
-  Examples: `H2O`, `C6H6`, `CHBrClF`, `H3N`.
+- **Hill formula** — if carbon is present: carbon, then hydrogen, then the
+  remaining elements alphabetically by symbol; if carbon is absent: all
+  elements, hydrogen included, alphabetically. A count of 1 is omitted.
+  Examples: `H2O`, `C6H6`, `CHBrClF`, `H3N`, `ClH`.
 - **State tag** — `q<charge>m<multiplicity>`. Zero and positive charges
   have no sign (`q0`, `q1`); only negative charges carry a leading `-`
   (`q-1`, `q-2`). Multiplicity is a positive integer with no sign.
@@ -26,7 +27,7 @@ For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
   is unambiguous even though the formula and state tag contain no
   delimiters.
 - **Geometry hash** — lowercase hex truncation of the SHA-256 digest of
-  the geometry-only descriptor (see §3, §5, §6).
+  the hashed payload of the geometry-only descriptor (see §4, §6, §7).
 
 ## 2. Invariance contract
 
@@ -50,8 +51,9 @@ threshold); their magnitude alone does not determine whether the
 identifier changes. In particular a perturbation smaller than the
 requested precision can still change the hash if it straddles a boundary,
 and one larger than the precision can leave it unchanged if it does not.
-See §7 and the manuscript's finite-grid and stability analysis for the
-empirical rate.
+See the manuscript's finite-grid and stability analysis for the empirical
+rate, and §3 for the resolution floor below which float64 roundoff alone
+changes identifiers.
 
 The geometry hash is also **not** invariant under:
 
@@ -91,11 +93,16 @@ The reference implementation takes:
 2. `coords`: float array of Cartesian coordinates in Å, shape `(N, 3)`
 3. `precision`: geometry-grid precision in Å (default `1e-4`); it must be a
    power of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...), and no
-   finer than `2^-35·R` (≈ 2.9×10⁻¹¹·R), where `R` is the largest distance
-   of an atom from the Z-weighted centroid (see below)
+   finer than about `2^-35·R` (≈ 2.9×10⁻¹¹·R), where `R` is the largest
+   distance of an atom from the Z-weighted centroid (the exact rule is below)
 4. `charge`: total formal charge (default `0`)
 5. `multiplicity`: spin multiplicity (default: inferred from electron parity)
-6. `method`: `"frame"` (default) or `"canonical"`
+6. `length`: geometry-hash length in hex characters, `[1, 64]` (default 32; §7)
+7. `method`: `"frame"` (default) or `"canonical"`
+8. `node_budget`: canonical search budget (default 10,000; §4.4)
+
+All arguments after `coords` are keyword-only in the reference
+implementation.
 
 **Resolution floor.** Float64 coordinates of extent `R` carry about
 `R·2^-52` of representation error, which the centroid, tensor, eigenvector
@@ -103,8 +110,10 @@ and distance computations amplify. Below a relative grid of about 10⁻¹¹
 frame identifiers stop being invariant under rigid motions (0.5–3 % of
 motions change the identifier at `precision/R ≈ 10⁻¹¹`, most of them near
 10⁻¹³·⁵ on random 30-atom clouds of 1–500 Å); distance identifiers hold
-to about 10⁻¹²·⁵. Inputs finer than `2^-35·R` are therefore rejected for
-both methods, with the finest admissible power of ten in the error:
+to about 10⁻¹²·⁵. Inputs finer than about `2^-35·R` are therefore rejected
+for both methods, and the error names the power of ten
+`10^ceil(log10(2^-35·R))`. The decision itself is made exactly, on what is
+hashed:
 
 - For an `F` descriptor the decision is exact and uses the hashed rows: the
   input is rejected if any row `(x, y, z)`, in grid cells, has
@@ -180,20 +189,22 @@ depth-first search:
 2. For **each** atom in that cell, *individualize* it (give it a new
    color ordered immediately before its former cellmates), re-run
    refinement (§4.2), and recurse.
-3. Each leaf (discrete partition) yields an atom order; evaluate the
-   candidate string `upper-triangle of q in that order, row-major` and
-   keep the lexicographically smallest.
+3. Each leaf (discrete partition) yields an atom order; evaluate the upper
+   triangle of `q` in that order, row-major, as a sequence of integers, and
+   keep the one that is smallest element by element (numeric, not string,
+   comparison).
 
 The set of leaves explored is a function of the geometry alone, so the
 winning order — and therefore the signature — is permutation-invariant.
-The number of leaves equals the order of the geometry's rounded-distance
-symmetry group (1 for generic molecules, 24 for a perfect tetrahedral
-cluster, 2n for an ideal n-ring).
+There is no automorphism pruning, so the number of leaves is at least the
+order of the geometry's rounded-distance symmetry group (1 for generic
+molecules, 24 for a perfect tetrahedral cluster, 2n for an ideal n-ring),
+and equals it when refinement separates every non-equivalent atom.
 
 ### 4.4 Canonical search budget
 
 The default search budget is **10,000** visited partition states; callers may
-set a larger positive integer `node_budget`. If the full search cannot finish
+set any positive integer `node_budget`. If the full search cannot finish
 within this budget, raise `SearchBudgetExceeded` and create no descriptor,
 hash, or identifier. The CLI prints the error to stderr, exits with code 1,
 and suggests increasing `--node-budget`. Partial best candidates must never
@@ -216,11 +227,13 @@ The default method normally takes O(N log N) time and O(N) memory:
    `λ1 ≤ λ2 ≤ λ3`.
 2. If `max_i ||v_i|| s < 0.5`, serialize every coordinate as zero. This
    is the intrinsic point-like representation.
-3. Otherwise require `λ3 > 0`. Before rejecting a cloud with
+3. Otherwise require `λ3 > 0` (else select the canonical method, as in
+   step 7). Before rejecting a cloud with
    `R s < 10`, where `R = max_i ||v_i||`, test collinearity about the
    largest-moment eigenvector `u3`. Let `rho = max_i ||v_i - (v_i·u3)u3||`.
    If `rho ≤ 64 * eps64 * R`, with `eps64 = 2^-52`, serialize the
-   intrinsic line `(Z, 0, 0, rint((v_i·u3)s))`, minimizing over both axial
+   intrinsic line `(Z, 0, 0, a_i)` with axial coordinate `a_i = v_i·u3`,
+   quantized and rounded as in steps 8–9, minimizing over both axial
    signs. This accepts a line up to float64 roundoff, not an arbitrary
    sub-grid bend. Continue to the gap test for other clouds, including those
    with `R s < 10`.
@@ -236,7 +249,8 @@ The default method normally takes O(N log N) time and O(N) memory:
    `u`. For every atom form its projection into the degenerate plane,
    `p_i = v_i − (v_i·u)u`. If the isolated axis is the largest-moment
    axis and `max_i ||p_i||s < 0.5`, serialize a one-dimensional line:
-   `(Z, 0, 0, rint((v_i·u)s))`, considering both axial signs. Otherwise
+   `(Z, 0, 0, v_i·u)`, quantized and rounded as in steps 8–9, considering
+   both axial signs. Otherwise
    require `max_i ||p_i||s ≥ 1` and select the lexicographically largest
    invariant anchor key
 
@@ -259,13 +273,15 @@ The default method normally takes O(N log N) time and O(N) memory:
 
        (rint(||p_ij||s), Z_j, rint(|v_j·e1|s)).
 
-   Evaluate every tied non-collinear ordered pair with
-   `max_j ||p_ij||s ≥ 1`. Normalize `p_ij` as `e2` and set `e3=e1×e2`.
+   If, for any tied first anchor, `max_j ||p_ij||s < 1`, or no atom has
+   `rint(||p_ij||s) > 0`, select the canonical method (step 7). Otherwise
+   evaluate every tied ordered pair, with second anchors restricted to
+   `rint(||p_ij||s) > 0`. Normalize `p_ij` as `e2` and set `e3=e1×e2`.
 7. At most **10,000** tied candidate frames may be evaluated. Exceeding
-   this normative budget, or finding every atom-derived transverse axis
-   shorter than 1 grid unit, deterministically selects the canonical method
+   this normative budget, or finding a required transverse extent below
+   1 grid unit (steps 5–6), deterministically selects the canonical method
    of §4.1–4.4 with a `UserWarning`.
-8. For every candidate basis, project the **original centered coordinates**
+8. For every candidate basis and for the intrinsic line, project the **original centered coordinates**
    (anchors never perturb the geometry) and quantize them **once**, on the
    fine grid `s' = 10^(decimals+4)`, with `rint`. Derive each hashed
    coordinate from its fine integer `f` by exact integer round-half-to-even
@@ -364,24 +380,29 @@ enforced; anything else is rejected rather than hashed. The checks are:
   `C`;
 - the precision written exactly as that version rendered it: any positive
   finite value for version 5 (which snapped its grid to the nearest power of
-  ten but recorded the precision as given, e.g. `P:5.0e-02`), a power of
-  ten ≤ 1 Å from version 6;
+  ten, but no coarser than 1 Å, and recorded the precision as given, e.g.
+  `P:5.0e-02`), a power of ten ≤ 1 Å from version 6;
 - atomic numbers in `[1, 118]` and in ascending order;
 - integers in canonical decimal form (no sign on zero, no `+`, no leading
-  zeros) and within the int64 range of the format;
+  zeros) with absolute value below `2^62`;
 - `F` rows: one per atom, elements equal to `Z`, in canonical row order;
 - `C` sections: exactly `N(N−1)/2` non-negative distances;
 - an optional RDKit `S` extension (§9; base version 8 or later): validated
   as its base descriptor plus a non-empty `S:` field;
-- `W` sections (versions 5–6): one sorted `Z,color:color-distance,...` row
-  per atom, with elements equal to `Z` and, in each row, the colors of the
-  other `N − 1` atoms.
+- `W` sections (versions 5–6): `N ≥ 2` and one `Z,color:color-distance,...`
+  row per atom, rows sorted, with elements equal to `Z` and, in each row, the
+  sorted `(color, distance)` pairs of the other `N − 1` atoms.
 
 Version 10 additionally requires every `F` value to lie within its rounding
 margin (§4.5 step 9) and every descriptor to satisfy the exact resolution
 floor of §3, on its `F` rows or `C` distances. These are necessary
 conditions, not a proof of origin: they do not check that `C` distances are
 realizable in three dimensions or that `W` rows come from one geometry.
+
+`descriptor_geometry` accepts only `F` descriptors of the current version
+(an `S` descriptor is reduced to its base descriptor); it raises
+`ValueError` for `C` descriptors, which have no coordinates, and for earlier
+versions, whose rows were stored on the hashing grid.
 
 The `F` rows are also a canonical-frame geometry, centered on the
 Z-weighted centroid, on the fine grid. Hashing them as coordinates at the
@@ -406,7 +427,8 @@ coordinates by at most 5.4 % of a grid cell (0.5 % in all but one case).
 For the version-9 rows read back as coordinates the round-trip rate is
 54–56 %. Exactly symmetric inputs with tied anchor frames are the remaining
 exception: a scan of 7,010 exactly symmetric `F` cases (benzene, methane, SF₆,
-NH₃, C₅H₅, cubane, each at 301 scales and four precisions) left 5 that
+NH₃, C₅H₅, cubane, each at 301 scales and four precisions: 7,224 inputs,
+of which 214 NH₃ inputs at 0.1 Å select `C`) left 5 that
 could not be settled, because the lexicographic minimum over tied anchors
 selects whichever frame moves a value across a boundary. In that case
 `descriptor_geometry` warns and returns the stored rows; `hash_descriptor`
@@ -435,8 +457,9 @@ To guarantee identical identifiers across machines:
 
 - Use the same descriptor version tag.
 - Use the same precision.
-- Format atomic numbers and scaled distances as decimal integers with
-  no leading zeros or sign.
+- Format atomic numbers, scaled distances, and `F` coordinates as decimal
+  integers with no leading zeros, `+` sign, or signed zero; only negative
+  `F` coordinates carry a leading `-`.
 - Quantize with round-half-to-even (IEEE 754 `rint`), as in §4.1, and
   derive hashed frame coordinates from the fine integers in exact integer
   arithmetic (§4.5 step 8).
@@ -452,7 +475,12 @@ To guarantee identical identifiers across machines:
 Any change to the descriptor format or semantics requires a new
 version tag.
 
-Version 7 introduced the early collinearity check for small nonpoint clouds.
+Version 5 introduced the `V|P|Z|<section>` layout, with a `W`
+(Weisfeiler–Lehman multiset) section when the canonical search exhausted its
+budget; release 0.8.0 added the optional frame method (`F`). Version 6 made
+the frame method the default and required a power-of-ten precision ≤ 1 Å.
+Version 7 introduced the early collinearity check for small nonpoint clouds,
+and replaced the `W` fallback with `SearchBudgetExceeded`.
 Version 8 additionally accepts separated principal moments before applying the
 minimum extent for atom anchors. This changes some coarse-grid requests from
 `C` to `F` (including water at 0.1 and 1 angstrom); the anchor and gap thresholds
@@ -474,7 +502,10 @@ descriptor carries a canonical geometry that re-hashes to its own identifier
 (§6.1). Deriving the hashed values from the fine integers, rather than
 rounding at the precision directly, changes the hashed rows of about 0.3 % of
 QM9 molecules (371 of 133,885 at 10⁻⁴ Å) relative to version 9; all other
-hashed rows are identical. As with every version, all digests change.
+hashed rows are identical. Version 10 also rejects precisions below the
+float64 resolution floor (§3), decided exactly on the hashed values, and
+validates stored descriptors before re-hashing them (§6.1). As with every
+version, all digests change.
 
 ## 9. Optional RDKit S extension
 
@@ -483,9 +514,10 @@ isomeric SMILES. Its version is `10-FRAME-SHA256-S1-RDKIT-<rdkitVersion>` and
 its field order is `V|P|Z|F|S` or `V|P|Z|C|S`. The exact canonicalization,
 serialization, input, and error rules are defined in [RDKit support](rdkit.md).
 Installing RDKit or selecting an RDKit reader does not enable S automatically.
-The base `10-FRAME-SHA256` descriptor and algorithm remain unchanged; the S
-digest covers the hashed payload (§6) followed by `|S:<SMILES>`, so its `F`
-rows are rounded exactly as in the base hash.
+The base `10-FRAME-SHA256` descriptor and algorithm remain unchanged. The S
+digest covers the S descriptor with its `F` rows replaced by their hashed
+values (§6), `V:<S version>|P|Z|<hashed section>|S:<SMILES>`, so its `F` rows
+are rounded exactly as in the base hash.
 
 This extension can distinguish supported stereoisomers and isotopic labels.
 It also hashes connectivity and graph formal charges; the default parity and
@@ -496,7 +528,7 @@ within an S corpus. This is an optional library extension of the draft standard.
 ## 10. Dependencies
 
 The default implementation uses only NumPy and the Python standard library.
-RDKit is an optional extra (`pip install 'hashmol3d[rdkit]'`) used only when
+RDKit is an optional extra (the `rdkit` extra of the package) used only when
 the caller explicitly requests an RDKit adapter, SMILES generation, or S tagging.
 
 ## 11. Reference API
@@ -512,6 +544,7 @@ result = hash_molecule(
     multiplicity=None,  # inferred if None
     length=None,  # 32 hex (128-bit) if None
     method="frame",  # default; use "canonical" for the distance method
+    node_budget=10_000,  # canonical search budget (§4.4)
 )
 print(result.hash_str)  # H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
 print(result.geometry_hash)  # 8ec3152acf35859ba58ced3e101c87e1

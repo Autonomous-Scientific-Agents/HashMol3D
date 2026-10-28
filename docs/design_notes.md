@@ -123,7 +123,8 @@ With a two-dimensional degenerate eigenspace, the isolated axis is retained
 and the farthest canonically keyed projected atom anchors the ambiguous
 plane. With three degenerate moments, a canonically keyed non-collinear atom
 pair constructs the frame. Every invariantly tied anchor is evaluated and
-the smallest sorted coordinate-row descriptor wins. Point-like and linear
+the smallest sorted list of hashed rows wins (since version 10, fine digits
+break exact ties). Point-like and linear
 sets are serialized in zero and one intrinsic dimensions, so arbitrary null
 axes are never invented. Version 7 recognizes a short exact line before the
 minimum-size guard: its maximum transverse residual must be at most
@@ -177,9 +178,13 @@ dependent volume signs in greedy quartet pickers.
 
 The precision must be a power of ten no greater than 1 Å, and no finer
 than `2**-35` times the molecule's extent, below which float64 roundoff
-alone changes identifiers under rotation (specification §3). The frame method
-quantizes canonical-frame coordinates; the distance method quantizes pair
-distances. Both use `-log10(precision)` decimal places. Two conformers that
+alone changes identifiers under rotation (specification §3). The distance
+method quantizes pair distances at `-log10(precision)` decimal places. Since
+version 10 the frame method quantizes canonical-frame coordinates once on a
+grid `10^4` times finer, stores those values, and hashes them after exact
+round-half-to-even back onto the precision grid, so a stored descriptor
+re-hashes to its own identifier (see
+[design_idempotent_rows.md](design_idempotent_rows.md)). Two conformers that
 differ by less than `precision` may collide; two that differ by more will
 usually not.
 

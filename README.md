@@ -41,13 +41,14 @@ The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
 Collision resistance is governed by how many distinct geometries share a
 namespace (birthday bound `~ n² / 2^{b+1}` for `b = 4·length` bits), **not**
 by molecule size; the 128-bit default keeps the expected collision count below
-one for corpora up to ~10¹⁶ geometries. Pass `length=` to pin any value in
+one for corpora up to ~2.6·10¹⁹ geometries. Pass `length=` to pin any value in
 `[1, 64]`, or call `hash_length_for(n_items, target_prob)` to size the hash to
 your corpus:
 
 ```python
-from hashmol3d import hash_length_for
+from hashmol3d import hash_length_for, hash_molecule
 
+# z: atomic numbers, coords: (N, 3) Cartesian coordinates in Å
 hash_length_for(10**9)  # -> 23 hex chars for 1e9 items at p=1e-9
 hash_molecule(z, coords, length=hash_length_for(10**9))
 ```
@@ -199,7 +200,7 @@ the default descriptor; the S version is built on the current default
 (`10-FRAME-SHA256` in 0.14.0).
 
 ```bash
-pip install 'hashmol3d[rdkit]'
+pip install -e '.[rdkit]'  # from a source checkout; see Install
 
 # Read an existing 3D structure; still use the default geometry descriptor.
 hashmol3d molecule.sdf --input-format sdf
@@ -238,24 +239,17 @@ Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
 
 ## Install
 
-### Using pip
-
-```bash
-pip install hashmol3d
-```
-
-### Using uv
-
-```bash
-# Install from PyPI
-uv pip install hashmol3d
-```
+HashMol3D needs Python ≥ 3.8 and NumPy; RDKit (2023.9.6 or newer) is an
+optional extra. Install 0.14.0 from source: the release on PyPI is older
+(0.9.x), uses an earlier descriptor version and therefore different
+identifiers, and lacks `hash_descriptor`, `descriptor_geometry` and the RDKit
+adapters.
 
 ### Install from source
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/HashMol3D.git
+git clone https://github.com/Autonomous-Scientific-Agents/HashMol3D.git
 cd HashMol3D
 
 # Create and activate a virtual environment (recommended)
@@ -269,6 +263,8 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install the package in editable mode
 uv pip install -e .  # Or: pip install -e .
+# With the optional RDKit adapters:
+uv pip install -e '.[rdkit]'  # Or: pip install -e '.[rdkit]'
 ```
 
 ## Usage (CLI)
@@ -281,10 +277,11 @@ H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1
 $ hashmol3d -c 1 -m 2 water.xyz
 H2Oq1m2-8ec3152acf35859ba58ced3e101c87e1
 
-# Pin a fixed hash length and a coarser precision.
-$ hashmol3d -p 1e-3 -l 32 benzene.xyz
+# A coarser precision and a shorter, 20-hex-character hash.
+$ hashmol3d -p 1e-3 -l 20 benzene.xyz
 
-# Verbose: also print formula, geometry hash, descriptor, and metadata.
+# Verbose: a labelled block with the identifier, formula, geometry hash,
+# descriptor, and metadata instead of the bare identifier.
 $ hashmol3d -v water.xyz
 
 # Request the labelled distance-matrix method explicitly.
@@ -295,8 +292,9 @@ $ hashmol3d --version
 ```
 
 Options include `-p/--precision`, `-c/--charge`, `-m/--multiplicity`,
-`-l/--length`, `--method`, `--node-budget`, and `-v/--verbose`. Errors on missing or malformed input go
-to stderr with exit code 1 (no Python traceback).
+`-l/--length`, `--method`, `--node-budget`, and `-v/--verbose`. Errors on
+missing or malformed input go to stderr with exit code 1 (no Python
+traceback); invalid command-line usage exits with code 2.
 
 ## Usage (Python)
 
