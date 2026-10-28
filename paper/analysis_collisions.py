@@ -35,11 +35,12 @@ primary reference and show the expected colliding-pair count as a secondary
 curve to make the distinction explicit.
 
 Descriptor-path audit. The default ``frame`` run records the principal-axis,
-one-axis/atom-anchor, two-atom-anchor, point, line, and canonical-fallback
-branches as well as the emitted ``C`` / ``W`` / ``F`` descriptor tags.  This
-makes the behavior at degenerate principal moments observable rather than
-inferring it from successful hashes.  Set ``HM3D_METHOD=canonical`` to rerun
-the retained distance-matrix alternative.
+one-axis/atom-anchor, two-atom-anchor, point, line, and distance-fallback
+branches as well as the emitted ``F`` / ``D`` descriptor tags (``D`` was ``C``
+before descriptor version 11).  This makes the behavior at degenerate
+principal moments observable rather than inferring it from successful hashes.
+Set ``HM3D_METHOD=distance`` to rerun the retained distance-matrix
+alternative (``canonical`` is accepted as its former name).
 
 Reproducibility. In the default (reproduction) mode every dataset listed in
 MANIFEST must be present, and -- when an expected geometry count is recorded --
@@ -91,8 +92,10 @@ PRECISION = float(os.environ.get("HM3D_PRECISION", "1e-4"))
 if not math.isfinite(PRECISION) or PRECISION <= 0.0:
     raise ValueError("HM3D_PRECISION must be a positive finite power of ten")
 METHOD = os.environ.get("HM3D_METHOD", "frame")
-if METHOD not in {"frame", "canonical"}:
-    raise ValueError("HM3D_METHOD must be 'frame' or 'canonical'")
+if METHOD == "canonical":  # former name of the distance method
+    METHOD = "distance"
+if METHOD not in {"frame", "distance"}:
+    raise ValueError("HM3D_METHOD must be 'frame' or 'distance'")
 
 
 def _precision_label(value):
@@ -103,7 +106,7 @@ def _precision_label(value):
 
 
 PRECISION_LABEL = _precision_label(PRECISION)
-METHOD_SUFFIX = "" if METHOD == "frame" else "_canonical"
+METHOD_SUFFIX = "" if METHOD == "frame" else "_distance"
 PRECISION_SUFFIX = "" if PRECISION == 1e-4 else f"_precision_{PRECISION_LABEL}"
 OUTPUT_SUFFIX = os.environ.get("HM3D_OUTPUT_SUFFIX", METHOD_SUFFIX + PRECISION_SUFFIX)
 # Cap on MD17 frames per molecule; 0 (default) means use the complete
@@ -155,15 +158,15 @@ print(f"branch audit: {AUDIT_BRANCHES}")
 
 
 def _frame_branch(Z, coords):
-    """Classify the deterministic frame branch used by descriptor v8.
+    """Classify the deterministic frame branch of the descriptor.
 
     This mirrors the branch predicates in ``hashmol3d.core._frame_signature``;
     it is diagnostic only and does not participate in descriptor generation.
     The emitted descriptor tag remains the authority on whether a frame was
-    accepted or canonical fallback occurred.
+    accepted or the distance fallback occurred.
     """
     if METHOD != "frame":
-        return "canonical-request"
+        return "distance-request"
     z = np.asarray(Z, dtype=np.int64)
     x = np.asarray(coords, dtype=float)
     w = z.astype(float)
@@ -184,7 +187,7 @@ def _frame_branch(Z, coords):
     if max_radius_grid < 0.5:
         return "point"
     if not lam[2] > 0.0:
-        return "canonical-fallback"
+        return "distance-fallback"
     if max_radius_grid < 10.0:
         axis = vec[:, 2]
         projected = c - np.outer(c @ axis, axis)
@@ -197,7 +200,7 @@ def _frame_branch(Z, coords):
     if min(gap0, gap1) >= 0.05:
         return "principal"
     if max_radius_grid < 10.0:
-        return "canonical-fallback"
+        return "distance-fallback"
 
     if (gap0 < 0.05) != (gap1 < 0.05):
         unique_slot = 2 if gap0 < 0.05 else 0
@@ -208,7 +211,7 @@ def _frame_branch(Z, coords):
         if unique_slot == 2 and max_projected_grid < 0.5:
             return "line"
         if max_projected_grid < 10.0:
-            return "canonical-fallback"
+            return "distance-fallback"
         return "one-axis-anchor"
 
     # In the fully near-degenerate branch, a usable second atom must lie at
@@ -219,12 +222,12 @@ def _frame_branch(Z, coords):
     winning = max(first_keys)
     anchors = [i for i, key in enumerate(first_keys) if key == winning]
     if len(anchors) > 10_000:
-        return "canonical-fallback"
+        return "distance-fallback"
     for i in anchors:
         first_axis = c[i] / radii[i]
         projected = c - np.outer(c @ first_axis, first_axis)
         if float(np.linalg.norm(projected, axis=1).max()) * scale < 10.0:
-            return "canonical-fallback"
+            return "distance-fallback"
     return "two-atom-anchor"
 
 
@@ -244,7 +247,7 @@ def _digest_and_tag(Z, coords):
     tag = r.descriptor.rsplit("|", 1)[1].split(":", 1)[0]
     branch = _frame_branch(Z, coords) if AUDIT_BRANCHES else "not-audited"
     if AUDIT_BRANCHES and METHOD == "frame" and tag != "F":
-        branch = "canonical-fallback"
+        branch = "distance-fallback"
     return r.geometry_hash, tag, branch, hash_seconds
 
 
@@ -353,13 +356,13 @@ def main(allow_partial=False):
     datasets = _resolve_datasets(allow_partial)
     per_dataset = {}  # name -> dataset statistics
     all_digests = []
-    all_tags = {"C": 0, "F": 0}
+    all_tags = Counter()
     all_branches = Counter()
     count_mismatch = False
 
     for name, spec, paths in datasets:
         digests, meta = [], {"natoms": [], "elements": set()}
-        tags = {"C": 0, "F": 0}
+        tags = Counter()
         branches = Counter()
         started = time.perf_counter()
         if spec["kind"] == "qm9":
@@ -369,7 +372,7 @@ def main(allow_partial=False):
                 f"{name}: {n} geometries, {len(set(digests))} distinct, "
                 f"N in [{min(meta['natoms'])},{max(meta['natoms'])}], "
                 f"{len(meta['elements'])} elements, "
-                f"tags C={tags['C']} F={tags['F']}, "
+                f"tags D={tags['D']} F={tags['F']}, "
                 f"{elapsed:.2f} s ({n / elapsed:.0f} geometries/s), "
                 f"branches={dict(branches)}"
             )
@@ -382,7 +385,7 @@ def main(allow_partial=False):
             print(
                 f"{name}: {n} geometries (stride {stride} of {M}), "
                 f"{len(set(digests))} distinct, N={meta['natoms'][0]}, "
-                f"tags C={tags['C']} F={tags['F']}, "
+                f"tags D={tags['D']} F={tags['F']}, "
                 f"{elapsed:.2f} s ({n / elapsed:.0f} geometries/s), "
                 f"branches={dict(branches)}"
             )
@@ -401,8 +404,7 @@ def main(allow_partial=False):
             "hash_seconds": hash_seconds,
         }
         all_digests.extend(digests)
-        for k in all_tags:
-            all_tags[k] += tags[k]
+        all_tags.update(tags)
         all_branches.update(branches)
 
     if not all_digests:
@@ -431,8 +433,8 @@ def main(allow_partial=False):
         "two-atom-anchor",
         "line",
         "point",
-        "canonical-fallback",
-        "canonical-request",
+        "distance-fallback",
+        "distance-request",
         "not-audited",
     ]
     with open(stats_path, "w", newline="") as f:
@@ -444,7 +446,7 @@ def main(allow_partial=False):
                 "geometries",
                 "distinct_full_digests",
                 "tag_F",
-                "tag_C",
+                "tag_D",
                 *branch_names,
                 "seconds",
                 "geometries_per_second",
@@ -460,7 +462,7 @@ def main(allow_partial=False):
                     row["count"],
                     row["distinct"],
                     row["tags"]["F"],
-                    row["tags"]["C"],
+                    row["tags"]["D"],
                     *(row["branches"][b] for b in branch_names),
                     f"{row['seconds']:.6f}",
                     f"{row['count'] / row['seconds']:.3f}",
@@ -477,7 +479,7 @@ def main(allow_partial=False):
                 total,
                 len(U_all),
                 all_tags["F"],
-                all_tags["C"],
+                all_tags["D"],
                 *(all_branches[b] for b in branch_names),
                 f"{total_seconds:.6f}",
                 f"{total / total_seconds:.3f}",
@@ -488,7 +490,7 @@ def main(allow_partial=False):
     print(f"Wrote {stats_path}")
     print(
         f"Descriptor-path audit over all {total} geometries: "
-        f"C={all_tags['C']} (complete), F={all_tags['F']} (frame)."
+        f"D={all_tags['D']} (distance), F={all_tags['F']} (frame)."
     )
 
     lengths = list(range(4, 33, 2))

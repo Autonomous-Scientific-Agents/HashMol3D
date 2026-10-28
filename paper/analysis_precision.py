@@ -120,7 +120,7 @@ def pair_distances(coords):
 
 
 def hash_at(Z, coords, precision):
-    return hash_molecule(Z, coords, precision=precision, method="canonical").geometry_hash
+    return hash_molecule(Z, coords, precision=precision, method="distance").geometry_hash
 
 
 # --------------------------------------------------------------------------

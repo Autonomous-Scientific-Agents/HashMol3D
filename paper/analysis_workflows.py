@@ -37,7 +37,7 @@ rng = np.random.default_rng(0)
 
 
 def gh(Z, X, precision=1e-4):
-    return hash_molecule(Z, X, precision=precision, method="canonical").geometry_hash
+    return hash_molecule(Z, X, precision=precision, method="distance").geometry_hash
 
 
 Z = np.array([6, 6, 8, 1, 1, 1, 1, 1, 1], dtype=int)
