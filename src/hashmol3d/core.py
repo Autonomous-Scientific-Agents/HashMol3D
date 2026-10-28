@@ -1534,6 +1534,22 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
     return z, to_coords(stored)
 
 
+def _resolve_method(method, *, stacklevel: int):
+    """Map the deprecated ``"canonical"`` alias to ``"distance"``, warning.
+
+    Public wrappers call this first with ``stacklevel=3``, so the warning is
+    attributed to their caller and is shown by Python's default filters.
+    """
+    if method == "canonical":
+        warnings.warn(
+            "method='canonical' is deprecated; use method='distance'",
+            DeprecationWarning,
+            stacklevel=stacklevel,
+        )
+        return "distance"
+    return method
+
+
 def hash_molecule(
     atomic_nums,
     coords,
@@ -1616,13 +1632,7 @@ def hash_molecule(
 
     length = _check_length(length)
 
-    if method == "canonical":
-        warnings.warn(
-            "method='canonical' is deprecated; use method='distance'",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        method = "distance"
+    method = _resolve_method(method, stacklevel=3)
     if method not in ("distance", "frame"):
         raise ValueError(f"method must be 'frame' or 'distance', got {method!r}")
 

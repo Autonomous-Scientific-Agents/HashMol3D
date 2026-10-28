@@ -102,18 +102,24 @@ def cli(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    method = args.method
+    if method == "canonical":
+        print(
+            "hashmol3d: warning: --method canonical is deprecated; use --method distance",
+            file=sys.stderr,
+        )
+        method = "distance"
     try:
-        charge_kwargs = {} if args.charge is None else {"charge": args.charge}
         result = hash_file(
             args.file,
             input_format=args.input_format,
             generate_coordinates=args.generate_coordinates,
             allow_implicit_hydrogens=args.allow_implicit_hydrogens,
             precision=args.precision,
-            **charge_kwargs,
+            charge=args.charge,
             multiplicity=args.multiplicity,
             length=args.length,
-            method=args.method,
+            method=method,
             node_budget=args.node_budget,
         )
     except FileNotFoundError as err:
@@ -140,3 +146,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
 def main() -> None:
     """Entry point used by the ``hashmol3d`` console script."""
     sys.exit(cli())
+
+
+if __name__ == "__main__":
+    main()

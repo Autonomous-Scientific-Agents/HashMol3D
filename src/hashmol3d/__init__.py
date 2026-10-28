@@ -5,6 +5,7 @@ from .core import (
     DESCRIPTOR_VERSION,
     HashMol3DResult,
     SearchBudgetExceeded,
+    _resolve_method,
     descriptor_geometry,
     generate_hashmol3d,
     hash_descriptor,
@@ -22,6 +23,8 @@ def hash_xyz(path, **kwargs) -> HashMol3DResult:
     Convenience wrapper for ``hash_file(path, input_format="xyz")``; the
     keyword arguments are forwarded to :func:`hash_molecule`.
     """
+    if "method" in kwargs:
+        kwargs["method"] = _resolve_method(kwargs["method"], stacklevel=3)
     return hash_file(path, input_format="xyz", **kwargs)
 
 

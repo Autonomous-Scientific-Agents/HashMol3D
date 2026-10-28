@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-from .core import HashMol3DResult, hash_molecule
+from .core import HashMol3DResult, _resolve_method, hash_molecule
 from .io import read_xyz
 
 __all__ = ["canonical_smiles", "hash_file", "hash_rdkit", "read_rdkit"]
@@ -81,6 +81,8 @@ def hash_rdkit(
     Charge defaults to the graph's total formal charge. Other keywords go to
     ``hash_molecule``; the result is its geometry-only identifier.
     """
+    if "method" in kwargs:
+        kwargs["method"] = _resolve_method(kwargs["method"], stacklevel=3)
     Chem, _ = _require_rdkit()
     if not isinstance(mol, Chem.Mol) or mol.GetNumAtoms() == 0:
         raise ValueError("expected a non-empty RDKit Mol")
@@ -130,6 +132,16 @@ def _validate_mol_record(data: bytes, *, sdf: bool = False) -> None:
             )
 
 
+def _validate_pdb_record(data: str) -> None:
+    """Reject content after the first END record, which RDKit ignores."""
+    lines = data.splitlines()
+    end = next((i for i, line in enumerate(lines) if line[:6].rstrip() == "END"), None)
+    if end is not None and any(line.strip() for line in lines[end + 1 :]):
+        raise ValueError(
+            "PDB input must contain exactly one molecule; unexpected content after END"
+        )
+
+
 def read_rdkit(path, *, input_format: str | None = None):
     """Read one molecule from MOL, SDF, MOL2, PDB, SMILES, or InChI.
 
@@ -170,7 +182,13 @@ def read_rdkit(path, *, input_format: str | None = None):
                     raise ValueError("MOL2 input must contain exactly one molecule")
                 mol = Chem.MolFromMol2Block(data, removeHs=False)
             elif fmt == "pdb":
+                _validate_pdb_record(data)
                 mol = Chem.MolFromPDBBlock(data, removeHs=False)
+                # PDB coordinates are always 3D; RDKit flags an all-zero z
+                # column as 2D, which would reject legitimate planar molecules.
+                if mol is not None:
+                    for conf in mol.GetConformers():
+                        conf.Set3D(True)
             elif fmt in ("smi", "smiles", "inchi"):
                 lines = [line.strip() for line in data.splitlines() if line.strip()]
                 if len(lines) != 1:
@@ -206,6 +224,8 @@ def hash_file(
     """Hash a file; only explicitly selected features use RDKit.
 
     XYZ uses the native parser and defaults, regardless of installed packages.
+    ``charge=None`` selects the default charge (0 for XYZ, the graph's formal
+    charge otherwise).
 
     Other formats use ``read_rdkit``; PDB is refused for coordinate
     generation because its inferred bond orders cannot be trusted. PDB
@@ -217,6 +237,11 @@ def hash_file(
     without optimization. It is disallowed for XYZ. Generated geometries depend
     on RDKit version and input atom order; they are not canonical conformers.
     """
+    if "method" in kwargs:
+        kwargs["method"] = _resolve_method(kwargs["method"], stacklevel=3)
+    if kwargs.get("charge", 0) is None:
+        # As in hash_rdkit, None selects the default charge.
+        del kwargs["charge"]
     fmt = input_format.lower()
     if fmt == "pdb" and generate_coordinates:
         raise ValueError(

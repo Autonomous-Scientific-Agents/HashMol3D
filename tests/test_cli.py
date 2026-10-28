@@ -1,6 +1,11 @@
 """Tests for the hashmol3d command-line interface."""
 
-from hashmol3d import hash_xyz
+import subprocess
+import sys
+
+import pytest
+
+from hashmol3d import hash_file, hash_xyz
 from hashmol3d.cli import cli
 
 
@@ -97,3 +102,40 @@ def test_cli_invalid_node_budget(tmp_path, capsys):
     out = capsys.readouterr()
     assert out.out == ""
     assert "node_budget must be a positive integer" in out.err
+
+
+def test_cli_canonical_alias_warns_and_uses_distance(tmp_path, capsys):
+    path = _write_water(tmp_path)
+    assert cli([path, "--method", "canonical"]) == 0
+    out = capsys.readouterr()
+    assert out.out.strip() == hash_xyz(path, method="distance").hash_str
+    assert "--method canonical is deprecated" in out.err
+
+
+def test_hash_xyz_canonical_alias_warning_points_at_the_caller(tmp_path):
+    with pytest.warns(DeprecationWarning, match="method='canonical'") as record:
+        hash_xyz(_write_water(tmp_path), method="canonical")
+    assert [w.filename for w in record] == [__file__]
+
+
+def test_charge_none_selects_the_default_for_xyz(tmp_path):
+    path = _write_water(tmp_path)
+    assert hash_xyz(path, charge=None) == hash_xyz(path)
+    assert hash_file(path, charge=None) == hash_xyz(path)
+
+
+@pytest.mark.parametrize("module", ["hashmol3d", "hashmol3d.cli"])
+def test_python_dash_m_runs_the_cli(tmp_path, module):
+    path = _write_water(tmp_path)
+    run = subprocess.run(
+        [sys.executable, "-m", module, path], capture_output=True, text=True, check=False
+    )
+    assert run.returncode == 0
+    assert run.stdout.strip() == hash_xyz(path).hash_str
+    missing = subprocess.run(
+        [sys.executable, "-m", module, str(tmp_path / "nope.xyz")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert missing.returncode == 1
