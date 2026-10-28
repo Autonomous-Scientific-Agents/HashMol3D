@@ -3,9 +3,9 @@ HashMol3D core: a deterministic identifier for 3D molecular conformers.
 
 The identifier has the form::
 
-    h3md-v<descriptor version>-p<decimals>-<Hill formula>-<geometry hash>-<state tag>
+    hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example, ``h3md-v11.0-p4-H2O-<32 hex>-q0m1`` for neutral singlet water at
+For example, ``hm3d_v11_p4_H2O_q0m1_<32 hex>`` for neutral singlet water at
 the default 1e-4 Å grid.
 
 The hexadecimal geometry hash is invariant under the operations that
@@ -30,7 +30,7 @@ without creating a descriptor or hash.
 The geometry hash is the SHA-256 digest of ``Z:<atomic numbers>|F:<rows>``
 (or ``|D:<distances>``) only. The descriptor version and the precision are
 written in the readable identifier instead, and total charge and spin
-multiplicity in its trailing state tag, so changing charge or multiplicity
+multiplicity in its state tag, so changing charge or multiplicity
 only changes that tag.
 
 Re-hashing is idempotent. ``F`` descriptors store canonical-frame rows on a
@@ -71,17 +71,19 @@ __all__ = [
 ]
 
 
-# The descriptor version, ``<major>.<minor>``. From version 11 it is not
-# hashed: it appears in the readable identifier (``h3md-v11.0-...``) together
-# with the precision, and the geometry hash covers only the Z field and the
+# The descriptor version, ``<major>.<minor>``, written in full in stored
+# descriptors (``V:11.0``). From version 11 it is not hashed: its major
+# number appears in the readable identifier (``hm3d_v11_...``) together with
+# the precision, and the geometry hash covers only the Z field and the
 # geometry section. Bump the major version whenever any geometry hash can
 # change, and the minor version for compatible changes (for example stricter
-# validation) that leave every hash unchanged.
+# validation) that leave every hash, and so every identifier, unchanged.
 DESCRIPTOR_VERSION = "11.0"
 _VERSION_NUMBER = int(DESCRIPTOR_VERSION.split(".")[0])
 
-# Prefix of every readable identifier.
-_IDENTIFIER_PREFIX = "h3md"
+# Prefix of every readable identifier. Fields are joined by "_", which no
+# field contains, so identifiers are file-name safe and split unambiguously.
+_IDENTIFIER_PREFIX = "hm3d"
 
 # First descriptor version whose hashed payload is ``Z:...|<section>`` only.
 # Earlier versions hashed ``V:...|P:...|Z:...|<section>``.
@@ -530,15 +532,17 @@ def _hill_formula(atomic_nums: np.ndarray) -> str:
 
 
 def _identifier(decimals: int, formula: str, digest: str, charge: int, mult: int) -> str:
-    """``h3md-v<version>-p<decimals>-<formula>-<geometry hash>-<state tag>``.
+    """``hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>``.
 
     The precision appears as its number of decimals (``p4`` for 1e-4 Å), so
     identifiers on different grids never compare equal even though the
-    geometry hash does not cover the precision.
+    geometry hash does not cover the precision. Only the major version is
+    written: a minor version never changes a hash, so it must not change the
+    identifier either.
     """
     return (
-        f"{_IDENTIFIER_PREFIX}-v{DESCRIPTOR_VERSION}-p{decimals}-{formula}-{digest}-"
-        f"{_state_tag(charge, mult)}"
+        f"{_IDENTIFIER_PREFIX}_v{_VERSION_NUMBER}_p{decimals}_{formula}_"
+        f"{_state_tag(charge, mult)}_{digest}"
     )
 
 
@@ -1537,8 +1541,8 @@ def hash_molecule(
     """Compute the HashMol3D identifier for a 3D molecular geometry.
 
     The identifier has the form
-    ``h3md-v<version>-p<decimals>-<Hill formula>-<geometry hash>-<state tag>``,
-    e.g. ``h3md-v11.0-p4-H2O-<32 hex>-q0m1``. Only the atomic numbers and the
+    ``hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>``,
+    e.g. ``hm3d_v11_p4_H2O_q0m1_<32 hex>``. Only the atomic numbers and the
     quantized geometry contribute to the hash.
 
     Args:

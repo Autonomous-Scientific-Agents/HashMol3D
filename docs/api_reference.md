@@ -4,13 +4,14 @@
 
 A HashMol3D identifier has the form:
 
-    h3md-v<descriptor version>-p<decimals>-<Hill formula>-<geometry hash>-<state tag>
+    hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example: `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
+For example: `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
 
-- **`h3md`**: fixed prefix.
-- **`v<descriptor version>`**: `DESCRIPTOR_VERSION` (`v11.0`). The major
-  number changes whenever any geometry hash can change.
+- **`hm3d`**: fixed prefix.
+- **`v<major version>`**: the major number of `DESCRIPTOR_VERSION` (`v11`
+  for `"11.0"`). It changes whenever any geometry hash can change; minor
+  versions change no hash and are therefore not written.
 - **`p<decimals>`**: the precision as its number of decimals (`p4` for
   `1e-4` Å, `p0` for 1 Å). The geometry hash does not cover the precision,
   so this field is what keeps identifiers on different grids apart.
@@ -21,15 +22,17 @@ For example: `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
   `BrH`).
 - **State tag**: `q<charge>m<mult>`. Zero and positive charges have no
   sign (`q0`, `q1`); only negative charges carry a leading `-`
-  (`q-1`, `q-2`).
+  (`q-1`, `q-2`). Charge and multiplicity are not hashed.
 - **Geometry hash**: hex truncation of SHA-256 over `Z:<atomic
   numbers>|F:<hashed frame rows>` (or `|D:<distances>`) only. The version,
   precision, charge and multiplicity are *not* hashed, so molecules that
   differ only in charge or multiplicity share the same `geometry_hash` and
-  can be found by matching it.
+  can be found by suffix match.
 
-Fields are separated by `-`; only the state tag can contain a further `-`
-(a negative charge), so `hash_str.split("-", 5)` recovers all six fields.
+Fields are joined by `_`, which no field contains, so `hash_str.split("_")`
+always gives the six fields. Every character is a letter, a digit, `_` or
+`-` (in a negative charge), so identifiers are safe as file names on all
+common file systems.
 
 ## `hash_molecule(atomic_nums, coords, *, precision=1e-4, charge=0, multiplicity=None, length=None, method="frame", node_budget=10000)`
 
@@ -174,7 +177,7 @@ arguments to `hash_molecule`.
 from hashmol3d import hash_xyz
 
 result = hash_xyz("water.xyz", precision=1e-3, charge=0)
-print(result.hash_str)  # h3md-v11.0-p3-H2O-...-q0m1
+print(result.hash_str)  # hm3d_v11_p3_H2O_q0m1_...
 print(result.geometry_hash)  # ...
 ```
 

@@ -28,10 +28,10 @@ def test_cli_length_option(tmp_path, capsys):
     rc = cli([path, "-l", "16"])
     assert rc == 0
     out = capsys.readouterr().out.strip()
-    # Identifier is "h3md-v<ver>-p<dec>-<formula>-<hash>-<state>"; only the
+    # Identifier is "hm3d_v<major>_p<dec>_<formula>_<state>_<hash>"; only the
     # hash portion is controlled by --length.
-    assert out.startswith("h3md-v11.0-p4-H2O-") and out.endswith("-q0m1")
-    assert len(out.split("-")[4]) == 16
+    assert out.startswith("hm3d_v11_p4_H2O_q0m1_")
+    assert len(out.split("_")[5]) == 16
 
 
 def test_cli_method_option(tmp_path, capsys):

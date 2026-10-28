@@ -152,17 +152,17 @@ def test_charge_and_multiplicity_policy():
     mol = molecule("[NH4+]")
     result = hash_rdkit(mol)
     assert result.charge == 1
-    assert result.hash_str.endswith("-q1m1")
+    assert result.hash_str.split("_")[4] == "q1m1"
     triplet = hash_rdkit(mol, multiplicity=3)
     assert triplet.geometry_hash == result.geometry_hash
     assert triplet.descriptor == result.descriptor
-    assert triplet.hash_str == result.hash_str[: -len("q1m1")] + "q1m3"
+    assert triplet.hash_str == result.hash_str.replace("_q1m1_", "_q1m3_")
     # An explicit charge overrides the graph charge; it changes only the state
     # tag (the default multiplicity follows electron parity: neutral NH4 is m2).
     neutral = hash_rdkit(mol, charge=0)
     assert neutral.charge == 0
     assert neutral.geometry_hash == result.geometry_hash
-    assert neutral.hash_str == result.hash_str[: -len("q1m1")] + "q0m2"
+    assert neutral.hash_str == result.hash_str.replace("_q1m1_", "_q0m2_")
 
 
 def test_selected_conformer():
@@ -437,7 +437,7 @@ def test_mol2_reader(tmp_path):
     )
     assert read_rdkit(path).GetNumAtoms() == 3
     assert hash_file(path, input_format="mol2").hash_str == (
-        "h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1"
+        "hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb"
     )
 
 

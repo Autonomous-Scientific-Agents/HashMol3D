@@ -138,7 +138,7 @@ class TestHashDescriptor:
             res = hash_molecule(z, coords, method=method, length=length)
             assert hash_descriptor(res.descriptor, length=length) == res.geometry_hash
             digest = hash_descriptor(res.descriptor, length=length)
-            assert res.hash_str.split("-")[4] == digest
+            assert res.hash_str.split("_")[5] == digest
 
     def test_version_9_descriptor_rehashes_to_its_own_digest(self):
         # The pre-v10 water descriptor and identifier quoted by version 0.13.0.

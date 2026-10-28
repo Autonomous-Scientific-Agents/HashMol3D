@@ -10,17 +10,19 @@ computational-chemistry workflows and databases.
 
 ## 1. Identifier format
 
-A HashMol3D identifier is a single ASCII string with six `-`-separated
+A HashMol3D identifier is a single ASCII string with six `_`-separated
 fields:
 
-    h3md-v<descriptor version>-p<decimals>-<Hill formula>-<geometry hash>-<state tag>
+    hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-For example: `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
+For example: `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
 
-- **`h3md`** — fixed prefix.
-- **Descriptor version** — `v` followed by `<major>.<minor>` (currently
-  `v11.0`). The major number increases with any change that can alter a
-  geometry hash; the minor number with compatible changes that alter none.
+- **`hm3d`** — fixed prefix.
+- **Descriptor version** — `v` followed by the major number of the
+  descriptor version (`v11` for `11.0`). The major number increases with any
+  change that can alter a geometry hash; the minor number, which appears only
+  in the stored descriptor (§6), with compatible changes that alter none, so
+  it never changes an identifier.
 - **Precision** — `p` followed by the number of decimals of the precision
   grid (`p4` for `10⁻⁴` Å, `p0` for 1 Å). The geometry hash does not cover
   the precision (§7), so this field keeps identifiers on different grids
@@ -36,9 +38,11 @@ For example: `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
   (`q-1`, `q-2`). Multiplicity is a positive integer with no sign.
 - **Geometry hash** — lowercase hex truncation of the SHA-256 digest of
   the hashed payload `Z:...|F:...` or `Z:...|D:...` (see §4, §6, §7).
-- **`-`** — separator. No field but the state tag contains `-` (only a
-  negative charge does), so splitting at the first five hyphens recovers all
-  six fields.
+- **`_`** — separator. No field contains `_`, so splitting at every `_`
+  recovers the six fields. Identifiers use only letters, digits, `_` and `-`
+  (in a negative charge), the portable file-name character set, so they are
+  safe as file names. The geometry hash comes last, so states of one geometry
+  can be grouped by suffix match.
 
 ## 2. Invariance contract
 
@@ -89,7 +93,7 @@ truncated SHA-256 collision, §7). Search exhaustion produces no hash (§4.4).
 The **state tag** (and therefore the full identifier) additionally
 changes with charge or multiplicity. Two states of the same geometry
 share the same geometry hash but differ in their state tag, so they can
-be grouped by their geometry hash field.
+be grouped by suffix match on the geometry hash, the last field.
 
 > **Note on chirality.** Two enantiomers share the eigenvalues of the
 > non-relativistic Hamiltonian and therefore share the same HashMol3D
@@ -368,7 +372,7 @@ division by `10^4`); `D` sections are hashed as stored:
     Z:<z_ordered>|D:<distances>
 
 The `V` and `P` fields are not hashed: they appear in the identifier as
-`v<version>` and `p<decimals>`. (Versions 5–10 hashed the full
+`v<major>` and `p<decimals>`. (Versions 5–10 hashed the full
 `V|P|Z|<section>` string.)
 
 Example using the default frame method (water, `precision = 1e-4`):
@@ -380,7 +384,7 @@ characters is the geometry hash `a3528714040eea8068be04d9807fadfb`:
 
     Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0
 
-The identifier is `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`.
+The identifier is `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`.
 
 (The molecular-plane normal occupies the first axis. The two hydrogen rows
 precede oxygen after lexicographic sorting.)
@@ -393,7 +397,7 @@ for `F` and `D` descriptors and for stored descriptors of earlier versions
 (which hash their full `V|P|Z|<section>` string, and whose `F` rows before
 version 10 are already on the precision grid). The reference
 implementation provides this as `hash_descriptor(descriptor, length=...)`.
-The rest of the identifier (`h3md`, version, precision, formula and state
+The rest of the identifier (`hm3d`, version, precision, formula and state
 tag) is not hashed and is stored alongside it.
 
 A re-hashed descriptor must satisfy every rule its own version's generator
@@ -531,8 +535,9 @@ hashed rows are identical. Version 10 also rejects precisions below the
 float64 resolution floor (§3), decided exactly on the hashed values, and
 validates stored descriptors before re-hashing them (§6.1). As with every
 version, all digests change.
-Version 11 (`11.0`) introduces the `h3md-v<version>-p<decimals>-<formula>-
-<geometry hash>-<state tag>` identifier (§1). Its hashed payload is the `Z`
+Version 11 (`11.0`) introduces the
+`hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>` identifier
+(§1). Its hashed payload is the `Z`
 field and the geometry section only (§6): the version and the precision move
 from the hash into the identifier. It renames the distance section from `C`
 to `D` (`method="distance"`; `"canonical"` remains a deprecated alias) and
@@ -574,7 +579,7 @@ result = hash_molecule(
     method="frame",  # default; use "distance" for the distance method
     node_budget=10_000,  # canonical search budget (§4.4)
 )
-print(result.hash_str)  # h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1
+print(result.hash_str)  # hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
 print(result.geometry_hash)  # a3528714040eea8068be04d9807fadfb
 ```
 

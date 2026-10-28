@@ -9,9 +9,9 @@ software and methods and proposes that standard; the
 
 It produces a **readable** identifier of the form
 
-    h3md-v<descriptor version>-p<decimals>-<Hill formula>-<geometry hash>-<state tag>
+    hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 
-e.g. `h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1` for neutral singlet water on the
+e.g. `hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb` for neutral singlet water on the
 default 10⁻⁴ Å grid (`p4`). The geometry hash is **rotation-, translation-,
 permutation-, and parity-invariant** (matching the invariances of the
 eigenvalues of the non-relativistic molecular Hamiltonian), and depends only
@@ -21,9 +21,11 @@ on:
 - coordinates quantized in a canonical frame (or, with the distance method,
   canonical interatomic distances)
 
-The descriptor version and the precision are not hashed; they are the
-`v11.0` and `p4` fields of the identifier, so identifiers made with different
-versions or grids never compare equal.
+The descriptor version and the precision are not hashed; they are the `v11`
+and `p4` fields of the identifier, so identifiers made with different versions
+or grids never compare equal. Fields are joined by `_`, and every character is
+a letter, a digit, `_` or `-` (in a negative charge), so identifiers are safe
+as file names.
 
 The default method projects the original coordinates into a deterministic
 canonical frame, sorts the element-labelled coordinate rows, and hashes that
@@ -33,13 +35,13 @@ top geometries use intrinsic coordinates or canonical atom anchors, so exact
 symmetry does not require a random perturbation. The canonical labelled
 distance-matrix method remains available as `method="distance"`.
 
-Charge and spin multiplicity live in the trailing state tag, **not** in the
+Charge and spin multiplicity live in the state tag, **not** in the
 hash, so two states of the same geometry share the same geometry hash and can
 be grouped by it:
 
 ```text
-h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1     # neutral singlet water
-h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q1m2     # water cation, same geometry → same hash
+hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb     # neutral singlet water
+hm3d_v11_p4_H2O_q1m2_a3528714040eea8068be04d9807fadfb     # water cation, same geometry → same hash
 ```
 
 The geometry hash defaults to a fixed length of 32 hex chars (128 bits).
@@ -132,7 +134,7 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.15.0 uses descriptor version `11.0`. It introduces the `h3md-`
+Version 0.15.0 uses descriptor version `11.0`. It introduces the `hm3d_`
 identifier, hashes only the `Z` field and the geometry section, and renames
 the distance section from `C` to `D`. Version 10 made re-hashing idempotent
 (see [Re-hashing a stored descriptor](#re-hashing-a-stored-descriptor)), and
@@ -197,8 +199,8 @@ V:<version>|P:<precision>|Z:<atomic numbers>|D:<distance matrix upper triangle>
 Only `Z` and the geometry section enter the hash, with `F` values rounded back
 to the `P` grid: the geometry hash is the SHA-256 digest of
 `Z:<atomic numbers>|F:<hashed rows>` (or `|D:<distances>`). `V` and `P` appear
-in the identifier as `v11.0` and `p<decimals>`, and the trailing `q`/`m` state
-tag records charge and spin multiplicity.
+in the identifier as `v11` (the major version) and `p<decimals>`, and the
+`q`/`m` state tag records charge and spin multiplicity.
 
 ## Optional RDKit support
 
@@ -269,11 +271,11 @@ uv pip install -e '.[rdkit]'  # Or: pip install -e '.[rdkit]'
 
 ```bash
 $ hashmol3d water.xyz
-h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1
+hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
 
 # Cation with explicit multiplicity — only the state tag changes.
 $ hashmol3d -c 1 -m 2 water.xyz
-h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q1m2
+hm3d_v11_p4_H2O_q1m2_a3528714040eea8068be04d9807fadfb
 
 # A coarser precision and a shorter, 20-hex-character hash.
 $ hashmol3d -p 1e-3 -l 20 benzene.xyz
@@ -309,7 +311,7 @@ coords = np.array(
     ]
 )
 res = hash_molecule(atomic_nums, coords)
-print(res.hash_str)  # h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1
+print(res.hash_str)  # hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
 print(res.formula)  # H2O
 print(res.geometry_hash)  # a3528714040eea8068be04d9807fadfb
 print(res.charge, res.multiplicity)  # 0 1
@@ -331,9 +333,9 @@ Or read straight from a file:
 ```python
 from hashmol3d import hash_xyz
 
-print(hash_xyz("water.xyz").hash_str)  # h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1
+print(hash_xyz("water.xyz").hash_str)  # hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb
 print(hash_xyz("water.xyz", charge=1, multiplicity=2).hash_str)
-# h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q1m2
+# hm3d_v11_p4_H2O_q1m2_a3528714040eea8068be04d9807fadfb
 ```
 
 See [`docs/`](docs/) for the full

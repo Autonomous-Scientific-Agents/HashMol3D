@@ -376,8 +376,8 @@ class TestDeterminism:
         b = hash_molecule(z, coords, charge=1)
         # Full identifier differs in the readable prefix...
         assert a.hash_str != b.hash_str
-        assert a.hash_str.endswith("-q0m1")
-        assert b.hash_str.endswith("-q1m2")
+        assert a.hash_str.split("_")[4] == "q0m1"
+        assert b.hash_str.split("_")[4] == "q1m2"
         # ...but the geometry hash is identical.
         assert a.geometry_hash == b.geometry_hash
 

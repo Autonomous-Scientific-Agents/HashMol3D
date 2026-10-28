@@ -16,8 +16,8 @@ behavior prints the HashMol3D identifier to stdout, one line, with no
 extra formatting — suitable for piping.
 
 The identifier has the form
-`h3md-v<version>-p<decimals>-<formula>-<geometry hash>-<state>`, e.g.
-`h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1`. See the
+`hm3d_v<major version>_p<decimals>_<formula>_<state>_<geometry hash>`, e.g.
+`hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb`. See the
 [API reference](api_reference.md#identifier-format) for the format spec.
 
 ## Options
@@ -41,7 +41,7 @@ Hash a geometry with default settings:
 
 ```bash
 hashmol3d ethanol.xyz
-# h3md-v11.0-p4-C2H6O-...-q0m1
+# hm3d_v11_p4_C2H6O_q0m1_...
 ```
 
 Use a coarser precision and a shorter, 20-hex-character hash:
@@ -62,11 +62,11 @@ Hash a cation with explicit multiplicity, verbosely:
 hashmol3d -c 1 -m 2 -v ethanol.xyz
 ```
 
-Find all stored states of the same geometry by matching the `geometry_hash`
-field, which is followed only by the state tag:
+Find all stored states of the same geometry by suffix-matching the
+`geometry_hash`, the last field:
 
 ```bash
-grep -E -- "-a3528714040eea8068be04d9807fadfb-q" identifiers.txt
+grep -E -- "_a3528714040eea8068be04d9807fadfb$" identifiers.txt
 ```
 
 ## Exit codes

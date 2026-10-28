@@ -15,7 +15,7 @@ def test_returns_result(water):
     assert res.formula == "H2O"
     assert res.charge == 0
     assert res.multiplicity == 1
-    assert res.hash_str == f"h3md-v11.0-p4-H2O-{res.geometry_hash}-q0m1"
+    assert res.hash_str == f"hm3d_v11_p4_H2O_q0m1_{res.geometry_hash}"
     assert str(res) == res.hash_str
 
 
@@ -35,7 +35,7 @@ def test_documented_water_identifier(water):
     # The hash covers only the Z field and the hashed F rows.
     payload = "Z:1,1,8|F:1:0,-4688,-7572;1:0,-4688,7572;8:0,1172,0"
     assert res.geometry_hash == hashlib.sha256(payload.encode()).hexdigest()[:32]
-    assert res.hash_str == "h3md-v11.0-p4-H2O-a3528714040eea8068be04d9807fadfb-q0m1"
+    assert res.hash_str == "hm3d_v11_p4_H2O_q0m1_a3528714040eea8068be04d9807fadfb"
 
 
 def test_descriptor_contains_geometry_fields(water):
@@ -97,16 +97,16 @@ def test_single_atom_is_valid():
     coords = np.array([[0.0, 0.0, 0.0]])
     res = hash_molecule(z, coords)
     assert res.formula == "C"
-    assert res.hash_str.startswith("h3md-v11.0-p4-C-")
+    assert res.hash_str.startswith("hm3d_v11_p4_C_q0m1_")
 
 
 def test_identifier_layout(water):
-    """h3md-v<version>-p<decimals>-<formula>-<geometry hash>-<state tag>."""
+    """hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>."""
     z, coords = water
     for precision, decimals in ((1.0, 0), (1e-2, 2), (1e-4, 4)):
         res = hash_molecule(z, coords, precision=precision, charge=-1, multiplicity=2)
-        prefix, version, grid, formula, digest, state = res.hash_str.split("-", 5)
-        assert (prefix, version, grid, formula) == ("h3md", "v11.0", f"p{decimals}", "H2O")
+        prefix, version, grid, formula, state, digest = res.hash_str.split("_")
+        assert (prefix, version, grid, formula) == ("hm3d", "v11", f"p{decimals}", "H2O")
         assert digest == res.geometry_hash
         assert state == "q-1m2"
 
