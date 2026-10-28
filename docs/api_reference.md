@@ -6,7 +6,7 @@ A HashMol3D identifier has the form:
 
     <Hill formula><state tag>-<geometry hash>
 
-For example: `H2Oq0m1-2525b97db42fc1c282844ba9478d561f`.
+For example: `H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1`.
 
 - **Hill formula**: carbon first if present, then hydrogen, then the
   remaining elements alphabetically. A count of 1 is omitted
@@ -33,7 +33,10 @@ All optional arguments are **keyword-only**.
 - `atomic_nums`: integer array-like of atomic numbers, shape `(N,)`
 - `coords`: float array-like of Cartesian coordinates in Å, shape `(N, 3)`
 - `precision`: geometry-grid precision in Å (default `1e-4`); must be a power
-  of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...)
+  of ten no greater than 1 Å (`1.0`, `1e-1`, `1e-2`, ...), and no finer than
+  `2**-35` (≈ 2.9e-11) times the largest distance of an atom from the
+  Z-weighted centroid. Finer grids are below float64 resolution (identifiers
+  would change under rotation) and raise `ValueError`.
 - `charge`: total formal charge (default `0`)
 - `multiplicity`: spin multiplicity. If `None`, inferred as singlet/doublet
   from electron parity.
@@ -77,7 +80,11 @@ res = hash_molecule(z, coords, length=L)
 - `precision`: geometry-grid precision used (Å)
 - `charge`: charge used
 - `multiplicity`: multiplicity used
-- `descriptor`: raw descriptor string that was hashed (for debugging)
+- `descriptor`: the stored descriptor. Its `F` rows carry canonical-frame
+  coordinates on a grid 10⁴ times finer than `precision`; the geometry hash
+  is the SHA-256 digest of these values rounded back to `precision`
+  ([specification §6](specification.md#6-canonical-descriptor-string)).
+  Re-hash it with `hash_descriptor`.
 
 `str(result)` returns `result.hash_str`.
 
@@ -91,6 +98,60 @@ smaller than `precision`: see [specification §2](specification.md), which is
 normative here. A perturbation changes the identifier when it moves the
 quantized representation to a different grid cell, and its magnitude alone
 does not determine whether it does.
+
+## `hash_descriptor(descriptor, *, length=None)`
+
+Return the geometry hash of a stored descriptor without recomputing any
+geometry. `hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
+r.geometry_hash` holds exactly for every result `r`, for `F` and `C`
+descriptors, and for stored descriptors of earlier versions. `length`
+defaults to 32 hex characters. The readable `<formula><state>-` prefix is not
+part of the descriptor; keep it alongside.
+
+The descriptor is validated first, against the rules of its own version,
+and rejected with `ValueError` if it breaks any of them: known version
+(5–10) with a section that version produced (`F`, `C`, or the `W` fallback
+of versions 5–6), the precision field as that version wrote it (any
+positive value for version 5, a power of ten ≤ 1 Å from version 6), atomic
+numbers in range and ascending, `F`/`W` row elements matching `Z` in
+canonical order, the right number of `C` distances, canonical integers
+within int64, and for version 10 the rounding margin and the exact
+resolution floor ([specification §6.1](specification.md#61-idempotent-re-hashing)).
+Corrupted or hand-edited descriptors therefore fail instead of hashing. The
+checks are necessary conditions: they do not test whether `C` distances are
+realizable in three dimensions. A descriptor from the RDKit S extension
+(`V:<base>-S1-RDKIT-<rdkit>|...|S:<SMILES>`, base version 8 or later) is
+validated as its base descriptor plus a non-empty `S` field and re-hashes to
+its S digest; the SMILES is not interpreted.
+
+## `descriptor_geometry(descriptor)`
+
+Return `(atomic_nums, coords)` for an `F` descriptor of the current version:
+the molecule centered on its Z-weighted centroid in its canonical frame, in
+Å. Hashing the result with `hash_molecule` at the descriptor's precision
+(default `method="frame"`) reproduces the descriptor's identifier, in any
+orientation and atom order. The coordinates are re-hashed before they are
+returned; if recomputing the frame would move a value across a rounding
+boundary, they are deterministically settled by a small fraction of a grid
+cell ([specification §6.1](specification.md#61-idempotent-re-hashing)). If no
+settled geometry re-hashes correctly, which has been observed only for
+exactly symmetric inputs with tied anchor frames, a `UserWarning` is emitted
+and the stored rows are returned unchanged.
+
+Raises `ValueError` for a `C` descriptor (a distance matrix has no
+coordinates), for a descriptor of another version, or for a descriptor that
+fails the validation of `hash_descriptor`. A geometry accepted at the
+resolution floor reconstructs to one that `hash_molecule` also accepts: the
+floor is decided on the hashed rows, which the reconstruction shares.
+
+```python
+from hashmol3d import descriptor_geometry, hash_descriptor, hash_molecule
+
+res = hash_molecule(z, coords)
+assert hash_descriptor(res.descriptor) == res.geometry_hash
+z2, coords2 = descriptor_geometry(res.descriptor)
+assert hash_molecule(z2, coords2).hash_str == res.hash_str
+```
 
 ## `hash_xyz(path, *, include_smiles=False, **kwargs)`
 

@@ -94,8 +94,8 @@ reproducibility matters. Embedding failure raises an error.
 does not enable it. Both `F` and `C` geometry representations are supported:
 
 ```text
-V:9-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|F:<rows>|S:<SMILES>
-V:9-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|C:<distances>|S:<SMILES>
+V:10-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|F:<rows>|S:<SMILES>
+V:10-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|C:<distances>|S:<SMILES>
 ```
 
 1. Compute the ordinary geometry descriptor with the unchanged core algorithm.
@@ -115,8 +115,13 @@ V:9-FRAME-SHA256-S1-RDKIT-<rdkitVersion>|P:<precision>|Z:<atoms>|C:<distances>|S
    version uses URL percent encoding (unreserved characters unchanged), so
    custom version strings cannot introduce delimiters. Plain SMILES payloads
    containing pipes or whitespace are rejected.
-6. Hash this entire UTF-8 descriptor with SHA-256 and the requested truncation.
-   The existing `HashMol3DResult` fields and readable prefix layout are reused.
+6. Hash the UTF-8 hashed payload of this descriptor with SHA-256 and the
+   requested truncation. From version 10 the payload rounds the stored fine
+   `F` rows back onto the precision grid exactly as for the base descriptor
+   ([specification §6](specification.md)); `C` sections and earlier versions
+   are hashed as stored. `hash_descriptor(result.descriptor)` reproduces the
+   digest, and `descriptor_geometry` returns the base geometry. The existing
+   `HashMol3DResult` fields and readable prefix layout are reused.
 
 `hash_xyz(path, include_smiles=True, **kwargs)` uses the existing XYZ parser
 (including its first-frame warning), then RDKit `DetermineBonds` with the

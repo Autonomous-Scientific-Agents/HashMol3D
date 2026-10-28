@@ -175,7 +175,9 @@ dependent volume signs in greedy quartet pickers.
 
 ## Precision and rounding
 
-The precision must be a power of ten no greater than 1 Å. The frame method
+The precision must be a power of ten no greater than 1 Å, and no finer
+than `2**-35` times the molecule's extent, below which float64 roundoff
+alone changes identifiers under rotation (specification §3). The frame method
 quantizes canonical-frame coordinates; the distance method quantizes pair
 distances. Both use `-log10(precision)` decimal places. Two conformers that
 differ by less than `precision` may collide; two that differ by more will

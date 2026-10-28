@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
 
-from .core import HashMol3DResult, hash_molecule
+from .core import HashMol3DResult, _hashed_payload, hash_molecule
 from .io import read_xyz
 
 __all__ = ["canonical_smiles", "hash_file", "hash_rdkit", "read_rdkit"]
@@ -130,7 +130,10 @@ def _with_smiles(result, mol, conf_id):
     smiles = canonical_smiles(mol, conf_id=conf_id)
     version = f"{result.version}-S1-RDKIT-{quote(rdBase.rdkitVersion, safe='.-')}"
     descriptor = "V:" + version + "|" + result.descriptor.split("|", 1)[1] + "|S:" + smiles
-    digest = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[: len(result.geometry_hash)]
+    # Hash the rounded F rows, as for the base descriptor, not the stored fine
+    # ones; hash_descriptor(descriptor) reproduces this digest.
+    payload = _hashed_payload(descriptor)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[: len(result.geometry_hash)]
     return replace(
         result,
         version=version,

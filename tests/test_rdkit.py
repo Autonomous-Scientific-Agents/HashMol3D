@@ -9,6 +9,9 @@ from hashmol3d import (
     DESCRIPTOR_VERSION,
     SearchBudgetExceeded,
     canonical_smiles,
+    core,
+    descriptor_geometry,
+    hash_descriptor,
     hash_file,
     hash_molecule,
     hash_rdkit,
@@ -58,12 +61,41 @@ def test_s_serialization_namespace_digest_and_no_mutation(method, length):
     assert result.descriptor == (
         "V:" + result.version + "|" + base.descriptor.split("|", 1)[1] + "|S:F[C@](Cl)(Br)I"
     )
-    assert (
-        result.geometry_hash
-        == hashlib.sha256(result.descriptor.encode()).hexdigest()[: length or 32]
-    )
+    # The digest covers the hashed payload: F rows rounded back onto the
+    # precision grid, as for the base descriptor, followed by S.
+    payload = "V:" + result.version + "|" + core._hashed_payload(base.descriptor).split("|", 1)[1]
+    payload += "|S:F[C@](Cl)(Br)I"
+    assert result.geometry_hash == hashlib.sha256(payload.encode()).hexdigest()[: length or 32]
+    assert hash_descriptor(result.descriptor, length=length) == result.geometry_hash
     assert str(result) == f"{base.formula}q0m1-{result.geometry_hash}"
     assert mol.ToBinary() == before
+
+
+def test_s_descriptor_geometry_is_the_base_geometry():
+    mol = molecule()
+    base = hash_rdkit(mol)
+    result = hash_rdkit(mol, include_smiles=True)
+    z, coords = descriptor_geometry(result.descriptor)
+    assert hash_molecule(z, coords).hash_str == base.hash_str
+
+
+@pytest.mark.parametrize(
+    "suffix, message",
+    [
+        ("|S:", "S section is empty"),
+        ("|X:CO", "not a HashMol3D descriptor"),
+    ],
+)
+def test_malformed_s_descriptors_are_rejected(suffix, message):
+    result = hash_rdkit(molecule(), include_smiles=True)
+    stored = result.descriptor.rsplit("|", 1)[0] + suffix
+    with pytest.raises(ValueError, match=message):
+        hash_descriptor(stored)
+
+
+def test_s_extension_requires_a_known_base_version():
+    with pytest.raises(ValueError, match="S extension starts with version 8"):
+        hash_descriptor("V:7-FRAME-SHA256-S1-RDKIT-2025.03.3|P:1.0e-04|Z:6|F:6:0,0,0|S:C")
 
 
 @pytest.mark.parametrize("method", ["frame", "canonical"])
@@ -469,7 +501,7 @@ def test_mol2_reader(tmp_path):
     )
     assert read_rdkit(path).GetNumAtoms() == 3
     assert hash_file(path, input_format="mol2").hash_str == (
-        "H2Oq0m1-2525b97db42fc1c282844ba9478d561f"
+        "H2Oq0m1-8ec3152acf35859ba58ced3e101c87e1"
     )
     assert hash_file(path, input_format="mol2", include_smiles=True).descriptor.endswith("|S:O")
 
