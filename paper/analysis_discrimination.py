@@ -7,7 +7,7 @@ are ~L/eps distance "bins"; when N^2/2 approaches L/eps the distance multiset
 saturates. The descriptive scale eps* ~ L/(N^2/2) therefore tracks crowding of
 an unordered distance multiset.
 
-The canonical C descriptor retains the assignment of distances to atom pairs,
+The distance (D) descriptor retains the assignment of distances to atom pairs,
 so eps* is NOT a collision bound or a safe-precision rule for HashMol3D. We
 retain it only as a descriptive comparison while reporting how many conformers
 in one generated polyene family remain distinct on each tested grid.

@@ -126,3 +126,30 @@ def test_hash_xyz_forwards_kwargs(tmp_path):
     r1 = hash_xyz(path, charge=1)
     assert r0.hash_str != r1.hash_str
     assert np.all(read_xyz(path)[0] == np.array([1]))
+
+
+def test_read_xyz_is_utf8_whatever_the_locale(tmp_path):
+    water = "O  0.0  0.0  0.0\nH  0.7572  0.5860  0.0\nH -0.7572 0.5860 0.0\n"
+    expected = hash_molecule(*read_xyz(_write_xyz(tmp_path, f"3\nwater\n{water}")))
+    for name, data in [
+        ("bom.xyz", ("﻿3\nwater\n" + water).encode("utf-8")),
+        ("utf8.xyz", ("3\nwater at 1 Å\n" + water).encode("utf-8")),
+        ("latin1.xyz", ("3\nwater at 1 Å\n" + water).encode("latin-1")),
+    ]:
+        p = tmp_path / name
+        p.write_bytes(data)
+        assert hash_molecule(*read_xyz(str(p))) == expected, name
+
+
+@pytest.mark.parametrize("count", ["1_0", "²", "-1", "3.0"])
+def test_read_xyz_atom_count_is_ascii_digits(tmp_path, count):
+    path = _write_xyz(tmp_path, f"{count}\nc\nH 0 0 0\nH 0 0 0.74\n")
+    with pytest.raises(ValueError, match="must be the atom count"):
+        read_xyz(path)
+
+
+def test_read_xyz_accepts_integer_valued_float_atomic_numbers(tmp_path):
+    z, _ = read_xyz(_write_xyz(tmp_path, "2\nc\n8.0 0 0 0\n1 0 0 0.97\n"))
+    assert z.tolist() == [8, 1]
+    with pytest.raises(ValueError, match="unknown element symbol"):
+        read_xyz(_write_xyz(tmp_path, "1\nc\n6.5 0 0 0\n"))

@@ -419,3 +419,90 @@ class TestKeywordOnly:
         with pytest.raises(TypeError):
             # precision is keyword-only; positional must fail.
             hash_molecule(z, coords, 1e-3)
+
+
+@pytest.mark.parametrize("z", [[[8, 1], [1, 1]], [[8], [1], [1]], 8])
+def test_atomic_nums_must_be_one_dimensional(z):
+    coords = np.zeros((int(np.size(z)), 3))
+    coords[:, 0] = np.arange(int(np.size(z)))
+    with pytest.raises(ValueError, match=r"shape \(N,\)"):
+        hash_molecule(z, coords)
+
+
+def test_charge_above_nuclear_charge_is_rejected():
+    for multiplicity in (None, 1):
+        with pytest.raises(ValueError, match="exceeds the total nuclear charge"):
+            hash_molecule([1], [[0.0, 0.0, 0.0]], charge=2, multiplicity=multiplicity)
+    # A bare proton has no electrons, which is fine.
+    assert hash_molecule([1], [[0.0, 0.0, 0.0]], charge=1).multiplicity == 1
+
+
+@pytest.mark.parametrize("precision", [None, "fine", object()])
+def test_non_numeric_precision_is_a_value_error(precision):
+    with pytest.raises(ValueError, match="precision must be a real number"):
+        hash_molecule([1, 1], [[0, 0, 0], [0, 0, 0.74]], precision=precision)
+
+
+@pytest.mark.parametrize("n_items", [1.9, True, float("inf"), "100"])
+def test_hash_length_for_requires_an_integer_count(n_items):
+    with pytest.raises(ValueError, match="n_items must be an integer"):
+        hash_length_for(n_items)
+
+
+@pytest.mark.parametrize("target_prob", ["1e-9", True, None])
+def test_hash_length_for_requires_a_real_probability(target_prob):
+    with pytest.raises(ValueError, match="target_prob"):
+        hash_length_for(10, target_prob)
+
+
+@pytest.mark.parametrize(
+    "z, coords, methods",
+    [
+        # Only the frame's moment sums overflow; distances are fine.
+        ([118, 118], [[1e307, 0, 0], [1e307, 0.5, 0]], ["frame"]),
+        ([1, 1], [[1e308, 0, 0], [-1e308, 0, 0]], ["frame", "distance"]),
+        ([1, 1], [[1.7e308, 0, 0], [0, 0, 0]], ["frame", "distance"]),
+    ],
+)
+def test_overflowing_coordinates_are_a_value_error(z, coords, methods):
+    for method in methods:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(ValueError, match="coords are too large"):
+                hash_molecule(z, coords, method=method, precision=1.0)
+
+
+def test_resolution_error_suggests_a_coarser_valid_precision():
+    from hashmol3d.core import _resolution_error
+
+    # The extent alone would allow 1e-4, which the exact rule just rejected.
+    message = str(_resolution_error(1e-4, 1e-4 * 2**35 * 0.999))
+    assert "Use precision >= 1e-03" in message
+    # Nothing up to 1 Å resolves an extent this large.
+    message = str(_resolution_error(1.0, 5e10))
+    assert "No supported precision" in message and "Use precision" not in message
+
+
+@pytest.mark.parametrize(
+    "z, coords, reason",
+    [
+        # CH4 at 1 Å: degenerate moments and radius below ten cells.
+        (
+            [6, 1, 1, 1, 1],
+            [
+                [0, 0, 0],
+                [0.63, 0.63, 0.63],
+                [-0.63, -0.63, 0.63],
+                [-0.63, 0.63, -0.63],
+                [0.63, -0.63, -0.63],
+            ],
+            "too small to anchor",
+        ),
+        # A 0.8-cell bend in a long cloud: no anchor is a cell from the axis.
+        ([6, 6, 6], [[-20, 0, 0], [0, 0.8, 0], [20, 0, 0]], "grid cell from the resolved axis"),
+    ],
+)
+def test_frame_fallback_warning_names_its_reason(z, coords, reason):
+    with pytest.warns(UserWarning, match=reason) as record:
+        hash_molecule(z, coords, precision=1.0)
+    assert "candidate budget" not in str(record[0].message)

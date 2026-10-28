@@ -38,6 +38,9 @@ The identifier has the form
 
 ## Examples
 
+The example files are in [examples](examples/); run these commands from
+that directory.
+
 Hash a geometry with default settings:
 
 ```bash
@@ -86,7 +89,8 @@ Standard XYZ remains the default input. The XYZ parser
 validates the declared atom count and rejects malformed files. If non-blank
 lines follow the declared atoms (a multi-frame trajectory, or a header that
 under-counts the atoms), only the first frame is hashed and a warning is
-printed to stderr.
+printed to stderr. Warnings, such as this one or a frame-method fallback,
+are printed as `hashmol3d: warning: <message>`.
 
 Install the `rdkit` extra (`pip install -e '.[rdkit]'` from a source checkout)
 for the other formats. Select the format
@@ -105,6 +109,7 @@ rejected by default. Provide complete coordinates, explicitly generate them,
 or use `--allow-implicit-hydrogens` to accept an incomplete geometry/formula.
 PDB input hashes exactly the atoms in the file, without checking implicit H
 counts derived from guessed bond orders, and cannot be combined with
-`--generate-coordinates`. Missing RDKit, invalid input, and embedding failure
+`--generate-coordinates`. A PDB file is rejected if RDKit would drop any of
+its atom records, such as alternate locations (altLoc) other than the first. Missing RDKit, invalid input, and embedding failure
 exit with code 1. See the [RDKit guide](rdkit.md) for input policies and
 limitations.

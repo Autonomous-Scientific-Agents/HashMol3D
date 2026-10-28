@@ -139,3 +139,23 @@ def test_python_dash_m_runs_the_cli(tmp_path, module):
         check=False,
     )
     assert missing.returncode == 1
+
+
+def test_cli_warnings_use_the_cli_format(tmp_path, capsys):
+    p = tmp_path / "traj.xyz"
+    frame = "2\nframe\nH 0 0 0\nH 0 0 0.74\n"
+    p.write_text(frame * 2)
+    assert cli([str(p)]) == 0
+    err = capsys.readouterr().err
+    assert err.startswith("hashmol3d: warning: ")
+    assert "only the first frame was read" in err
+    assert "UserWarning" not in err and "read_xyz(" not in err
+
+
+def test_cli_prints_warnings_before_an_error(tmp_path, capsys):
+    p = tmp_path / "bent.xyz"
+    p.write_text("3\nc\nC -5 0 0\nC 0 0.9 0\nC 5 0 0\n")
+    assert cli([str(p), "-p", "1", "--node-budget", "1"]) == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0].startswith("hashmol3d: warning: no numerically stable canonical frame")
+    assert lines[-1].startswith("hashmol3d: ") and "warning" not in lines[-1]

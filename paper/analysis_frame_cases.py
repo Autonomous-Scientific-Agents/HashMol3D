@@ -1,7 +1,7 @@
 """Reproduce QM9 principal-axis and near-line path decisions without a dataset download.
 
 The JSON retains four-decimal SDF coordinates from the checksum-pinned corpus.
-Gap-threshold sweeps are diagnostics, not alternative version-8 settings.
+Gap-threshold sweeps are diagnostics, not alternative settings of the current descriptor version.
 Run: python paper/analysis_frame_cases.py (requires HashMol3D and NumPy).
 """
 
