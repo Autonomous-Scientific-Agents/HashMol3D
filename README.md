@@ -138,8 +138,10 @@ the identifiers support:
 Version 0.16.0 uses descriptor version `12.0`. It fixes two invariance bugs:
 short linear molecules far from the origin, and a single atom away from the
 origin at very fine precision, could get a position-dependent identifier.
-Every other geometry keeps its version-11 geometry hash; only the `v12` field
-of the identifier changes. Version 11 introduced the `hm3d_` identifier,
+Short nearly linear molecules now use the same half-cell line rule as larger
+ones; on QM9 this changes 7 of 133,885 geometry hashes at 1 Å and none at
+finer precisions. Every other geometry keeps its version-11 geometry hash;
+only the `v12` field of the identifier changes. Version 11 introduced the `hm3d_` identifier,
 stopped hashing the version (it is in the identifier), and renamed the
 distance section from `C` to `D`. Version 10 made re-hashing idempotent
 (see [Re-hashing a stored descriptor](#re-hashing-a-stored-descriptor)), and

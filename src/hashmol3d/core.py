@@ -216,13 +216,6 @@ _FRAME_MIN_RADIUS_GRID = 10.0
 # 3N-value F descriptors this rule now produces.
 _FRAME_ANCHOR_MIN_GRID = 1.0
 
-# Relative residual accepted as collinear up to float64 roundoff. This is
-# independent of the requested grid: it must not flatten a resolved bend.
-# It is relative to the largest input coordinate norm as well as the centered
-# radius, because centering roundoff grows with the distance from the origin:
-# before version 12, a short line far from the origin missed this test and
-# fell back to D, so its identifier depended on its position.
-_FRAME_LINEAR_REL_TOL = 64.0 * np.finfo(np.float64).eps
 
 # Canonically tied anchors must all be evaluated. Bound that work so an
 # adversarial highly symmetric geometry cannot turn the frame method into an
@@ -905,20 +898,22 @@ def _frame_signature(
     if not lam[2] > 0.0:
         return None
 
-    # A true line needs only its isolated longitudinal axis, even when its
-    # extent is too small for the whole-cloud size guard. Recognize it up
-    # to relative float64 roundoff, not by a grid-dependent bend tolerance.
-    # Larger systems retain the existing intrinsic-line/anchor decisions.
-    if max_radius_grid < _FRAME_MIN_RADIUS_GRID:
-        axis = vec[:, 2]
-        projected = c - np.outer(c @ axis, axis)
-        max_projected = float(np.linalg.norm(projected, axis=1).max())
-        magnitude = max(float(radii.max()), float(np.linalg.norm(coords, axis=1).max()))
-        if max_projected <= _FRAME_LINEAR_REL_TOL * magnitude:
-            return _frame_body(line_rows(axis))
-
     gap0 = float((lam[1] - lam[0]) / lam[2])
     gap1 = float((lam[2] - lam[1]) / lam[2])
+
+    # A line needs only its isolated longitudinal axis, even when its extent
+    # is too small for the whole-cloud size guard. As for larger clouds below,
+    # it is recognized when every transverse residual is below half a grid
+    # cell, where it rounds to zero. Versions 7-11 instead accepted only a
+    # residual within float64 roundoff of the centered radius. That roundoff
+    # grows with the distance from the origin, so a short line far from it
+    # fell back to D; no roundoff-scale tolerance is translation-invariant.
+    if max_radius_grid < _FRAME_MIN_RADIUS_GRID and gap0 < _FRAME_GAP_MIN:
+        axis = vec[:, 2]
+        projected = c - np.outer(c @ axis, axis)
+        if float(np.linalg.norm(projected, axis=1).max()) * scale < 0.5:
+            return _frame_body(line_rows(axis))
+
     if min(gap0, gap1) >= _FRAME_GAP_MIN:
         return _frame_body(_rows_in_basis(z, c, vec, fine_scale))
 

@@ -172,15 +172,13 @@ class TestCanonicalSearchBudget:
         assert "|D:" in res.descriptor
 
     def test_frame_fallback_obeys_node_budget(self):
+        # A bend of more than half a cell in a cloud below ten cells of radius.
+        bent = [[-5, 0, 0], [0, 0.9, 0], [5, 0, 0]]
         with pytest.warns(UserWarning, match="falling back"):
             with pytest.raises(SearchBudgetExceeded):
-                hash_molecule(
-                    [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, node_budget=1
-                )
+                hash_molecule([6, 6, 6], bent, precision=1.0, node_budget=1)
         with pytest.warns(UserWarning, match="falling back"):
-            res = hash_molecule(
-                [6, 6, 6], [[-1, 0, 0], [0, 0.01, 0], [1, 0, 0]], precision=1.0, node_budget=3
-            )
+            res = hash_molecule([6, 6, 6], bent, precision=1.0, node_budget=3)
         assert "|D:" in res.descriptor
 
     @pytest.mark.parametrize("budget", [0, -1, True, np.bool_(True), 1.5, 3.0, "3", None])

@@ -250,20 +250,19 @@ The default method normally takes O(N log N) time and O(N) memory:
    input coordinates because a computed centroid need not equal a shared
    position exactly.
 3. Otherwise require `λ3 > 0` (else select the distance method, as in
-   step 7). Before rejecting a cloud with
-   `R s < 10`, where `R = max_i ||v_i||`, test collinearity about the
-   largest-moment eigenvector `u3`. Let `rho = max_i ||v_i - (v_i·u3)u3||`.
-   If `rho ≤ 64 * eps64 * M`, with `eps64 = 2^-52` and
-   `M = max(R, max_i ||r_i||)`, serialize the
-   intrinsic line `(Z, 0, 0, a_i)` with axial coordinate `a_i = v_i·u3`,
-   quantized and rounded as in steps 8–9, minimizing over both axial
-   signs. This accepts a line up to float64 roundoff, not an arbitrary
-   sub-grid bend. `M` includes the input coordinate norms because
-   centering roundoff grows with the distance from the origin. Continue to the gap test for other clouds, including those
+   step 7), and define relative gaps `g1=(λ2−λ1)/λ3` and
+   `g2=(λ3−λ2)/λ3`. Before rejecting a cloud with `R s < 10`, where
+   `R = max_i ||v_i||`, test it for a line: if `g1 < 0.05`, let
+   `rho = max_i ||v_i - (v_i·u3)u3||` about the largest-moment eigenvector
+   `u3`. If `rho s < 0.5`, serialize the intrinsic line `(Z, 0, 0, a_i)`
+   with axial coordinate `a_i = v_i·u3`, quantized and rounded as in steps
+   8–9, minimizing over both axial signs. This is the same half-cell rule
+   as step 5 applies to larger clouds: every transverse coordinate rounds
+   to zero. Continue to the gap test for other clouds, including those
    with `R s < 10`.
-4. Define relative gaps `g1=(λ2−λ1)/λ3` and `g2=(λ3−λ2)/λ3`.
-   If both are at least **0.05**, use the eigenvectors in ascending
-   eigenvalue order, regardless of `R s`: no atom anchor is needed.
+4. If both relative gaps are at least **0.05**, use the eigenvectors in
+   ascending eigenvalue order, regardless of `R s`: no atom anchor is
+   needed.
    Otherwise, clouds with `R s < 10` use §4.1–4.4 with a warning. This
    whole-cloud size guard prevents a short finite bend from entering the
    half-grid intrinsic-line rule below. The factor 10 is a fixed policy,
@@ -557,10 +556,15 @@ to `D` (`method="distance"`; `"canonical"` remains a deprecated alias) and
 removes the RDKit S extension (§9). The geometry algorithm and every stored
 `F`/`D` body are unchanged from version 10 except for the `V` field and the
 section letter, but every geometry hash changes.
-Version 12 (`12.0`) fixes two position dependences. A short exact line
-(`R s < 10`) far from the origin failed the collinearity test of §4.5 step
-3, whose tolerance was relative to `R` alone, and fell back to the distance
-method; the tolerance now also scales with the input coordinate norms. A
+Version 12 (`12.0`) fixes two position dependences. Versions 7–11 accepted
+a short line (`R s < 10`, §4.5 step 3) only if its transverse residual was
+within `64 · 2^-52 · R`. The roundoff in stored and centered coordinates
+grows with the distance from the origin, so short lines far from it fell
+back to the distance method, and no roundoff-scale tolerance can be
+translation-invariant. Version 12 applies the half-cell line rule of step 5
+instead. On QM9 this changes 7 of 133,885 geometry hashes at 1 Å (HCN,
+NCCN and polyynes, bent by at most 0.012 Å, which version 11 sent to the
+distance method) and none at finer precisions. A
 single atom (or coincident atoms) away from the origin could get a nonzero
 row at very fine precision, because the computed centroid did not equal the
 atom's position; such inputs now always serialize as zero (§4.5 step 2) and
