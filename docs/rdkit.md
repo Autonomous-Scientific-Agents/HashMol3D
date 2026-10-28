@@ -30,7 +30,8 @@ explicit hydrogen atoms. SMILES/InChI files must contain exactly one nonblank
 line; a SMILES name after whitespace is allowed. CXSMILES text is rejected.
 SDF must contain exactly one `$$$$`-terminated record, including when later
 records are invalid; trailing whitespace after its terminator is accepted.
-MOL and MOL2 likewise reject additional molecule blocks. An SDF record cannot
+MOL, MOL2 and PDB likewise reject additional molecule blocks; a PDB file
+ends at its first `END` record. An SDF record cannot
 hide a second MOL block before its terminator: text after `M  END` must be
 ordinary SD property data introduced by a `>` header. Property values may
 contain literal `M  END` text. A plain MOL block permits only trailing whitespace.
@@ -67,7 +68,8 @@ actually present, and can be overridden. Other keywords are passed to
 
 `hash_file(path, *, input_format="xyz", generate_coordinates=False,
 allow_implicit_hydrogens=False, **kwargs)` deliberately defaults to the native
-XYZ parser, without extension-based dispatch. Choose other formats explicitly.
+XYZ parser, without extension-based dispatch. As in `hash_rdkit`,
+`charge=None` selects the default charge. Choose other formats explicitly.
 PDB hashing uses exactly the atoms in the file, without the implicit-H guard:
 guessed single bonds can imply extra hydrogens even in complete unsaturated
 geometries. Missing atoms cannot be inferred reliably from PDB chemistry, so
@@ -120,8 +122,10 @@ string and never mutates its input.
 The adapter is implemented in `hashmol3d.rdkit_support`; the public functions
 remain available from `hashmol3d`. It trusts the conformer's 3D flag, because
 planar 3D geometries are legitimate and cannot be distinguished from mislabeled
-2D drawings using a zero z coordinate alone. RDKit diagnostics remain visible;
-the adapter does not change process-wide logging settings.
+2D drawings using a zero z coordinate alone. PDB has no 2D form, so PDB
+conformers are always treated as 3D, including planar ones. RDKit
+diagnostics remain visible; the adapter does not change process-wide logging
+settings.
 
 The chemistry operations follow RDKit's
 [SMILES and input documentation](https://www.rdkit.org/docs/GettingStartedInPython.html)

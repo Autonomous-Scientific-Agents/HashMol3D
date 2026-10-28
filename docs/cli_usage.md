@@ -1,6 +1,7 @@
 # HashMol3D CLI Usage
 
-After installation, a `hashmol3d` command is available.
+After installation, a `hashmol3d` command is available; `python -m hashmol3d`
+runs the same CLI.
 
 ## Synopsis
 
@@ -28,7 +29,7 @@ The identifier has the form
 | `-c` | `--charge`       | infer  | Total formal charge: 0 for XYZ; graph charge for RDKit formats |
 | `-m` | `--multiplicity` | infer  | Spin multiplicity (inferred from electron parity if omitted) |
 | `-l` | `--length`       | 32     | Hex chars in the geometry hash, 1–64 (default 32 = 128-bit; size by corpus, not molecule) |
-|      | `--method`       | frame  | Descriptor method: `frame` or `distance` (`canonical` is a deprecated alias of `distance`) |
+|      | `--method`       | frame  | Descriptor method: `frame` or `distance` (`canonical` is a deprecated alias of `distance` and prints a warning to stderr) |
 |      | `--node-budget`  | 10000 | Maximum canonical search states, also after frame fallback |
 |      | `--input-format` | xyz | `xyz`, `mol`, `sdf`, `mol2`, `pdb`, `smi`/`smiles`, or `inchi` |
 |      | `--generate-coordinates` | off | Generate a new 3D conformer with explicit H atoms (not XYZ or PDB) |

@@ -7,7 +7,7 @@ define a proposed identifier standard. The accompanying paper describes the
 software and methods and proposes that standard; the
 [specification](docs/specification.md) is a draft, not an adopted standard.
 
-It produces a **readable** identifier of the form
+It produces a file-name-safe identifier of the form
 
     hm3d_v<major version>_p<decimals>_<Hill formula>_<state tag>_<geometry hash>
 

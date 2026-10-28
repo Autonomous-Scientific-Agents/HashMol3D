@@ -231,9 +231,12 @@ def test_mol_accepts_single_block_with_trailing_whitespace(tmp_path, force_v3000
     assert hash_file(path, input_format="mol").formula == "H2O"
 
 
-@pytest.mark.parametrize("fmt", ["mol", "sdf", "mol2"])
+@pytest.mark.parametrize("fmt", ["mol", "sdf", "mol2", "pdb"])
 def test_file_readers_reject_concatenated_molecules(tmp_path, capsys, fmt):
-    if fmt == "mol2":
+    if fmt == "pdb":
+        # RDKit stops at the first END record and would drop the second molecule.
+        content = Chem.MolToPDBBlock(molecule("CO")) + Chem.MolToPDBBlock(molecule("CCCl"))
+    elif fmt == "mol2":
         block = (
             "@<TRIPOS>MOLECULE\nwater\n3 2 0 0 0\nSMALL\nNO_CHARGES\n\n"
             "@<TRIPOS>ATOM\n1 O 0 0 0 O.3 1 HOH 0\n"
@@ -447,3 +450,25 @@ def test_embedding_failure_is_fatal(tmp_path, monkeypatch):
     monkeypatch.setattr(AllChem, "EmbedMolecule", lambda *args: -1)
     with pytest.raises(ValueError, match="could not generate"):
         hash_file(path, input_format="smi", generate_coordinates=True)
+
+
+def test_planar_pdb_is_hashed_as_3d(tmp_path):
+    # RDKit flags an all-zero z column as 2D; PDB coordinates are always 3D.
+    water = Chem.MolFromXYZBlock("3\n\nO 0 0 0\nH .757 .586 0\nH -.757 .586 0\n")
+    path = tmp_path / "planar.pdb"
+    path.write_text(Chem.MolToPDBBlock(water))
+    xyz = xyz_file(tmp_path, water)
+    assert hash_file(path, input_format="pdb") == hash_file(xyz)
+
+
+@pytest.mark.parametrize("call", ["hash_rdkit", "hash_file"])
+def test_canonical_alias_warning_points_at_the_caller(tmp_path, call):
+    mol = molecule("O")
+    with pytest.warns(DeprecationWarning, match="method='canonical'") as record:
+        if call == "hash_rdkit":
+            result = hash_rdkit(mol, method="canonical")
+        else:
+            result = hash_file(xyz_file(tmp_path, mol), method="canonical")
+    # Attributed to this file, so Python's default filters show it.
+    assert [w.filename for w in record] == [__file__]
+    assert result == hash_rdkit(mol, method="distance")

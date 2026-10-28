@@ -359,7 +359,7 @@ class TestFrameFallback:
                 other = hash_molecule(zz, cc, method="frame")
             assert other.geometry_hash == res.geometry_hash
 
-    def test_canonical_method_never_warns(self, benzene):
+    def test_distance_method_never_warns(self, benzene):
         z, coords = benzene
         with warnings.catch_warnings():
             warnings.simplefilter("error")

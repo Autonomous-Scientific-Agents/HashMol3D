@@ -13,7 +13,7 @@ For example: `hm3d_v11_p4_H2O_q0m1_8e9eedf5032cf387541d637f56c682dc`.
   for `"11.0"`). It changes whenever any geometry hash can change; minor
   versions change no hash and are therefore not written.
 - **`p<decimals>`**: the precision as its number of decimals (`p4` for
-  `1e-4` Å, `p0` for 1 Å). The precision is also hashed, so this readable
+  `1e-4` Å, `p0` for 1 Å). The precision is also hashed, so this
   field is confirmed by the geometry hash.
 
 - **Hill formula**: when carbon is present, carbon first, then hydrogen,
@@ -95,8 +95,8 @@ back to the distance method.
 - `multiplicity`: multiplicity used
 - `descriptor`: the stored descriptor. Its `F` rows carry canonical-frame
   coordinates on a grid 10⁴ times finer than `precision`; the geometry hash
-  is the SHA-256 digest of the `Z` field and these values rounded back to
-  `precision`
+  is the SHA-256 digest of the `P` and `Z` fields and these values rounded
+  back to `precision`
   ([specification §6](specification.md#6-canonical-descriptor-string)).
   Re-hash it with `hash_descriptor`.
 
@@ -120,8 +120,8 @@ geometry. `hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
 r.geometry_hash` holds exactly for every result `r`, for `F` and `D`
 descriptors, and for stored descriptors of earlier versions (which hashed
 their full `V|P|Z|<section>` string). `length` defaults to 32 hex characters.
-The rest of the identifier (version, precision, formula, state tag) is not
-hashed; keep it alongside.
+The identifier's state tag (charge and multiplicity) is in neither the
+descriptor nor the hash; keep it alongside.
 
 The descriptor is validated first, against the rules of its own version,
 and rejected with `ValueError` if it breaks any of them: known version
@@ -221,7 +221,8 @@ are the geometry-only `hash_molecule` results described above.
 ## Constants
 
 - `DESCRIPTOR_VERSION`: the descriptor-format version (`"11.0"`), written
-  in every identifier as `v11.0` and in every stored descriptor as `V:11.0`.
+  in every stored descriptor as `V:11.0`; identifiers carry only the major
+  number (`v11`).
   It is not hashed; a new major version accompanies any change that can alter
   a geometry hash.
 - `DEFAULT_LENGTH`: default geometry-hash length in hex characters (`32`).
@@ -234,4 +235,4 @@ are the geometry-only `hash_molecule` results described above.
   `hash_molecule` that emits a `DeprecationWarning` and does not expose
   `method` or `node_budget`. The old `hash_length=` keyword still works (it
   maps to `length=`). Note that since 0.5.0 the returned `hash_str` is
-  the full readable identifier, not just the hex digest.
+  the full identifier, not just the hex digest.
