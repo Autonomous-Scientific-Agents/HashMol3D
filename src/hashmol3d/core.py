@@ -30,8 +30,8 @@ without creating a descriptor or hash.
 The geometry hash is the SHA-256 digest of
 ``P:<precision>|Z:<atomic numbers>|F:<rows>`` (or ``|D:<distances>``). The
 descriptor version is not hashed; its major number is written in the
-identifier, next to the precision, and total charge and spin multiplicity in
-its state tag, so changing charge or multiplicity
+identifier, next to the precision. Total charge and spin multiplicity are
+written in the identifier's state tag, so changing charge or multiplicity
 only changes that tag.
 
 Re-hashing is idempotent. ``F`` descriptors store canonical-frame rows on a
@@ -538,8 +538,8 @@ def _identifier(decimals: int, formula: str, digest: str, charge: int, mult: int
     """``hm3d_v<major>_p<decimals>_<formula>_<state tag>_<geometry hash>``.
 
     The precision appears as its number of decimals (``p4`` for 1e-4 Å); it
-    is also hashed, so the geometry hash confirms this field. Only the major version is
-    written: a minor version never changes a hash, so it must not change the
+    is also hashed, so the geometry hash confirms this field. Only the major
+    version is written: a minor version never changes a hash, so it must not change the
     identifier either.
     """
     return (
@@ -1026,8 +1026,10 @@ def _format_descriptor(
     tag: str,
     body: str,
 ) -> str:
-    """Render a descriptor string: the stored form or, given a hashed
-    ``body``, the payload fed to SHA-256.
+    """Render a descriptor string ``V:...|P:...|Z:...|<tag>:<body>``.
+
+    This is the stored form, and the hashed payload of versions 5-10. From
+    version 11 the payload omits ``V:``; see :func:`_geometry_payload`.
 
     Charge and multiplicity are *not* included: they are fields of
     the identifier, not of the hashed payload.
@@ -1381,8 +1383,8 @@ def hash_descriptor(descriptor: str, *, length: int | None = None) -> str:
     ``hash_descriptor(r.descriptor, length=len(r.geometry_hash)) ==
     r.geometry_hash`` holds exactly for every :class:`HashMol3DResult` ``r``,
     for ``F`` and ``D`` descriptors alike. This is the exact idempotent
-    re-hash; the identifier's version, formula and state-tag fields are not
-    hashed and must be kept alongside it.
+    re-hash. Charge and multiplicity are in neither the descriptor nor the
+    hash: keep the identifier's state tag alongside them.
 
     Args:
         descriptor: a descriptor string as returned in
@@ -1641,7 +1643,7 @@ def hash_molecule(
     used_mult = _infer_multiplicity(atomic_nums, charge, multiplicity)
     # Resolution floor (see _MIN_RELATIVE_PRECISION). A loose screen on the
     # raw coordinates first, then an exact decision on what gets hashed (the
-    # F rows or the C distances), so that every geometry with the same
+    # F rows or the D distances), so that every geometry with the same
     # hashed values -- and the stored descriptor itself -- is treated alike.
     extent = _extent(atomic_nums, coords)
     if effective_precision * _RESOLUTION_CELLS * (1 + _RESOLUTION_SCREEN_SLACK) < extent:
@@ -1706,7 +1708,7 @@ def generate_hashmol3d(
         Use :func:`hash_molecule` instead. The ``hash_length`` keyword is
         renamed to ``length`` in the new function. Note that as of 0.5.0
         the returned ``hash_str`` is the full identifier
-        (``<formula><state>-<hash>``), not just the hex digest.
+        (``hm3d_v11_p4_H2O_q0m1_<hash>``), not just the hex digest.
     """
     warnings.warn(
         "generate_hashmol3d() is deprecated; use hash_molecule() instead "
