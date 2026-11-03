@@ -1,4 +1,4 @@
-# HashMol3D Specification v0.16.1
+# HashMol3D Specification v0.17.0
 
 **Status:** Proposed standard (draft), developed using the HashMol3D library
 **Canonical algorithm:** SHA-256
@@ -69,7 +69,9 @@ requested precision can still change the hash if it straddles a boundary,
 and one larger than the precision can leave it unchanged if it does not.
 See the manuscript's finite-grid and stability analysis for the empirical
 rate, and §3 for the resolution floor below which float64 roundoff alone
-changes identifiers.
+changes identifiers. The reference implementation reports how close the
+hashed values come to a boundary (`min_margin`) and offers lookup-side
+helpers for matching across one (§11); they change no identifier.
 
 The floor allows for roundoff relative to the extent `R`, not to the
 distance from the origin. Coordinates far from the origin carry roundoff
@@ -635,6 +637,16 @@ from hashmol3d import descriptor_geometry, hash_descriptor
 assert hash_descriptor(result.descriptor) == result.geometry_hash  # exact
 z, xyz = descriptor_geometry(result.descriptor)  # canonical-frame geometry
 assert hash_molecule(z, xyz).hash_str == result.hash_str
+```
+
+Matching across a rounding boundary (§2), without changing any identifier:
+
+```python
+from hashmol3d import boundary_probes, same_geometry
+
+result.min_margin  # nearest hashed value to a boundary, in grid cells
+keys = boundary_probes(result.descriptor, margin=0.1, max_flips=2)
+same_geometry(result.descriptor, other.descriptor)  # RMSD <= precision
 ```
 
 A file-based convenience wrapper is also provided:

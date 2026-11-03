@@ -53,7 +53,8 @@ import numbers
 import re
 import warnings
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from itertools import combinations
 
 import numpy as np
 
@@ -64,11 +65,13 @@ __all__ = [
     "DESCRIPTOR_VERSION",
     "HashMol3DResult",
     "SearchBudgetExceeded",
+    "boundary_probes",
     "descriptor_geometry",
     "generate_hashmol3d",
     "hash_descriptor",
     "hash_length_for",
     "hash_molecule",
+    "same_geometry",
 ]
 
 
@@ -281,6 +284,11 @@ class HashMol3DResult:
     charge: int
     multiplicity: int
     descriptor: str
+    # Distance of the hashed value nearest to a rounding boundary of the
+    # precision grid, in grid cells (0 to 0.5); None if not computed. It
+    # describes the input's position within its cells, which a rigid motion
+    # changes in the last digits, so results compare by identifier alone.
+    min_margin: float | None = field(default=None, compare=False)
 
     def __str__(self) -> str:
         return self.hash_str
@@ -592,13 +600,23 @@ def _state_tag(charge: int, multiplicity: int) -> str:
     return f"q{charge}m{multiplicity}"
 
 
-def _scaled_distances(coords: np.ndarray, decimals: int) -> np.ndarray:
+def _rounding_margin(scaled: np.ndarray, rounded: np.ndarray) -> float:
+    """Smallest distance, in grid cells, from ``scaled`` to a rounding boundary."""
+    if not scaled.size:
+        return 0.5
+    return float(0.5 - np.abs(scaled - rounded).max())
+
+
+def _scaled_distances(coords: np.ndarray, decimals: int, *, with_margin: bool = False):
     """Pairwise distances as integer multiples of the precision grid.
 
     Returns an ``(N, N)`` int64 matrix ``q`` with
     ``q[i, j] = rint(||r_i - r_j|| * 10**decimals)`` and a zero diagonal.
     This is the same binning as rounding each distance to ``decimals``
     places; integers make every later comparison and serialization exact.
+    With ``with_margin``, returns ``(q, margin)``, where ``margin`` is the
+    smallest distance of a scaled distance from a rounding boundary, in grid
+    cells.
     """
     diff = coords[:, None, :] - coords[None, :, :]
     scaled = np.linalg.norm(diff, axis=-1) * (10.0**decimals)
@@ -607,8 +625,11 @@ def _scaled_distances(coords: np.ndarray, decimals: int) -> np.ndarray:
             "precision too fine for this geometry's extent: scaled distances "
             "exceed the exact-integer range; use a coarser precision"
         )
-    q = np.rint(scaled).astype(np.int64)
+    rounded = np.rint(scaled)
+    q = rounded.astype(np.int64)
     np.fill_diagonal(q, 0)
+    if with_margin:
+        return q, _rounding_margin(scaled, rounded)
     return q
 
 
@@ -816,12 +837,14 @@ def _rows_in_basis(
     return _sorted_signed_rows(z, q, _ALL_AXIS_SIGNS)
 
 
-def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str, bool]:
+def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str, bool, float]:
     """Serialize a winning frame row array as an ``F`` signature.
 
-    Returns ``(tag, z_ordered, stored_body, hashed_body, within_floor)``,
-    where ``within_floor`` is the exact resolution-floor decision on the
-    hashed rows (:func:`_cells_within_floor`). The stored body
+    Returns ``(tag, z_ordered, stored_body, hashed_body, within_floor,
+    min_margin)``, where ``within_floor`` is the exact resolution-floor
+    decision on the hashed rows (:func:`_cells_within_floor`) and
+    ``min_margin`` is the smallest distance of an unclamped fine value from a
+    rounding boundary of the hashing grid, in grid cells. The stored body
     carries the fine-grid coordinates. Each stored value is first moved at
     least ``_FINE_MARGIN`` fine units inside its coarse cell, so the stored
     geometry never sits on, or within re-hash roundoff of, a rounding
@@ -830,13 +853,15 @@ def _frame_body(best: np.ndarray) -> tuple[str, tuple[int, ...], str, str, bool]
     :func:`_hashed_payload` applied to the stored one.
     """
     coarse, fine = best[:, 1:4], best[:, 4:7]
+    offset = fine - coarse * _FINE_FACTOR
+    min_margin = float((_FINE_FACTOR // 2 - np.abs(offset)).min()) / _FINE_FACTOR
     limit = _FINE_FACTOR // 2 - _FINE_MARGIN
-    stored = coarse * _FINE_FACTOR + np.clip(fine - coarse * _FINE_FACTOR, -limit, limit)
+    stored = coarse * _FINE_FACTOR + np.clip(offset, -limit, limit)
     rows = _sort_rows(np.column_stack([best[:, :4], stored]))
     body = ";".join(f"{r[0]}:{r[4]},{r[5]},{r[6]}" for r in rows.tolist())
     hashed = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in rows.tolist())
     z_ordered = tuple(int(v) for v in rows[:, 0].tolist())
-    return "F", z_ordered, body, hashed, _cells_within_floor(coarse)
+    return "F", z_ordered, body, hashed, _cells_within_floor(coarse), min_margin
 
 
 class _NoStableFrame(Exception):
@@ -845,7 +870,7 @@ class _NoStableFrame(Exception):
 
 def _frame_signature(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
-) -> tuple[str, tuple[int, ...], str, str, bool] | None:
+) -> tuple[str, tuple[int, ...], str, str, bool, float] | None:
     """Canonical frame signature, or ``None`` for the distance fallback.
 
     See :func:`_frame_search`, which raises :class:`_NoStableFrame` with the
@@ -859,7 +884,7 @@ def _frame_signature(
 
 def _frame_search(
     atomic_nums: np.ndarray, coords: np.ndarray, decimals: int
-) -> tuple[str, tuple[int, ...], str, str, bool]:
+) -> tuple[str, tuple[int, ...], str, str, bool, float]:
     """Canonical frame signature, or :class:`_NoStableFrame` for the fallback.
 
     Coordinates are expressed in the eigenbasis of the Z-weighted gyration
@@ -1587,7 +1612,7 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
         coords = to_coords(fine)
         signature = _frame_signature(z, coords, decimals)
         if signature is not None:
-            tag, z_ordered, body, hashed_body, within_floor = signature
+            tag, z_ordered, body, hashed_body, within_floor, _ = signature
             rehashed = _geometry_payload(parsed.precision, z_ordered, tag, hashed_body)
             # The same hashed rows imply the same resolution-floor decision
             # in hash_molecule(); check it anyway, as hash_molecule() does.
@@ -1610,6 +1635,246 @@ def descriptor_geometry(descriptor: str) -> tuple[np.ndarray, np.ndarray]:
         stacklevel=2,
     )
     return z, to_coords(stored)
+
+
+def _check_fraction(value, name: str, upper: float) -> float:
+    """Validate a real number in ``(0, upper]``."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
+        raise ValueError(f"{name} must be a real number in (0, {upper:g}]")
+    value = float(value)
+    if not (0.0 < value <= upper):
+        raise ValueError(f"{name} must be a real number in (0, {upper:g}]")
+    return value
+
+
+def _check_count(value, name: str) -> int:
+    """Validate a positive integer (not a bool)."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(value)
+
+
+def boundary_probes(
+    descriptor: str,
+    *,
+    margin: float = 0.1,
+    max_flips: int = 2,
+    length: int | None = None,
+    max_keys: int = 10_000,
+) -> list[str]:
+    """Geometry hashes of the grid cells next to a stored ``F`` descriptor.
+
+    A noisy copy of a geometry can hash differently because a few of its
+    frame coordinates crossed a rounding boundary of the precision grid. The
+    stored ``F`` rows record each value's position within its cell, so the
+    values within ``margin`` grid cells of a boundary are known without the
+    source geometry. This returns the geometry hashes obtained by moving
+    every combination of at most ``max_flips`` of those values into the
+    neighboring cell across their nearest boundary, then re-canonicalizing
+    the rows as :func:`hash_molecule` does. A cache that misses on a key can
+    look up these keys as well, and confirm any hit with
+    :func:`same_geometry`.
+
+    The probes recover coordinate-bin changes only. A perturbation that
+    changes the frame branch, an anchor, or the sign choice changes the
+    frame itself, and no probe matches it. The descriptor's own hash is not
+    included; neither are duplicates.
+
+    Args:
+        descriptor: a current-version stored descriptor with an ``F``
+            section, such as ``result.descriptor``.
+        margin: distance from a rounding boundary, in grid cells, within
+            which a value is probed (default ``0.1``; at most ``0.5``).
+            Choose a few times the expected coordinate noise divided by the
+            precision.
+        max_flips: largest number of values moved at once (default ``2``).
+        length: hex length of the returned hashes, as for
+            :func:`hash_molecule` (default :data:`DEFAULT_LENGTH`).
+        max_keys: the most probes to generate (default ``10_000``). With
+            ``k`` values within ``margin``, there are
+            ``sum(comb(k, i) for i in 1..max_flips)`` probes.
+
+    Raises:
+        ValueError: for a ``D`` (or ``C``) descriptor, whose stored distances
+            carry no position within their cells; for a descriptor of
+            another version; for a malformed descriptor or invalid option;
+            or if the probes would exceed ``max_keys`` (use a smaller
+            ``margin`` or ``max_flips``).
+    """
+    margin = _check_fraction(margin, "margin", 0.5)
+    max_flips = _check_count(max_flips, "max_flips")
+    max_keys = _check_count(max_keys, "max_keys")
+    length = _check_length(length)
+    parsed = _parse_descriptor(descriptor)
+    if parsed.tag != "F":
+        raise ValueError(
+            "boundary probes need an F descriptor; distance (D, formerly C) "
+            "descriptors store only rounded distances"
+        )
+    if parsed.fields[0] != "V:" + DESCRIPTOR_VERSION:
+        raise ValueError(
+            f"descriptor version {parsed.fields[0][2:]!r} cannot be probed by this "
+            f"HashMol3D ({DESCRIPTOR_VERSION})"
+        )
+    rows = np.array(parsed.rows, dtype=np.int64)
+    z, fine = rows[:, 0], rows[:, 1:]
+    coarse = _coarsen(fine)
+    offset = fine - coarse * _FINE_FACTOR
+    at_risk = np.argwhere(_FINE_FACTOR // 2 - np.abs(offset) < margin * _FINE_FACTOR)
+    k = len(at_risk)
+    n_keys = sum(math.comb(k, i) for i in range(1, max_flips + 1))
+    if n_keys > max_keys:
+        raise ValueError(
+            f"{k} values lie within {margin:g} grid cells of a boundary, giving "
+            f"{n_keys} probes with max_flips={max_flips}, more than max_keys={max_keys}; "
+            "use a smaller margin or max_flips"
+        )
+    # Each value moves one cell toward its nearest boundary. Stored values
+    # never sit on a boundary (_FINE_MARGIN), so the direction is defined.
+    step = np.where(offset > 0, 1, -1)
+    own = parsed.coarse
+    seen: set[str] = set()
+    probes: list[str] = []
+    for n_flips in range(1, max_flips + 1):
+        for chosen in combinations(at_risk.tolist(), n_flips):
+            moved = coarse.copy()
+            for i, j in chosen:
+                moved[i, j] += step[i, j]
+            # Exact multiples of the fine factor coarsen back to ``moved``;
+            # re-canonicalize over all axis signs as the frame method does.
+            best = _sorted_signed_rows(z, moved * _FINE_FACTOR, _ALL_AXIS_SIGNS)
+            if tuple(map(tuple, best[:, 1:4].tolist())) == own:
+                continue
+            hashed = ";".join(f"{r[0]}:{r[1]},{r[2]},{r[3]}" for r in best.tolist())
+            payload = _geometry_payload(parsed.precision, parsed.z, "F", hashed)
+            digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:length]
+            if digest not in seen:
+                seen.add(digest)
+                probes.append(digest)
+    return probes
+
+
+def _kabsch_rmsd(a: np.ndarray, b: np.ndarray) -> tuple[float, np.ndarray]:
+    """RMSD of centered ``a`` and ``b`` after the best orthogonal map of ``a``.
+
+    Returns ``(rmsd, r)`` with ``a @ r`` closest to ``b``. Reflections are
+    allowed, as in the hashes, which do not distinguish mirror images.
+    """
+    u, _, vt = np.linalg.svd(a.T @ b)
+    r = u @ vt
+    return float(np.sqrt(np.mean(np.sum((a @ r - b) ** 2, axis=1)))), r
+
+
+def _matched(a: np.ndarray, b: np.ndarray, groups: list[np.ndarray]) -> np.ndarray:
+    """Greedy nearest-pair bijection from ``a`` to ``b`` within each element.
+
+    Returns ``perm`` pairing ``a[i]`` with ``b[perm[i]]``. The pairing need
+    not be optimal; any element-preserving bijection gives an RMSD upper
+    bound.
+    """
+    perm = np.empty(a.shape[0], dtype=np.int64)
+    for g in groups:
+        d = np.sum((a[g][:, None, :] - b[g][None, :, :]) ** 2, axis=-1)
+        free_a = np.ones(len(g), dtype=bool)
+        free_b = np.ones(len(g), dtype=bool)
+        for flat in np.argsort(d, axis=None, kind="stable"):
+            i, j = divmod(int(flat), len(g))
+            if free_a[i] and free_b[j]:
+                perm[g[i]] = g[j]
+                free_a[i] = free_b[j] = False
+    return perm
+
+
+def _rmsd_upper_bound(z: np.ndarray, a: np.ndarray, b: np.ndarray, stop: float = 0.0) -> float:
+    """An upper bound on the RMSD of two same-element geometries.
+
+    The bound is the minimum over correspondences that preserve elements and
+    over orthogonal maps. Candidate correspondences are the given order
+    (canonical rows, sorted by element) and greedy nearest-pair matches after
+    each axis-sign flip of ``b``, refined once after alignment. Search stops
+    early once a candidate is at most ``stop``.
+    """
+    a = a - a.mean(axis=0)
+    b = b - b.mean(axis=0)
+    best, _ = _kabsch_rmsd(a, b)
+    groups = [np.flatnonzero(z == v) for v in np.unique(z)]
+    for signs in _ALL_AXIS_SIGNS:
+        if best <= stop:
+            break
+        target = b * np.asarray(signs, dtype=float)
+        for _ in range(2):
+            perm = _matched(a, target, groups)
+            rmsd, r = _kabsch_rmsd(a, b[perm])
+            best = min(best, rmsd)
+            # Express b in a's frame for the refined match.
+            target = b @ r.T
+    return best
+
+
+def same_geometry(a: str, b: str, *, rmsd_tol: float | None = None) -> bool:
+    """Whether two stored descriptors describe the same geometry.
+
+    Equal hashed payloads (which give equal geometry hashes) are always the
+    same geometry. Otherwise, two ``F`` descriptors are the same geometry if
+    their stored canonical-frame coordinates superimpose within
+    ``rmsd_tol`` Å, minimizing over rotations and reflections and over
+    element-preserving atom correspondences. This confirms matches that a
+    rounding boundary split, such as hits found with
+    :func:`boundary_probes`. It needs only the stored descriptors, whose
+    coordinates are kept to ``10**-4`` of a grid cell.
+
+    The correspondence search is heuristic, so the RMSD it finds is an upper
+    bound: ``True`` always means some superposition is within ``rmsd_tol``,
+    but distant frames (for example after an anchor change in a highly
+    symmetric molecule) can be missed. Matching costs time and memory
+    quadratic in the largest number of atoms of one element; use it to
+    confirm candidates, not to compare a corpus pairwise.
+
+    Args:
+        a, b: stored descriptors (``result.descriptor``) at the same
+            precision. ``F`` descriptors of different versions are compared
+            by their coordinates.
+        rmsd_tol: largest RMSD in Å counted as the same geometry. Defaults
+            to the precision: geometries with equal hashes can already differ
+            by up to half a cell in every coordinate.
+
+    Returns:
+        ``True`` for equal hashed payloads or an RMSD within ``rmsd_tol``;
+        ``False`` otherwise, including for unequal ``D`` (or ``C``)
+        descriptors, which store no coordinates.
+
+    Raises:
+        ValueError: for a malformed descriptor, for descriptors at different
+            precisions, or for an invalid ``rmsd_tol``.
+    """
+    pa, pb = _parse_descriptor(a), _parse_descriptor(b)
+    if pa.precision != pb.precision:
+        raise ValueError(
+            f"descriptors have different precisions ({pa.precision:g} and "
+            f"{pb.precision:g} Å); compare geometries hashed on one grid"
+        )
+    if rmsd_tol is None:
+        tol = pa.precision
+    else:
+        if isinstance(rmsd_tol, (bool, np.bool_)) or not isinstance(rmsd_tol, numbers.Real):
+            raise ValueError("rmsd_tol must be a positive finite number of Å")
+        tol = float(rmsd_tol)
+        if not (math.isfinite(tol) and tol > 0.0):
+            raise ValueError("rmsd_tol must be a positive finite number of Å")
+    if _hashed_payload(a) == _hashed_payload(b):
+        return True
+    if pa.tag != "F" or pb.tag != "F" or sorted(pa.z) != sorted(pb.z):
+        return False
+
+    def coords(parsed: _ParsedDescriptor) -> tuple[np.ndarray, np.ndarray]:
+        rows = np.array(parsed.rows, dtype=np.int64)
+        digits = parsed.decimals + (_FINE_DIGITS if parsed.number >= _FINE_ROWS_SINCE else 0)
+        order = np.argsort(rows[:, 0], kind="stable")
+        return rows[order, 0], rows[order, 1:].astype(float) / 10.0**digits
+
+    za, xa = coords(pa)
+    _, xb = coords(pb)
+    return _rmsd_upper_bound(za, xa, xb, stop=tol) <= tol
 
 
 def _resolve_method(method, *, stacklevel: int):
@@ -1693,7 +1958,12 @@ def hash_molecule(
             largest distance from the centroid).
 
     Returns:
-        :class:`HashMol3DResult`.
+        :class:`HashMol3DResult`. Its ``min_margin`` is the distance, in grid
+        cells (0 to 0.5), of the hashed value nearest to a rounding boundary:
+        a frame coordinate on the ``F`` path, a distance on the ``D`` path.
+        A perturbation must move some value by at least that much to change
+        a coordinate or distance bin. Frame-branch, anchor and sign decisions
+        have their own boundaries, which it does not cover.
     """
     atomic_nums = _validate_atomic_nums(atomic_nums)
     coords = _validate_coords(coords)
@@ -1752,13 +2022,13 @@ def hash_molecule(
                 stacklevel=2,
             )
     if signature is None:
-        qmat = _scaled_distances(coords, decimals)
+        qmat, min_margin = _scaled_distances(coords, decimals, with_margin=True)
         if not _distances_within_floor(atomic_nums, qmat):
             raise _resolution_error(effective_precision, extent)
         tag, z_ordered, body = _canonical_signature(atomic_nums, qmat, node_budget)
         hashed_body = body
     else:
-        tag, z_ordered, body, hashed_body, within_floor = signature
+        tag, z_ordered, body, hashed_body, within_floor, min_margin = signature
         if not within_floor:
             raise _resolution_error(effective_precision, extent)
     descriptor = _format_descriptor(DESCRIPTOR_VERSION, effective_precision, z_ordered, tag, body)
@@ -1778,6 +2048,7 @@ def hash_molecule(
         charge=charge,
         multiplicity=used_mult,
         descriptor=descriptor,
+        min_margin=min_margin,
     )
 
 

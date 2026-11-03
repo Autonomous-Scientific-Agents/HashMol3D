@@ -6,11 +6,13 @@ from .core import (
     HashMol3DResult,
     SearchBudgetExceeded,
     _resolve_method,
+    boundary_probes,
     descriptor_geometry,
     generate_hashmol3d,
     hash_descriptor,
     hash_length_for,
     hash_molecule,
+    same_geometry,
 )
 from .io import read_xyz
 from .rdkit_support import canonical_smiles, hash_file, hash_rdkit, read_rdkit
@@ -34,6 +36,7 @@ __all__ = [
     "HashMol3DResult",
     "SearchBudgetExceeded",
     "__version__",
+    "boundary_probes",
     "canonical_smiles",
     "descriptor_geometry",
     "generate_hashmol3d",
@@ -45,4 +48,5 @@ __all__ = [
     "hash_xyz",
     "read_xyz",
     "read_rdkit",
+    "same_geometry",
 ]

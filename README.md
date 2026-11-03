@@ -139,8 +139,10 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.16.1 keeps descriptor version `12.0` and every identifier; it
-tightens input validation and error messages. Version 0.16.0 introduced
+Version 0.17.0 keeps descriptor version `12.0` and every identifier; it adds
+`min_margin`, `boundary_probes` and `same_geometry` for matching across
+rounding boundaries (see [Near-boundary matching](#near-boundary-matching)).
+Version 0.16.1 tightened input validation and error messages. Version 0.16.0 introduced
 descriptor version `12.0`. It fixes two invariance bugs:
 short linear molecules far from the origin, and a single atom away from the
 origin at very fine precision, could get a position-dependent identifier.
@@ -189,6 +191,37 @@ exact. `D` descriptors hold distances, not coordinates; keep their source
 geometry if coordinates are needed. Stored descriptors of versions 5–10
 (including their `C` and RDKit `S` forms) still re-hash to their original
 digests.
+
+## Near-boundary matching
+
+An exact hash splits two copies of a geometry when noise moves a hashed value
+across a rounding boundary. Three helpers handle such splits on the lookup
+side; none of them changes an identifier.
+
+```python
+from hashmol3d import boundary_probes, same_geometry
+
+res.min_margin  # nearest hashed value to a boundary, in grid cells (0 to 0.5)
+
+hit = store.get(query.geometry_hash)
+if hit is None:  # look up the neighboring cells of near-boundary values
+    for key in boundary_probes(query.descriptor, margin=0.1, max_flips=2):
+        if key in store and same_geometry(store[key], query.descriptor):
+            hit = store[key]
+            break
+```
+
+`boundary_probes` reads the at-risk values from the stored `F` rows, so it
+needs no source geometry. `same_geometry` compares two stored descriptors,
+first by hashed payload and then by RMSD of their canonical-frame coordinates
+(tolerance: the precision). Probes recover coordinate-bin flips, not changes
+of frame branch, anchor or sign. On the ten reference geometries of the
+paper's noise study (500 perturbations each, 10⁻⁴ Å), probes with up to two
+flipped values found the reference for 77 %, 69 % and 31 % of the split
+copies at σ/ε = 0.01, 0.03 and 0.1 (`paper/analysis_boundary.py`). A
+second hash on a half-cell offset grid recovered only 20 %, 5 % and 0.1 %,
+because a molecule is rarely clear of the boundaries of either grid in all
+3N values at once.
 
 ## Descriptor tags
 
@@ -254,7 +287,7 @@ Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
 ## Install
 
 HashMol3D needs Python ≥ 3.8 and NumPy; RDKit (2023.9.6 or newer) is an
-optional extra. Install 0.16.1 from source: the release on PyPI is older
+optional extra. Install 0.17.0 from source: the release on PyPI is older
 (0.9.x), uses an earlier descriptor version and therefore different
 identifiers, and lacks `hash_descriptor`, `descriptor_geometry` and the RDKit
 adapters.
