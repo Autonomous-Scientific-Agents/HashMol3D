@@ -222,6 +222,10 @@ copies at σ/ε = 0.01, 0.03 and 0.1 (`paper/analysis_boundary.py`). A
 second hash on a half-cell offset grid recovered only 20 %, 5 % and 0.1 %,
 because a molecule is rarely clear of the boundaries of either grid in all
 3N values at once.
+On all 133,885 QM9 geometries at 10⁻², 10⁻³ and 10⁻⁴ Å, 64–66 % have a
+value within 0.01 of a cell of a boundary and 99 % within 0.05, so nearly every
+identifier has some near-boundary value; the median count within 0.05 is 5,
+or 15 probes with up to two flips.
 
 ## Descriptor tags
 
