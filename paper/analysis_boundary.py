@@ -75,7 +75,8 @@ def offset_key(descriptor):
 
 
 def timed(f, *args, **kwargs):
-    t = time.perf_counter(); out = f(*args, **kwargs)
+    t = time.perf_counter()
+    out = f(*args, **kwargs)
     return out, time.perf_counter() - t
 
 
@@ -96,10 +97,26 @@ def noise_panel():
         ref_offset = offset_key(ref.descriptor) if "|F:" in ref.descriptor else None
         for ratio in RATIOS:
             m = probe_margin(ratio)
-            c = dict.fromkeys(["exact", "exact_or_offset", "probe1", "probe2", "rmsd", "flagged_split", "probe_overflow"], 0)
-            t_hash = t_rmsd = 0.0; t_probe = {1: 0.0, 2: 0.0}; n_probe = {1: 0, 2: 0}; probe_sizes = []
+            c = dict.fromkeys(
+                [
+                    "exact",
+                    "exact_or_offset",
+                    "probe1",
+                    "probe2",
+                    "rmsd",
+                    "flagged_split",
+                    "probe_overflow",
+                ],
+                0,
+            )
+            t_hash = t_rmsd = 0.0
+            t_probe = {1: 0.0, 2: 0.0}
+            n_probe = {1: 0, 2: 0}
+            probe_sizes = []
             for _ in range(TRIALS):
-                res, dt = timed(hash_molecule, Z, X + rng.normal(0.0, ratio * EPS, X.shape), precision=EPS)
+                res, dt = timed(
+                    hash_molecule, Z, X + rng.normal(0.0, ratio * EPS, X.shape), precision=EPS
+                )
                 t_hash += dt
                 if res.geometry_hash == ref.geometry_hash:
                     for key in ("exact", "exact_or_offset", "probe1", "probe2", "rmsd"):
@@ -107,22 +124,49 @@ def noise_panel():
                     continue
                 c["flagged_split"] += min(ref.min_margin, res.min_margin) < m
                 is_f = "|F:" in res.descriptor
-                c["exact_or_offset"] += is_f and ref_offset is not None and offset_key(res.descriptor) == ref_offset
+                c["exact_or_offset"] += (
+                    is_f and ref_offset is not None and offset_key(res.descriptor) == ref_offset
+                )
                 for j in (1, 2):
-                    probes, dt = timed(probes_or_none, res.descriptor, m, j) if is_f else (None, 0.0)
+                    probes, dt = (
+                        timed(probes_or_none, res.descriptor, m, j) if is_f else (None, 0.0)
+                    )
                     if probes is None:
                         c["probe_overflow"] += j == 2
                     else:
-                        t_probe[j] += dt; n_probe[j] += 1
+                        t_probe[j] += dt
+                        n_probe[j] += 1
                         if j == 2:
                             probe_sizes.append(len(probes))
                         c[f"probe{j}"] += ref.geometry_hash in probes
                 same, dt = timed(same_geometry, ref.descriptor, res.descriptor)
-                t_rmsd += dt; c["rmsd"] += same
+                t_rmsd += dt
+                c["rmsd"] += same
             splits = TRIALS - c["exact"]
-            row = {"name": name, "N": len(Z), "ratio": ratio, "trials": TRIALS, "probe_margin": m, "ref_min_margin": f"{ref.min_margin:.6f}", "splits": splits, **{f"match_{k}": c[k] for k in ("exact", "exact_or_offset", "probe1", "probe2", "rmsd")}, "flagged_splits": c["flagged_split"], "probe2_overflow": c["probe_overflow"], "median_probe2_keys": int(np.median(probe_sizes)) if probe_sizes else 0, "ms_per_hash": 1e3 * t_hash / TRIALS, **{f"ms_per_probe{j}_call": 1e3 * t_probe[j] / max(n_probe[j], 1) for j in (1, 2)}, "ms_per_rmsd": 1e3 * t_rmsd / max(splits, 1)}
+            row = {
+                "name": name,
+                "N": len(Z),
+                "ratio": ratio,
+                "trials": TRIALS,
+                "probe_margin": m,
+                "ref_min_margin": f"{ref.min_margin:.6f}",
+                "splits": splits,
+                **{
+                    f"match_{k}": c[k]
+                    for k in ("exact", "exact_or_offset", "probe1", "probe2", "rmsd")
+                },
+                "flagged_splits": c["flagged_split"],
+                "probe2_overflow": c["probe_overflow"],
+                "median_probe2_keys": int(np.median(probe_sizes)) if probe_sizes else 0,
+                "ms_per_hash": 1e3 * t_hash / TRIALS,
+                **{f"ms_per_probe{j}_call": 1e3 * t_probe[j] / max(n_probe[j], 1) for j in (1, 2)},
+                "ms_per_rmsd": 1e3 * t_rmsd / max(splits, 1),
+            }
             out.append(row)
-            print(f"{name:12s} N={len(Z):3d} s/e={ratio:<5g} split={splits / TRIALS:6.3f}  recovered: offset={row['match_exact_or_offset'] - c['exact']:4d} probe1={row['match_probe1'] - c['exact']:4d} probe2={row['match_probe2'] - c['exact']:4d} rmsd={row['match_rmsd'] - c['exact']:4d} of {splits:4d}  flagged={c['flagged_split']}", flush=True)
+            print(
+                f"{name:12s} N={len(Z):3d} s/e={ratio:<5g} split={splits / TRIALS:6.3f}  recovered: offset={row['match_exact_or_offset'] - c['exact']:4d} probe1={row['match_probe1'] - c['exact']:4d} probe2={row['match_probe2'] - c['exact']:4d} rmsd={row['match_rmsd'] - c['exact']:4d} of {splits:4d}  flagged={c['flagged_split']}",
+                flush=True,
+            )
     return out
 
 
@@ -134,7 +178,12 @@ def corpus_margins(path):
     for i, mol in enumerate(supp):
         if mol is None or mol.GetNumConformers() == 0 or i % QM9_STRIDE:
             continue
-        mols.append((np.array([a.GetAtomicNum() for a in mol.GetAtoms()]), mol.GetConformer().GetPositions()))
+        mols.append(
+            (
+                np.array([a.GetAtomicNum() for a in mol.GetAtoms()]),
+                mol.GetConformer().GetPositions(),
+            )
+        )
     out = []
     for precision in CORPUS_PRECISIONS:
         margins, at_risk, n_f = [], [], 0
@@ -145,9 +194,25 @@ def corpus_margins(path):
                 n_f += 1
                 fine = np.array(_parse_descriptor(res.descriptor).rows, dtype=np.int64)[:, 1:]
                 off = np.abs(fine - np.rint(fine / _FINE_FACTOR).astype(np.int64) * _FINE_FACTOR)
-                at_risk.append(int(np.sum(_FINE_FACTOR // 2 - off <= max(_FINE_MARGIN, round(0.05 * _FINE_FACTOR)))))  # boundary_probes() rule
-        margins = np.array(margins); at_risk = np.array(at_risk)
-        row = {"dataset": "QM9", "stride": QM9_STRIDE, "precision": precision, "geometries": len(mols), "F": n_f, **{f"frac_min_margin_below_{m:g}": float(np.mean(margins < m)) for m in CORPUS_MARGINS}, "median_values_within_0.05": float(np.median(at_risk)), "median_probe2_keys_at_0.05": float(np.median([k + math.comb(k, 2) for k in at_risk]))}
+                at_risk.append(
+                    int(
+                        np.sum(
+                            _FINE_FACTOR // 2 - off <= max(_FINE_MARGIN, round(0.05 * _FINE_FACTOR))
+                        )
+                    )
+                )  # boundary_probes() rule
+        margins = np.array(margins)
+        at_risk = np.array(at_risk)
+        row = {
+            "dataset": "QM9",
+            "stride": QM9_STRIDE,
+            "precision": precision,
+            "geometries": len(mols),
+            "F": n_f,
+            **{f"frac_min_margin_below_{m:g}": float(np.mean(margins < m)) for m in CORPUS_MARGINS},
+            "median_values_within_0.05": float(np.median(at_risk)),
+            "median_probe2_keys_at_0.05": float(np.median([k + math.comb(k, 2) for k in at_risk])),
+        }
         out.append(row)
         print(row, flush=True)
     return out
@@ -156,7 +221,9 @@ def corpus_margins(path):
 def write(rows, stem):
     path = os.path.join(_here, f"{stem}.csv")
     with open(path, "w", newline="") as handle:
-        w = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n"); w.writeheader(); w.writerows(rows)
+        w = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
     print(f"wrote {path}")
 
 
