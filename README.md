@@ -139,8 +139,10 @@ the identifiers support:
 - ML potential datasets  
 - LLM scientific agents  
 
-Version 0.16.1 keeps descriptor version `12.0` and every identifier; it
-tightens input validation and error messages. Version 0.16.0 introduced
+Version 0.17.0 keeps descriptor version `12.0` and every identifier; it adds
+`min_margin`, `boundary_probes` and `same_geometry` for matching across
+rounding boundaries (see [Near-boundary matching](#near-boundary-matching)).
+Version 0.16.1 tightened input validation and error messages. Version 0.16.0 introduced
 descriptor version `12.0`. It fixes two invariance bugs:
 short linear molecules far from the origin, and a single atom away from the
 origin at very fine precision, could get a position-dependent identifier.
@@ -189,6 +191,51 @@ exact. `D` descriptors hold distances, not coordinates; keep their source
 geometry if coordinates are needed. Stored descriptors of versions 5–10
 (including their `C` and RDKit `S` forms) still re-hash to their original
 digests.
+
+## Near-boundary matching
+
+An exact hash splits two copies of a geometry when noise moves a hashed value
+across a rounding boundary. Three helpers handle such splits on the lookup
+side; none of them changes an identifier.
+
+```python
+from hashmol3d import boundary_probes, same_geometry
+
+res.min_margin  # nearest hashed value to a boundary, in grid cells (0 to 0.5)
+
+hit = store.get(query.geometry_hash)
+if hit is None:  # look up the neighboring cells of near-boundary values
+    for key in boundary_probes(query.descriptor, margin=0.1, max_flips=2):
+        if key in store and same_geometry(store[key], query.descriptor):
+            hit = store[key]
+            break
+```
+
+`boundary_probes` reads the at-risk values from the stored `F` rows, so it
+needs no source geometry. `same_geometry` compares two stored descriptors,
+first by hashed payload and then by RMSD of their canonical-frame coordinates
+(tolerance: the precision). Probes recover coordinate-bin flips and the
+axis-sign changes they cause, not changes of principal axes, frame branch or
+anchor. On the ten reference geometries of the
+paper's noise study (500 perturbations each, 10⁻⁴ Å), probes with up to two
+flipped values found the reference for 77 %, 69 % and 31 % of the split
+copies at σ/ε = 0.01, 0.03 and 0.1 (`paper/analysis_boundary.py`). A
+second hash on a half-cell offset grid recovered only 20 %, 5 % and 0.1 %,
+because a molecule is rarely clear of the boundaries of either grid in all
+3N values at once.
+On all 133,885 QM9 geometries at 10⁻², 10⁻³ and 10⁻⁴ Å, 64–66 % have a
+value within 0.01 of a cell of a boundary and 99 % within 0.05, so nearly every
+identifier has some near-boundary value; the median count within 0.05 is 5,
+or 15 probes with up to two flips. For the 108,541 larger tmQM complexes these
+are 95 %, 99.97 % and 19 values (190 probes).
+
+The default `rmsd_tol` is the precision, and it merges distinct geometries
+within that RMSD: at 10⁻² Å it accepts every pair of consecutive MD17 benzene
+frames and 20 % of aspirin frames. On 33,000 MD17 pairs stepped to RMSDs of
+0.25–4 times the precision (and random QM9 isomers), `same_geometry` accepted
+exactly the pairs whose RMSD was within the tolerance, while equal hashes
+caught at most 2 % of them. Pass a smaller `rmsd_tol` where nearby frames must
+stay apart.
 
 ## Descriptor tags
 
@@ -254,7 +301,7 @@ Arbitrary RDKit readers can feed `hash_rdkit` directly. See the
 ## Install
 
 HashMol3D needs Python ≥ 3.8 and NumPy; RDKit (2023.9.6 or newer) is an
-optional extra. Install 0.16.1 from source: the release on PyPI is older
+optional extra. Install 0.17.0 from source: the release on PyPI is older
 (0.9.x), uses an earlier descriptor version and therefore different
 identifiers, and lacks `hash_descriptor`, `descriptor_geometry` and the RDKit
 adapters.

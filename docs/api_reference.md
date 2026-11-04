@@ -104,6 +104,17 @@ back to the distance method.
   back to `precision`
   ([specification §6](specification.md#6-canonical-descriptor-string)).
   Re-hash it with `hash_descriptor`.
+- `min_margin`: the distance, in grid cells (0 to 0.5), of the hashed value
+  nearest to a rounding boundary: a canonical-frame coordinate on the `F`
+  path, a distance on the `D` path. A perturbation must move some value by
+  at least this much to change a coordinate or distance bin, so a small
+  margin marks an identifier that noise can easily split (see
+  [`boundary_probes`](#boundary_probesdescriptor--margin01-max_flips2-lengthnone-max_keys10000)).
+  Changes of the principal axes, frame branch or anchor have thresholds of
+  their own, which it does not cover. It describes the input rather than the
+  identifier (a rigid motion changes its last digits), so it is excluded
+  from result equality and hashing. `None` only for a result constructed
+  by hand.
 
 `str(result)` returns `result.hash_str`.
 
@@ -173,6 +184,76 @@ z2, coords2 = descriptor_geometry(res.descriptor)
 assert hash_molecule(z2, coords2).hash_str == res.hash_str
 ```
 
+## `boundary_probes(descriptor, *, margin=0.1, max_flips=2, length=None, max_keys=10000)`
+
+Return the geometry hashes of the grid cells next to a current-version `F`
+descriptor. Noise splits two copies of a geometry when it moves a few frame
+coordinates across rounding boundaries. The stored rows record each value's
+position within its cell, so the values within `margin` grid cells of a
+boundary are known from the descriptor alone. The probes are the geometry
+hashes obtained by moving every combination of at most `max_flips` of those
+values into the neighboring cell, re-canonicalized as `hash_molecule` does.
+`margin` is inclusive and rounded to the stored fine grid (10⁻⁴ of a cell);
+values closer than 3·10⁻⁴ of a cell to a boundary are stored at that distance
+and are probed for every positive `margin`. With `k` values within the
+margin there are `sum(comb(k, i) for i in 1..max_flips)` flip combinations,
+which `max_keys` bounds; that is an upper bound on the number of probes,
+since the descriptor's own hash and duplicates are left out.
+
+A cache that misses on a key can also look up its probes, then confirm any
+hit with `same_geometry`. Choose `margin` as a few times the expected
+coordinate noise divided by the precision. Probes recover coordinate-bin
+changes, including the axis-sign changes they cause (each probe is
+re-canonicalized over all axis signs). Noise that rotates the principal axes
+enough to move values far from the boundaries, or changes the frame branch or
+an anchor, changes the whole frame, and no probe matches it.
+
+Raises `ValueError` for a `D` (or `C`) descriptor, whose stored distances do
+not record their position within a cell; for a descriptor of another
+version; for an invalid descriptor or option (`margin` in `(0, 0.5]`,
+positive integer `max_flips` and `max_keys`, `length` as for
+`hash_molecule`); or when the flip combinations would exceed `max_keys`.
+
+## `same_geometry(a, b, *, rmsd_tol=None)`
+
+Return whether two stored descriptors at the same precision describe the
+same geometry. Equal hashed payloads always do. Otherwise two `F`
+descriptors do if their stored canonical-frame coordinates (kept to 10⁻⁴ of
+a grid cell) superimpose within `rmsd_tol` Å, minimizing over rotations,
+reflections and element-preserving atom correspondences. `rmsd_tol` defaults
+to the precision: geometries with equal hashes can already differ by up to
+half a cell in every coordinate. Unequal `D` (or `C`) descriptors store no
+coordinates and return `False`.
+
+The correspondence search tries the canonical row order, greedy nearest-pair
+matches after each axis-sign flip and, when two principal moments are
+degenerate or near the frame method's threshold, after 15° rotations about
+the remaining axis (two frames of such a geometry can differ by any angle
+about it). The RMSD it finds is an upper bound: `True` always means some
+superposition is within `rmsd_tol`. Frames of spherical tops, whose three
+moments are degenerate, can differ by rotations it does not try, and such
+matches can be missed. Time and memory are
+quadratic in the largest number of atoms of one element; use it to confirm
+candidates, not to compare a corpus pairwise.
+
+Raises `ValueError` for an invalid descriptor, for descriptors at different
+precisions, or for an `rmsd_tol` that is not a positive finite number.
+
+```python
+from hashmol3d import boundary_probes, hash_molecule, same_geometry
+
+res = hash_molecule(z, coords)
+store = {res.geometry_hash: res.descriptor}
+
+query = hash_molecule(z, noisy_coords)
+hit = store.get(query.geometry_hash)
+if hit is None:
+    for key in boundary_probes(query.descriptor, margin=0.1):
+        if key in store and same_geometry(store[key], query.descriptor):
+            hit = store[key]
+            break
+```
+
 ## `hash_xyz(path, **kwargs)`
 
 Convenience wrapper that reads an XYZ file and forwards the keyword
@@ -236,7 +317,7 @@ are the geometry-only `hash_molecule` results described above.
   It is not hashed; a new major version accompanies any change that can alter
   a geometry hash.
 - `DEFAULT_LENGTH`: default geometry-hash length in hex characters (`32`).
-- `__version__`: the package version (`"0.16.1"`).
+- `__version__`: the package version (`"0.17.0"`).
 
 ## Deprecated
 
