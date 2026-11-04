@@ -17,19 +17,38 @@ lookup-side helpers recover such splits without changing any identifier:
      and whether either side has min_margin below the probe margin. Timings
      are per call.
 
-  B. Corpus margins (optional; needs $HM3D_DATA/gdb9.sdf). For QM9 at several
-     precisions, the fraction of geometries whose min_margin is below each
-     margin, and the number of values within the probe margin, which sets
-     the probe-set size.
+  B. Corpus margins (needs $HM3D_DATA/gdb9.sdf and/or tmQM_X{1,2,3}.xyz.gz).
+     For QM9 and tmQM at several precisions, the fraction of geometries whose
+     min_margin is below each margin, and the number of values within the
+     probe margin, which sets the probe-set size.
 
-Outputs: boundary_matching.csv and, with QM9, boundary_margin_corpus.csv.
-HM3D_TRIALS (default 500) sets trials per point; HM3D_QM9_STRIDE (default 1)
-subsamples QM9. All randomness is seeded.
+  C. False merges (needs $HM3D_DATA/md17_*.npz and gdb9.sdf). same_geometry()
+     with its default tolerance accepts two distinct geometries whenever their
+     RMSD is within the precision. MD17 frames keep one atom order, so the
+     exact optimal RMSD of two frames (rotations and reflections, identity
+     correspondence) is known. Even consecutive frames are ~0.01 A apart,
+     beyond every tolerance here, so pairs near the tolerance are made by
+     stepping from a frame toward the next one until the exact RMSD is a given
+     multiple of the precision (RMSD_RATIOS); consecutive frames ("lag1") are
+     kept for context. For each pair and precision, record whether the hashes
+     are equal, whether same_geometry() accepts the pair, the exact RMSD, and
+     the RMSD upper bound it found. An acceptance with exact RMSD above the
+     tolerance would be a false merge; a rejection with exact RMSD within it is
+     a match missed by the correspondence heuristic. Random pairs of QM9
+     constitutional isomers (same formula) check the far end.
+
+Outputs: boundary_matching.csv (A), boundary_margin_corpus.csv (B) and
+boundary_false_merges.csv (C). HM3D_PARTS (default "ABC") selects parts;
+HM3D_TRIALS (default 500) sets trials per point; HM3D_QM9_STRIDE and
+HM3D_TMQM_STRIDE (default 1) subsample the corpora; HM3D_PAIRS (default 500)
+sets start frames per MD17 trajectory. Missing datasets are skipped. All randomness is
+seeded.
 """
 
 from __future__ import annotations
 
 import csv
+import gzip
 import math
 import os
 import sys
@@ -41,8 +60,22 @@ import numpy as np
 _here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_here, "..", "src"))
 
-from hashmol3d import __version__, boundary_probes, hash_molecule, same_geometry
-from hashmol3d.core import _ALL_AXIS_SIGNS, _FINE_FACTOR, _FINE_MARGIN, _parse_descriptor
+from hashmol3d import (
+    __version__,
+    boundary_probes,
+    hash_descriptor,
+    hash_molecule,
+    same_geometry,
+)
+from hashmol3d.core import (
+    _ALL_AXIS_SIGNS,
+    _FINE_DIGITS,
+    _FINE_FACTOR,
+    _FINE_MARGIN,
+    _parse_descriptor,
+    _rmsd_upper_bound,
+)
+from hashmol3d.periodic_table import get_atomic_num
 
 EPS = 1e-4
 RATIOS = (0.01, 0.03, 0.1)
@@ -50,6 +83,13 @@ TRIALS = int(os.environ.get("HM3D_TRIALS", "500"))
 PANEL = os.environ.get("HM3D_NOISE_PANEL", os.path.join(_here, "noise_panel.npz"))
 DATA = os.environ.get("HM3D_DATA", "/tmp/datasets")
 QM9_STRIDE = int(os.environ.get("HM3D_QM9_STRIDE", "1"))
+TMQM_STRIDE = int(os.environ.get("HM3D_TMQM_STRIDE", "1"))
+TMQM_FILES = ("tmQM_X1.xyz.gz", "tmQM_X2.xyz.gz", "tmQM_X3.xyz.gz")
+PARTS = os.environ.get("HM3D_PARTS", "ABC")
+PAIRS = int(os.environ.get("HM3D_PAIRS", "500"))
+MD17 = ("aspirin", "benzene2017", "ethanol")
+# Exact RMSD of the synthetic MD17 pairs, in units of the precision.
+RMSD_RATIOS = (0.25, 0.5, 0.9, 1.1, 2.0, 4.0)
 CORPUS_PRECISIONS = (1e-2, 1e-3, 1e-4)
 CORPUS_MARGINS = (0.01, 0.05, 0.1)
 rng = np.random.default_rng(20261103)
@@ -170,20 +210,47 @@ def noise_panel():
     return out
 
 
-def corpus_margins(path):
+def load_qm9(path):
     from rdkit import Chem
 
     supp = Chem.SDMolSupplier(path, removeHs=False, sanitize=False)
-    mols = []
-    for i, mol in enumerate(supp):
-        if mol is None or mol.GetNumConformers() == 0 or i % QM9_STRIDE:
-            continue
-        mols.append(
-            (
+    for mol in supp:
+        if mol is not None and mol.GetNumConformers():
+            yield (
                 np.array([a.GetAtomicNum() for a in mol.GetAtoms()]),
                 mol.GetConformer().GetPositions(),
             )
-        )
+
+
+def load_tmqm(paths):
+    """tmQM multi-structure XYZ, as read by the paper's analysis_panel.py."""
+    for path in paths:
+        with gzip.open(path, "rt") as f:
+            while True:
+                head = f.readline()
+                if not head:
+                    break
+                if not head.strip():
+                    continue
+                n = int(head.split()[0])
+                f.readline()  # CSD code, charge, spin
+                Z = np.empty(n, dtype=int)
+                X = np.empty((n, 3))
+                for i in range(n):
+                    sym, x, y, z = f.readline().split()[:4]
+                    Z[i] = get_atomic_num(sym)
+                    X[i] = (float(x), float(y), float(z))
+                yield Z, X
+
+
+def at_risk_count(descriptor, margin):
+    """Values within ``margin`` grid cells of a boundary, by the boundary_probes() rule."""
+    fine = np.array(_parse_descriptor(descriptor).rows, dtype=np.int64)[:, 1:]
+    off = np.abs(fine - np.rint(fine / _FINE_FACTOR).astype(np.int64) * _FINE_FACTOR)
+    return int(np.sum(_FINE_FACTOR // 2 - off <= max(_FINE_MARGIN, round(margin * _FINE_FACTOR))))
+
+
+def corpus_margins(dataset, mols, stride):
     out = []
     for precision in CORPUS_PRECISIONS:
         margins, at_risk, n_f = [], [], 0
@@ -192,20 +259,11 @@ def corpus_margins(path):
             margins.append(res.min_margin)
             if "|F:" in res.descriptor:
                 n_f += 1
-                fine = np.array(_parse_descriptor(res.descriptor).rows, dtype=np.int64)[:, 1:]
-                off = np.abs(fine - np.rint(fine / _FINE_FACTOR).astype(np.int64) * _FINE_FACTOR)
-                at_risk.append(
-                    int(
-                        np.sum(
-                            _FINE_FACTOR // 2 - off <= max(_FINE_MARGIN, round(0.05 * _FINE_FACTOR))
-                        )
-                    )
-                )  # boundary_probes() rule
+                at_risk.append(at_risk_count(res.descriptor, 0.05))
         margins = np.array(margins)
-        at_risk = np.array(at_risk)
         row = {
-            "dataset": "QM9",
-            "stride": QM9_STRIDE,
+            "dataset": dataset,
+            "stride": stride,
             "precision": precision,
             "geometries": len(mols),
             "F": n_f,
@@ -216,6 +274,119 @@ def corpus_margins(path):
         out.append(row)
         print(row, flush=True)
     return out
+
+
+def exact_rmsd(a, b):
+    """Optimal RMSD over rotations and reflections, for a known correspondence."""
+    a = a - a.mean(axis=0)
+    b = b - b.mean(axis=0)
+    u, _, vt = np.linalg.svd(a.T @ b)
+    return float(np.sqrt(np.mean(np.sum((a @ (u @ vt) - b) ** 2, axis=1))))
+
+
+def stored_coords(descriptor):
+    parsed = _parse_descriptor(descriptor)
+    rows = np.array(parsed.rows, dtype=np.int64)
+    return rows[:, 0], rows[:, 1:] / 10.0 ** (parsed.decimals + _FINE_DIGITS)
+
+
+def pair_row(source, kind, precision, Z, Xa, Xb):
+    a = hash_molecule(Z, Xa, precision=precision)
+    b = hash_molecule(Z, Xb, precision=precision)
+    bound = float("nan")
+    if "|F:" in a.descriptor and "|F:" in b.descriptor:
+        za, ca = stored_coords(a.descriptor)
+        bound = _rmsd_upper_bound(za, ca, stored_coords(b.descriptor)[1])
+    return {
+        "source": source,
+        "kind": kind,
+        "precision": precision,
+        "equal_hash": a.geometry_hash == b.geometry_hash,
+        "accepted": same_geometry(a.descriptor, b.descriptor),
+        "exact_rmsd": exact_rmsd(Xa, Xb),
+        "bound_rmsd": bound,
+    }
+
+
+def false_merges():
+    pairs = []
+    for name in MD17:
+        path = os.path.join(DATA, f"md17_{name}.npz")
+        if not os.path.exists(path):
+            print(f"skipping {path}: not found")
+            continue
+        d = np.load(path)
+        Z, R = np.asarray(d["z"], dtype=int), np.asarray(d["R"], dtype=float)
+        starts = rng.choice(R.shape[0] - 1, size=PAIRS, replace=False)
+        for precision in CORPUS_PRECISIONS:
+            for i in starts:
+                Xa, step = R[i], R[i + 1] - R[i]
+                pairs.append(pair_row(f"MD17:{name}", "lag1", precision, Z, Xa, Xa + step))
+                full = exact_rmsd(Xa, Xa + step)
+                for c in RMSD_RATIOS:
+                    # The RMSD of a short step along a fixed direction is linear in its length.
+                    Xb = Xa + step * (c * precision / full)
+                    pairs.append(pair_row(f"MD17:{name}", f"rmsd_{c:g}eps", precision, Z, Xa, Xb))
+    qm9 = os.path.join(DATA, "gdb9.sdf")
+    if os.path.exists(qm9):
+        by_formula = {}
+        for Z, X in load_qm9(qm9):
+            by_formula.setdefault(tuple(sorted(Z)), []).append((Z, X))
+        groups = [g for g in by_formula.values() if len(g) > 1]
+        for _ in range(PAIRS):
+            g = groups[rng.integers(len(groups))]
+            i, j = rng.choice(len(g), size=2, replace=False)
+            (Za, Xa), (Zb, Xb) = g[i], g[j]
+            for precision in CORPUS_PRECISIONS:
+                a = hash_molecule(Za, Xa, precision=precision).descriptor
+                b = hash_molecule(Zb, Xb, precision=precision).descriptor
+                bound = float("nan")
+                if "|F:" in a and "|F:" in b:
+                    za, ca = stored_coords(a)
+                    bound = _rmsd_upper_bound(za, ca, stored_coords(b)[1])
+                # Isomers have no common atom order, so no exact RMSD.
+                pairs.append(
+                    {
+                        "source": "QM9:isomers",
+                        "kind": "random",
+                        "precision": precision,
+                        "equal_hash": hash_descriptor(a) == hash_descriptor(b),
+                        "accepted": same_geometry(a, b),
+                        "exact_rmsd": float("nan"),
+                        "bound_rmsd": bound,
+                    }
+                )
+    summary = []
+    keys = list(dict.fromkeys((r["source"], r["kind"], r["precision"]) for r in pairs))
+    for source, kind, precision in keys:
+        rows = [
+            r
+            for r in pairs
+            if r["source"] == source and r["kind"] == kind and r["precision"] == precision
+        ]
+        exact = np.array([r["exact_rmsd"] for r in rows])
+        bound = np.array([r["bound_rmsd"] for r in rows])
+        acc = np.array([r["accepted"] for r in rows])
+        row = {
+            "source": source,
+            "kind": kind,
+            "precision": precision,
+            "pairs": len(rows),
+            "equal_hash": sum(r["equal_hash"] for r in rows),
+            "accepted": int(acc.sum()),
+            "exact_rmsd_median": float(np.nanmedian(exact)) if np.isfinite(exact).any() else "",
+            "exact_within_tol": int(np.sum(exact <= precision)),
+            # Acceptance beyond the tolerance; the stored rows carry 1e-4 cell of rounding.
+            "accepted_exact_above_tol": int(np.sum(acc & (exact > precision * (1 + 1e-3)))),
+            "missed_exact_within_tol": int(np.sum(~acc & (exact <= precision * (1 - 1e-3)))),
+            "bound_rmsd_min": float(np.nanmin(bound)) if np.isfinite(bound).any() else "",
+            "bound_over_exact_max": float(np.nanmax(bound / exact))
+            if np.isfinite(exact).any()
+            else "",
+        }
+        summary.append(row)
+        print(row, flush=True)
+    return summary
 
 
 def write(rows, stem):
@@ -229,9 +400,21 @@ def write(rows, stem):
 
 if __name__ == "__main__":
     print(f"HashMol3D {__version__}; trials per point: {TRIALS}")
-    write(noise_panel(), "boundary_matching")
-    qm9 = os.path.join(DATA, "gdb9.sdf")
-    if os.path.exists(qm9):
-        write(corpus_margins(qm9), "boundary_margin_corpus")
-    else:
-        print(f"skipping corpus margins: {qm9} not found")
+    if "A" in PARTS:
+        write(noise_panel(), "boundary_matching")
+    if "B" in PARTS:
+        corpus = []
+        qm9 = os.path.join(DATA, "gdb9.sdf")
+        if os.path.exists(qm9):
+            mols = [m for i, m in enumerate(load_qm9(qm9)) if i % QM9_STRIDE == 0]
+            corpus += corpus_margins("QM9", mols, QM9_STRIDE)
+        tmqm = [os.path.join(DATA, f) for f in TMQM_FILES]
+        if all(os.path.exists(p) for p in tmqm):
+            mols = [m for i, m in enumerate(load_tmqm(tmqm)) if i % TMQM_STRIDE == 0]
+            corpus += corpus_margins("tmQM", mols, TMQM_STRIDE)
+        if corpus:
+            write(corpus, "boundary_margin_corpus")
+        else:
+            print(f"skipping corpus margins: no datasets in {DATA}")
+    if "C" in PARTS:
+        write(false_merges(), "boundary_false_merges")

@@ -226,7 +226,16 @@ because a molecule is rarely clear of the boundaries of either grid in all
 On all 133,885 QM9 geometries at 10⁻², 10⁻³ and 10⁻⁴ Å, 64–66 % have a
 value within 0.01 of a cell of a boundary and 99 % within 0.05, so nearly every
 identifier has some near-boundary value; the median count within 0.05 is 5,
-or 15 probes with up to two flips.
+or 15 probes with up to two flips. For the 108,541 larger tmQM complexes these
+are 95 %, 99.97 % and 19 values (190 probes).
+
+The default `rmsd_tol` is the precision, and it merges distinct geometries
+within that RMSD: at 10⁻² Å it accepts every pair of consecutive MD17 benzene
+frames and 20 % of aspirin frames. On 33,000 MD17 pairs stepped to RMSDs of
+0.25–4 times the precision (and random QM9 isomers), `same_geometry` accepted
+exactly the pairs whose RMSD was within the tolerance, while equal hashes
+caught at most 2 % of them. Pass a smaller `rmsd_tol` where nearby frames must
+stay apart.
 
 ## Descriptor tags
 

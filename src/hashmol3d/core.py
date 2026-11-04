@@ -227,6 +227,12 @@ _FRAME_ANCHOR_MIN_GRID = 1.0
 # the canonical distance fallback.
 _FRAME_CANDIDATE_BUDGET = 10_000
 
+# same_geometry() tries rotations about the isolated principal axis in steps
+# of 360 / _ANCHOR_TURNS degrees when the other two moments are degenerate or
+# near-degenerate (relative gap below twice _FRAME_GAP_MIN), where two
+# canonical frames of one geometry can differ by any such rotation.
+_ANCHOR_TURNS = 24
+
 
 def hash_length_for(n_items: int, target_prob: float = 1e-9) -> int:
     """Hash length (hex chars) keeping collision risk below ``target_prob``.
@@ -1804,17 +1810,43 @@ def _rmsd_upper_bound(z: np.ndarray, a: np.ndarray, b: np.ndarray, stop: float =
     The bound is the minimum over correspondences that preserve elements and
     over orthogonal maps. Candidate correspondences are the given order
     (canonical rows, sorted by element) and greedy nearest-pair matches after
-    each axis-sign flip of ``b``, refined once after alignment. Search stops
-    early once a candidate is at most ``stop``.
+    each axis-sign flip of ``b``, refined once after alignment. If two
+    principal moments of ``a`` are degenerate or near the frame method's
+    degeneracy threshold, two canonical frames of one geometry can also
+    differ by any rotation about the remaining axis (their anchors, or their
+    frame branches, can differ), so rotations about it in ``_ANCHOR_TURNS``
+    steps are tried next. Search stops early once a candidate is at most ``stop``.
     """
     a = a - a.mean(axis=0)
     b = b - b.mean(axis=0)
     best, _ = _kabsch_rmsd(a, b)
     groups = [np.flatnonzero(z == v) for v in np.unique(z)]
-    for signs in _ALL_AXIS_SIGNS:
+
+    def starts():
+        for signs in _ALL_AXIS_SIGNS:
+            yield np.diag(np.asarray(signs, dtype=float))
+        w = z.astype(float)
+        lam, vec = np.linalg.eigh((a * w[:, None]).T @ a)
+        if not lam[2] > 0.0:
+            return
+        gap0, gap1 = (lam[1] - lam[0]) / lam[2], (lam[2] - lam[1]) / lam[2]
+        # Near the threshold, too: the other copy can fall on either side of
+        # it, and pick principal axes where this one anchors (or vice versa).
+        if min(gap0, gap1) >= 2.0 * _FRAME_GAP_MIN:
+            return
+        u = vec[:, 2] if gap0 < gap1 else vec[:, 0]
+        cross = np.array([[0.0, -u[2], u[1]], [u[2], 0.0, -u[0]], [-u[1], u[0], 0.0]])
+        for k in range(1, _ANCHOR_TURNS):
+            t = 2.0 * np.pi * k / _ANCHOR_TURNS
+            # Rodrigues: rotation by t about u, applied to row vectors.
+            rot = np.eye(3) + np.sin(t) * cross + (1.0 - np.cos(t)) * cross @ cross
+            for signs in _ALL_AXIS_SIGNS:
+                yield np.diag(np.asarray(signs, dtype=float)) @ rot.T
+
+    for start in starts():
         if best <= stop:
             break
-        target = b * np.asarray(signs, dtype=float)
+        target = b @ start
         for _ in range(2):
             perm = _matched(a, target, groups)
             rmsd, r = _kabsch_rmsd(a, b[perm])
@@ -1837,9 +1869,13 @@ def same_geometry(a: str, b: str, *, rmsd_tol: float | None = None) -> bool:
     coordinates are kept to ``10**-4`` of a grid cell.
 
     The correspondence search is heuristic, so the RMSD it finds is an upper
-    bound: ``True`` always means some superposition is within ``rmsd_tol``,
-    but distant frames (for example after an anchor change in a highly
-    symmetric molecule) can be missed. Matching costs time and memory
+    bound: ``True`` always means some superposition is within ``rmsd_tol``.
+    It tries the canonical row order, greedy nearest-pair matches after each
+    axis-sign flip and, when two principal moments are degenerate or near
+    the frame method's threshold, after rotations about the remaining axis,
+    where two frames of one geometry can differ by any angle. Frames of
+    spherical tops (all moments degenerate) can still differ by rotations it
+    does not try, and such matches can be missed. Matching costs time and memory
     quadratic in the largest number of atoms of one element; use it to
     confirm candidates, not to compare a corpus pairwise.
 

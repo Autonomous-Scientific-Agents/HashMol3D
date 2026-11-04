@@ -249,3 +249,38 @@ def test_rmsd_bound_finds_permuted_reflected_copies(cloud):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert core._rmsd_upper_bound(z, coords, other) < 1e-9
+
+
+# Two consecutive frames (193806, 193807) of the MD17 benzene trajectory
+# (benzene2017). Their in-plane moments sit at the frame method's degeneracy
+# threshold, so at 0.01 A nearby geometries take different frame branches.
+_MD17_BENZENE = np.array(
+    [
+        [[-67.5023, 75.666, -64.5268], [-67.5024, 75.6665, -64.5285]],
+        [[-68.9003, 75.584, -64.811], [-68.902, 75.5853, -64.8116]],
+        [[-69.851, 76.199, -64.0271], [-69.8501, 76.1998, -64.0273]],
+        [[-69.4266, 76.9283, -62.9107], [-69.4279, 76.9283, -62.9114]],
+        [[-68.0024, 77.1044, -62.6214], [-68.0034, 77.1034, -62.6206]],
+        [[-67.0836, 76.4881, -63.4699], [-67.0829, 76.4888, -63.4697]],
+        [[-66.7814, 75.0729, -65.0733], [-66.7779, 75.0743, -65.0767]],
+        [[-69.3149, 75.2451, -65.7169], [-69.3172, 75.2481, -65.7184]],
+        [[-70.9034, 76.1329, -64.2345], [-70.8959, 76.1359, -64.2322]],
+        [[-70.1383, 77.4893, -62.2956], [-70.1386, 77.4916, -62.2937]],
+        [[-67.7037, 77.8233, -61.8676], [-67.7057, 77.8206, -61.8651]],
+        [[-65.9802, 76.5922, -63.3149], [-65.9855, 76.5922, -63.3181]],
+    ]
+)
+
+
+@pytest.mark.parametrize("fraction", [0.5, 0.9])
+def test_frames_across_the_degeneracy_threshold_are_matched(fraction):
+    # Two canonical frames of one geometry can differ by any rotation about
+    # the isolated axis near the threshold, which no axis-sign flip undoes.
+    z = np.array([6] * 6 + [1] * 6)
+    xa, step = _MD17_BENZENE[:, 0], _MD17_BENZENE[:, 1] - _MD17_BENZENE[:, 0]
+    full = core._kabsch_rmsd(xa - xa.mean(axis=0), xa + step - (xa + step).mean(axis=0))[0]
+    xb = xa + step * (fraction * 0.01 / full)  # exact RMSD: fraction * precision
+    a = hash_molecule(z, xa, precision=0.01).descriptor
+    b = hash_molecule(z, xb, precision=0.01).descriptor
+    assert same_geometry(a, b)
+    assert not same_geometry(a, b, rmsd_tol=0.99 * fraction * 0.01)

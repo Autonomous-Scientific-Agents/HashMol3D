@@ -225,11 +225,14 @@ to the precision: geometries with equal hashes can already differ by up to
 half a cell in every coordinate. Unequal `D` (or `C`) descriptors store no
 coordinates and return `False`.
 
-The correspondence search tries the canonical row order and greedy
-nearest-pair matches after each axis-sign flip, so the RMSD it finds is an
-upper bound: `True` always means some superposition is within `rmsd_tol`,
-while frames that differ by a large rotation (an anchor change in a highly
-symmetric molecule, for example) can be missed. Time and memory are
+The correspondence search tries the canonical row order, greedy nearest-pair
+matches after each axis-sign flip and, when two principal moments are
+degenerate or near the frame method's threshold, after 15° rotations about
+the remaining axis (two frames of such a geometry can differ by any angle
+about it). The RMSD it finds is an upper bound: `True` always means some
+superposition is within `rmsd_tol`. Frames of spherical tops, whose three
+moments are degenerate, can differ by rotations it does not try, and such
+matches can be missed. Time and memory are
 quadratic in the largest number of atoms of one element; use it to confirm
 candidates, not to compare a corpus pairwise.
 
