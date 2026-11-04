@@ -110,8 +110,8 @@ back to the distance method.
   at least this much to change a coordinate or distance bin, so a small
   margin marks an identifier that noise can easily split (see
   [`boundary_probes`](#boundary_probesdescriptor--margin01-max_flips2-lengthnone-max_keys10000)).
-  Frame-branch, anchor and sign decisions have boundaries of their own,
-  which it does not cover. It describes the input rather than the
+  Changes of the principal axes, frame branch or anchor have thresholds of
+  their own, which it does not cover. It describes the input rather than the
   identifier (a rigid motion changes its last digits), so it is excluded
   from result equality and hashing. `None` only for a result constructed
   by hand.
@@ -193,21 +193,26 @@ position within its cell, so the values within `margin` grid cells of a
 boundary are known from the descriptor alone. The probes are the geometry
 hashes obtained by moving every combination of at most `max_flips` of those
 values into the neighboring cell, re-canonicalized as `hash_molecule` does.
-With `k` values within the margin there are
-`sum(comb(k, i) for i in 1..max_flips)` probes; the descriptor's own hash
-and duplicates are left out.
+`margin` is inclusive and rounded to the stored fine grid (10⁻⁴ of a cell);
+values closer than 3·10⁻⁴ of a cell to a boundary are stored at that distance
+and are probed for every positive `margin`. With `k` values within the
+margin there are `sum(comb(k, i) for i in 1..max_flips)` flip combinations,
+which `max_keys` bounds; that is an upper bound on the number of probes,
+since the descriptor's own hash and duplicates are left out.
 
 A cache that misses on a key can also look up its probes, then confirm any
 hit with `same_geometry`. Choose `margin` as a few times the expected
 coordinate noise divided by the precision. Probes recover coordinate-bin
-changes only: noise that changes the frame branch, an anchor or a sign
-choice changes the whole frame, and no probe matches it.
+changes, including the axis-sign changes they cause (each probe is
+re-canonicalized over all axis signs). Noise that rotates the principal axes
+enough to move values far from the boundaries, or changes the frame branch or
+an anchor, changes the whole frame, and no probe matches it.
 
 Raises `ValueError` for a `D` (or `C`) descriptor, whose stored distances do
 not record their position within a cell; for a descriptor of another
 version; for an invalid descriptor or option (`margin` in `(0, 0.5]`,
 positive integer `max_flips` and `max_keys`, `length` as for
-`hash_molecule`); or when the probes would exceed `max_keys`.
+`hash_molecule`); or when the flip combinations would exceed `max_keys`.
 
 ## `same_geometry(a, b, *, rmsd_tol=None)`
 

@@ -214,8 +214,9 @@ if hit is None:  # look up the neighboring cells of near-boundary values
 `boundary_probes` reads the at-risk values from the stored `F` rows, so it
 needs no source geometry. `same_geometry` compares two stored descriptors,
 first by hashed payload and then by RMSD of their canonical-frame coordinates
-(tolerance: the precision). Probes recover coordinate-bin flips, not changes
-of frame branch, anchor or sign. On the ten reference geometries of the
+(tolerance: the precision). Probes recover coordinate-bin flips and the
+axis-sign changes they cause, not changes of principal axes, frame branch or
+anchor. On the ten reference geometries of the
 paper's noise study (500 perturbations each, 10⁻⁴ Å), probes with up to two
 flipped values found the reference for 77 %, 69 % and 31 % of the split
 copies at σ/ε = 0.01, 0.03 and 0.1 (`paper/analysis_boundary.py`). A

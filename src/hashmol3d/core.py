@@ -1675,8 +1675,11 @@ def boundary_probes(
     look up these keys as well, and confirm any hit with
     :func:`same_geometry`.
 
-    The probes recover coordinate-bin changes only. A perturbation that
-    changes the frame branch, an anchor, or the sign choice changes the
+    The probes recover coordinate-bin changes, including the axis-sign
+    changes they cause: each probe is re-canonicalized over all axis signs,
+    and the sign choice depends only on the hashed rows. A perturbation that
+    rotates the principal axes enough to move values far from the
+    boundaries, or that changes the frame branch or an anchor, changes the
     frame itself, and no probe matches it. The descriptor's own hash is not
     included; neither are duplicates.
 
@@ -1684,21 +1687,27 @@ def boundary_probes(
         descriptor: a current-version stored descriptor with an ``F``
             section, such as ``result.descriptor``.
         margin: distance from a rounding boundary, in grid cells, within
-            which a value is probed (default ``0.1``; at most ``0.5``).
-            Choose a few times the expected coordinate noise divided by the
-            precision.
+            which a value is probed, inclusive (default ``0.1``; at most
+            ``0.5``). It is rounded to the stored fine grid (``10**-4`` of a
+            cell). Stored values closer than ``3 * 10**-4`` of a cell to a
+            boundary are stored at that distance, and are probed for every
+            positive ``margin``. Choose a few times the expected coordinate
+            noise divided by the precision.
         max_flips: largest number of values moved at once (default ``2``).
         length: hex length of the returned hashes, as for
             :func:`hash_molecule` (default :data:`DEFAULT_LENGTH`).
-        max_keys: the most probes to generate (default ``10_000``). With
-            ``k`` values within ``margin``, there are
-            ``sum(comb(k, i) for i in 1..max_flips)`` probes.
+        max_keys: the most flip combinations to evaluate (default
+            ``10_000``). With ``k`` values within ``margin`` there are
+            ``sum(comb(k, i) for i in 1..max_flips)`` combinations, an upper
+            bound on the number of probes returned (combinations that
+            re-canonicalize to the same rows, or to the descriptor's own,
+            give one probe or none).
 
     Raises:
         ValueError: for a ``D`` (or ``C``) descriptor, whose stored distances
             carry no position within their cells; for a descriptor of
             another version; for a malformed descriptor or invalid option;
-            or if the probes would exceed ``max_keys`` (use a smaller
+            or if the combinations would exceed ``max_keys`` (use a smaller
             ``margin`` or ``max_flips``).
     """
     margin = _check_fraction(margin, "margin", 0.5)
@@ -1720,13 +1729,17 @@ def boundary_probes(
     z, fine = rows[:, 0], rows[:, 1:]
     coarse = _coarsen(fine)
     offset = fine - coarse * _FINE_FACTOR
-    at_risk = np.argwhere(_FINE_FACTOR // 2 - np.abs(offset) < margin * _FINE_FACTOR)
+    # Integer fine units: no float rounding at the threshold, and never below
+    # the stored clamp, so a positive margin always probes clamped values.
+    within = max(_FINE_MARGIN, round(margin * _FINE_FACTOR))
+    at_risk = np.argwhere(_FINE_FACTOR // 2 - np.abs(offset) <= within)
     k = len(at_risk)
     n_keys = sum(math.comb(k, i) for i in range(1, max_flips + 1))
     if n_keys > max_keys:
         raise ValueError(
             f"{k} values lie within {margin:g} grid cells of a boundary, giving "
-            f"{n_keys} probes with max_flips={max_flips}, more than max_keys={max_keys}; "
+            f"{n_keys} flip combinations with max_flips={max_flips}, more than "
+            f"max_keys={max_keys}; "
             "use a smaller margin or max_flips"
         )
     # Each value moves one cell toward its nearest boundary. Stored values
@@ -1962,8 +1975,8 @@ def hash_molecule(
         cells (0 to 0.5), of the hashed value nearest to a rounding boundary:
         a frame coordinate on the ``F`` path, a distance on the ``D`` path.
         A perturbation must move some value by at least that much to change
-        a coordinate or distance bin. Frame-branch, anchor and sign decisions
-        have their own boundaries, which it does not cover.
+        a coordinate or distance bin. Changes of the principal axes, frame
+        branch or anchor have their own thresholds, which it does not cover.
     """
     atomic_nums = _validate_atomic_nums(atomic_nums)
     coords = _validate_coords(coords)

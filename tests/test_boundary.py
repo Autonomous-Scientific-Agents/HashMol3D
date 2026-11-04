@@ -53,16 +53,16 @@ def _with_rows(descriptor, rows):
     return descriptor.split("|F:", 1)[0] + "|F:" + body
 
 
-def _across_nearest_boundary(descriptor):
-    """``descriptor`` with its value nearest a boundary moved just across it."""
+def _across_nearest_boundary(descriptor, inside=10):
+    """``descriptor`` with its value nearest a boundary moved just across it,
+    ``inside`` fine units into the neighboring cell."""
     rows = _stored_rows(descriptor)
     fine = rows[:, 1:]
     offset = fine - core._coarsen(fine) * FACTOR
     i, j = np.unravel_index(np.argmax(np.abs(offset)), offset.shape)
     step = 1 if offset[i, j] > 0 else -1
     moved = rows.copy()
-    # Ten fine units into the neighboring cell.
-    moved[i, 1 + j] = (core._coarsen(fine)[i, j] + step) * FACTOR - step * (FACTOR // 2 - 10)
+    moved[i, 1 + j] = (core._coarsen(fine)[i, j] + step) * FACTOR - step * (FACTOR // 2 - inside)
     return _with_rows(descriptor, moved)
 
 
@@ -102,6 +102,20 @@ class TestBoundaryProbes:
         assert hash_descriptor(moved) != res.geometry_hash
         assert res.geometry_hash in boundary_probes(moved, margin=0.01, max_flips=1)
 
+    @pytest.mark.parametrize("margin", [1e-4, core._FINE_MARGIN / FACTOR, 1e-3])
+    def test_clamped_values_are_probed_at_any_margin(self, cloud, margin):
+        # A value on the clamp limit, the closest a stored value can be to a
+        # boundary, belongs to the neighboring cell of the original.
+        res = hash_molecule(*cloud, precision=PRECISION)
+        moved = _across_nearest_boundary(res.descriptor, inside=core._FINE_MARGIN)
+        assert res.geometry_hash in boundary_probes(moved, margin=margin, max_flips=1)
+
+    def test_margin_is_inclusive_in_fine_units(self, cloud):
+        res = hash_molecule(*cloud, precision=PRECISION)
+        moved = _across_nearest_boundary(res.descriptor, inside=290)
+        assert res.geometry_hash in boundary_probes(moved, margin=0.029, max_flips=1)
+        assert res.geometry_hash not in boundary_probes(moved, margin=0.0289, max_flips=1)
+
     def test_probes_exclude_the_own_hash_and_duplicates(self, cloud):
         res = hash_molecule(*cloud, precision=PRECISION)
         probes = boundary_probes(res.descriptor, margin=0.3, max_flips=2)
@@ -113,7 +127,7 @@ class TestBoundaryProbes:
         res = hash_molecule(*cloud, precision=PRECISION)
         fine = _stored_rows(res.descriptor)[:, 1:]
         offset = fine - core._coarsen(fine) * FACTOR
-        k = int(np.sum(FACTOR // 2 - np.abs(offset) < 0.2 * FACTOR))
+        k = int(np.sum(FACTOR // 2 - np.abs(offset) <= 0.2 * FACTOR))
         # One flip moves one value: every result is a distinct cell.
         assert len(boundary_probes(res.descriptor, margin=0.2, max_flips=1)) == k
 
